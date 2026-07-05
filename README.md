@@ -77,6 +77,13 @@ npm run dev
 | テスト種別と実行入口 | [docs/testing/index.md](docs/testing/index.md) |
 | 本番監視、SLO、障害復旧 | [OPERATIONS.md](OPERATIONS.md) |
 | AI エージェント作業ルール | [AGENTS.md](AGENTS.md) |
+| AI エージェント支援開発の品質管理 | [docs/ai-governance/00-index.md](docs/ai-governance/00-index.md) |
+
+### AI支援開発の運用ルールについて
+
+`docs/ai-governance/` は、企業全体のAI統制や法務・倫理審査、モデル監査を指すものではなく、このリポジトリ内でAIエージェントを使って開発する際の作業ルール、UI/UXレビュー観点、検証証跡、完了条件を整理した開発運用ドキュメントです。
+
+AIに実装を丸投げするのではなく、作業範囲、品質基準、確認結果、未実行項目、残リスクを明示し、レビュー可能な形で開発を進めるための補助線として整備しています。
 
 ## 主要ディレクトリ
 
