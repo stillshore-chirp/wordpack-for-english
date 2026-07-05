@@ -4,6 +4,7 @@ import os
 
 # Disable session authentication by default so API tests can call endpoints without
 # provisioning cookies. Individual tests can override this via monkeypatch when needed.
+os.environ.setdefault("ENVIRONMENT", "test")
 os.environ.setdefault("DISABLE_SESSION_AUTH", "true")
 # Provide a deterministic yet secure-length session secret for tests to satisfy
 # 起動時バリデーション。実運用では `.env` で個別に乱数値を設定すること。

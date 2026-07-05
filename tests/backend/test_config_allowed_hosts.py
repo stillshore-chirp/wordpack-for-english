@@ -31,6 +31,7 @@ def test_production_rejects_wildcard_hosts() -> None:
         Settings(
             environment="production",
             admin_email_allowlist=("admin@example.com",),
+            disable_session_auth=False,
             _env_file=None,
         )
 
@@ -39,6 +40,7 @@ def test_production_rejects_wildcard_hosts() -> None:
             environment="production",
             allowed_hosts=("*", _CLOUD_RUN_HOST),
             admin_email_allowlist=("admin@example.com",),
+            disable_session_auth=False,
             _env_file=None,
         )
 
@@ -51,6 +53,7 @@ def test_production_rejects_empty_hosts() -> None:
             environment="production",
             allowed_hosts=(),
             admin_email_allowlist=("admin@example.com",),
+            disable_session_auth=False,
             _env_file=None,
         )
 
@@ -62,6 +65,7 @@ def test_production_allows_explicit_hosts() -> None:
         environment="production",
         allowed_hosts=(_CLOUD_RUN_HOST, "api.example.com"),
         admin_email_allowlist=("admin@example.com",),
+        disable_session_auth=False,
         _env_file=None,
     )
 

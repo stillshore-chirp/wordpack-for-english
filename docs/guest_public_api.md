@@ -10,6 +10,10 @@
 - **更新**: ログイン済みユーザーのみ許可（ゲスト/匿名は拒否）。
 - **閲覧（ゲスト）**: `guest_public=true` の WordPack / Reader 記事 / Quiz と、公開 WordPack に紐づく例文のみ返却。
 - **終了（ゲスト）**: `POST /api/auth/logout` でゲストセッション Cookie を失効し、匿名状態へ戻します。
+- **非公開詳細**: ゲストが非公開 WordPack / Reader 記事 / Quiz を直接指定した場合は 404 を返し、存在有無を隠します。
+- **未登録 lemma**: ゲストが未登録 lemma を検索しても WordPack は生成せず、403 を返します。
+- **書き込み**: ゲストの unsafe request は 403 です。公開 Quiz のローカル採点表示は frontend 側で可能ですが、Attempt 保存 API はログイン済みユーザーのみ許可します。
+- **所有者**: 新規作成される WordPack / Reader 記事 / Quiz / Quiz Attempt は `owner_user_id` を保存します。既存データの `owner_user_id` が空の場合は既定で legacy shared data として扱い、`ENFORCE_OWNER_SCOPING=true` のときだけ所有者一致を強制します。
 
 ## API
 

@@ -12,6 +12,15 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, sta
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from ..auth import principal_from_request
+from ..authorization.dependencies import require_user_permission
+from ..authorization.permissions import Permission
+from ..authorization.policies import (
+    ResourceVisibility,
+    ensure_read_allowed,
+    ensure_user_write_allowed,
+)
+from ..authorization.principal import Principal
 from ..config import settings
 from ..domain.article.lemma_filter import STOP_LEMMAS, filter_article_lemmas
 from ..flows.article_import import ArticleImportFlow
@@ -32,7 +41,6 @@ from ..models.word import ExampleCategory
 from ..observability import request_trace, span
 from ..store import store as _default_store
 from ..store.proxy import CurrentStoreProxy
-from .word.dependencies import require_authenticated_user
 
 
 router = APIRouter(tags=["article"])
@@ -96,11 +104,14 @@ def _validate_import_request(payload: dict[str, Any]) -> ArticleImportRequest:
 @router.post(
     "/import", response_model=ArticleDetailResponse, response_model_exclude_none=True
 )
-async def import_article(payload: dict[str, Any] = Body(...)) -> ArticleDetailResponse:
+async def import_article(
+    payload: dict[str, Any] = Body(...),
+    principal: Principal = Depends(require_user_permission(Permission.ARTICLE_CREATE)),
+) -> ArticleDetailResponse:
     """文章インポートを受け付け、文字数超過は 413 で通知する。"""
 
     req = _validate_import_request(payload)
-    flow = ArticleImportFlow()
+    flow = ArticleImportFlow(owner_user_id=principal.user_id)
     # ルータ層は薄く、Langfuse の親スパンを貼ってフローを呼び出す
     from ..observability import request_trace
 
@@ -164,9 +175,18 @@ async def _get_article_response(request: Request, article_id: str) -> ArticleDet
         guest_public,
         links,
     ) = result
-    is_guest = bool(getattr(request.state, "guest", False))
-    if is_guest and not guest_public:
-        raise HTTPException(status_code=404, detail="Article not found")
+    principal = principal_from_request(request)
+    visibility = store.get_article_visibility(article_id) or {}
+    ensure_read_allowed(
+        principal,
+        ResourceVisibility(
+            exists=True,
+            guest_public=bool(guest_public),
+            owner_user_id=visibility.get("owner_user_id"),
+            not_found_detail="Article not found",
+        ),
+    )
+    is_guest = principal.is_guest
     duration_value = (
         int(generation_duration_ms)
         if isinstance(generation_duration_ms, (int, float))
@@ -234,8 +254,16 @@ async def get_article(request: Request, article_id: str) -> ArticleDetailRespons
 async def update_article_guest_public(
     article_id: str,
     req: ArticleGuestPublicUpdateRequest,
-    _user: dict[str, str] = Depends(require_authenticated_user),
+    principal: Principal = Depends(require_user_permission(Permission.ARTICLE_UPDATE)),
 ) -> ArticleGuestPublicUpdateResponse:
+    visibility = store.get_article_visibility(article_id)
+    if visibility is None:
+        raise HTTPException(status_code=404, detail="Article not found")
+    ensure_user_write_allowed(
+        principal,
+        owner_user_id=visibility.get("owner_user_id"),
+        not_found_detail="Article not found",
+    )
     updated = store.update_article_guest_public(article_id, req.guest_public)
     if updated is None:
         raise HTTPException(status_code=404, detail="Article not found")
@@ -246,7 +274,18 @@ async def update_article_guest_public(
 
 
 @router.delete("/{article_id}")
-async def delete_article(article_id: str) -> dict[str, str]:
+async def delete_article(
+    article_id: str,
+    principal: Principal = Depends(require_user_permission(Permission.ARTICLE_DELETE)),
+) -> dict[str, str]:
+    visibility = store.get_article_visibility(article_id)
+    if visibility is None:
+        raise HTTPException(status_code=404, detail="Article not found")
+    ensure_user_write_allowed(
+        principal,
+        owner_user_id=visibility.get("owner_user_id"),
+        not_found_detail="Article not found",
+    )
     ok = store.delete_article(article_id)
     if not ok:
         raise HTTPException(status_code=404, detail="Article not found")
@@ -268,6 +307,7 @@ class CategoryGenerateImportRequest(BaseModel):
 @router.post("/generate_and_import")
 async def generate_and_import_examples(
     req: CategoryGenerateImportRequest,
+    principal: Principal = Depends(require_user_permission(Permission.ARTICLE_CREATE)),
 ) -> dict[str, object]:
     """選択カテゴリに関連する語を1つ生成し、空のWordPackを作成、
     当該カテゴリの例文を2件生成して保存し、それぞれを文章インポートに渡して記事化する。
@@ -276,6 +316,7 @@ async def generate_and_import_examples(
         model=getattr(req, "model", None),
         reasoning=getattr(req, "reasoning", None),
         text=getattr(req, "text", None),
+        owner_user_id=principal.user_id,
     )
     with request_trace(
         name="CategoryGenerateAndImportFlow",

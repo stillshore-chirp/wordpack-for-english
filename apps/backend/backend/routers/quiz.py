@@ -6,6 +6,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
 from ..application.quiz.generation_jobs import enqueue_quiz_generation_job, get_quiz_generation_job
 from ..application.quiz.scoring import score_quiz_attempt
+from ..auth import principal_from_request
+from ..authorization.dependencies import require_user_permission
+from ..authorization.permissions import Permission
+from ..authorization.policies import (
+    ResourceVisibility,
+    ensure_read_allowed,
+    ensure_user_write_allowed,
+)
+from ..authorization.principal import Principal
 from ..infrastructure.llm.quiz_generator import QuizGenerateFlowAdapter
 from ..infrastructure.runtime import AsyncioTaskScheduler, PrefixedUuidGenerator, SystemClock
 from ..models.quiz import (
@@ -20,7 +29,7 @@ from ..models.quiz import (
     QuizListResponse,
     QuizWordPackLink,
 )
-from .word.dependencies import get_store, require_authenticated_user
+from .word.dependencies import get_store
 
 router = APIRouter(tags=["quiz"])
 
@@ -88,12 +97,12 @@ def _rehydrate_related_word_pack_links(repository: object, quiz: Quiz) -> Quiz:
 )
 async def create_quiz_generation_job(
     req: QuizGenerateRequest,
-    _user: dict[str, str] = Depends(require_authenticated_user),
+    principal: Principal = Depends(require_user_permission(Permission.QUIZ_CREATE)),
 ) -> QuizGenerationJobResponse:
     return await enqueue_quiz_generation_job(
         req,
         get_store(),
-        generator=QuizGenerateFlowAdapter(),
+        generator=QuizGenerateFlowAdapter(owner_user_id=principal.user_id),
         scheduler=AsyncioTaskScheduler(),
         id_generator=PrefixedUuidGenerator("quiz-job:"),
         clock=SystemClock(),
@@ -107,7 +116,7 @@ async def create_quiz_generation_job(
 )
 async def get_quiz_generation_job_status(
     job_id: str,
-    _user: dict[str, str] = Depends(require_authenticated_user),
+    _principal: Principal = Depends(require_user_permission(Permission.QUIZ_READ)),
 ) -> QuizGenerationJobResponse:
     job = await get_quiz_generation_job(job_id, get_store(), clock=SystemClock())
     if job is None:
@@ -126,7 +135,7 @@ async def list_quizzes(
     offset: int = Query(default=0, ge=0),
 ) -> QuizListResponse:
     repository = get_store()
-    public_only = bool(getattr(request.state, "guest", False))
+    public_only = principal_from_request(request).is_guest
     rows = repository.list_quizzes(limit=limit, offset=offset, public_only=public_only)
     total = repository.count_quizzes(public_only=public_only)
     items = [_list_item_from_quiz(Quiz.model_validate(row)) for row in rows]
@@ -144,8 +153,16 @@ async def get_quiz(request: Request, quiz_id: str) -> Quiz:
     if row is None:
         raise HTTPException(status_code=404, detail="Quiz not found")
     quiz = Quiz.model_validate(row)
-    if bool(getattr(request.state, "guest", False)) and not quiz.guest_public:
-        raise HTTPException(status_code=404, detail="Quiz not found")
+    visibility = repository.get_quiz_visibility(quiz_id) or {}
+    ensure_read_allowed(
+        principal_from_request(request),
+        ResourceVisibility(
+            exists=True,
+            guest_public=bool(quiz.guest_public),
+            owner_user_id=visibility.get("owner_user_id"),
+            not_found_detail="Quiz not found",
+        ),
+    )
     return _rehydrate_related_word_pack_links(repository, quiz)
 
 
@@ -157,9 +174,18 @@ async def get_quiz(request: Request, quiz_id: str) -> Quiz:
 async def update_quiz_guest_public(
     quiz_id: str,
     req: QuizGuestPublicUpdateRequest,
-    _user: dict[str, str] = Depends(require_authenticated_user),
+    principal: Principal = Depends(require_user_permission(Permission.QUIZ_UPDATE)),
 ) -> QuizGuestPublicUpdateResponse:
-    updated = get_store().update_quiz_guest_public(quiz_id, req.guest_public)
+    repository = get_store()
+    visibility = repository.get_quiz_visibility(quiz_id)
+    if visibility is None:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    ensure_user_write_allowed(
+        principal,
+        owner_user_id=visibility.get("owner_user_id"),
+        not_found_detail="Quiz not found",
+    )
+    updated = repository.update_quiz_guest_public(quiz_id, req.guest_public)
     if updated is None:
         raise HTTPException(status_code=404, detail="Quiz not found")
     return QuizGuestPublicUpdateResponse(quiz_id=quiz_id, guest_public=updated)
@@ -171,9 +197,18 @@ async def update_quiz_guest_public(
 )
 async def delete_quiz(
     quiz_id: str,
-    _user: dict[str, str] = Depends(require_authenticated_user),
+    principal: Principal = Depends(require_user_permission(Permission.QUIZ_DELETE)),
 ) -> dict[str, str]:
-    success = get_store().delete_quiz(quiz_id)
+    repository = get_store()
+    visibility = repository.get_quiz_visibility(quiz_id)
+    if visibility is None:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    ensure_user_write_allowed(
+        principal,
+        owner_user_id=visibility.get("owner_user_id"),
+        not_found_detail="Quiz not found",
+    )
+    success = repository.delete_quiz(quiz_id)
     if not success:
         raise HTTPException(status_code=404, detail="Quiz not found")
     return {"message": "Quiz deleted successfully"}
@@ -187,7 +222,7 @@ async def delete_quiz(
 async def submit_quiz_attempt(
     quiz_id: str,
     req: QuizAttemptRequest,
-    _user: dict[str, str] = Depends(require_authenticated_user),
+    principal: Principal = Depends(require_user_permission(Permission.QUIZ_ATTEMPT_WRITE)),
 ) -> QuizAttemptResponse:
     row = get_store().get_quiz(quiz_id)
     if row is None:
@@ -220,6 +255,7 @@ async def submit_quiz_attempt(
             "started_at": req.started_at,
             "submitted_at": submitted_at,
             "elapsed_ms": req.elapsed_ms,
+            "owner_user_id": principal.user_id,
             "created_at": submitted_at,
         },
     )
@@ -235,7 +271,7 @@ async def list_quiz_attempts(
     quiz_id: str,
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
-    _user: dict[str, str] = Depends(require_authenticated_user),
+    _principal: Principal = Depends(require_user_permission(Permission.QUIZ_READ)),
 ) -> list[QuizAttemptResponse]:
     if get_store().get_quiz(quiz_id) is None:
         raise HTTPException(status_code=404, detail="Quiz not found")

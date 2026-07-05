@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-import uuid
-from datetime import UTC, datetime
+import hashlib
+import secrets
+from collections.abc import Mapping
+from datetime import UTC, datetime, timedelta
+from typing import Any
 
 from fastapi import HTTPException, Request, status
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
 
+from .authorization.principal import ANONYMOUS_PRINCIPAL, Principal
 from .config import settings
 from .logging import logger
 from .store import store
@@ -25,8 +29,6 @@ def _build_serializer(salt: str = _SESSION_SALT) -> URLSafeTimedSerializer:
 
 
 def _session_max_age() -> int:
-    """Return the configured session lifetime in seconds."""
-
     try:
         max_age = int(getattr(settings, "session_max_age_seconds", 0))
     except (TypeError, ValueError):  # pragma: no cover - defensive fallback
@@ -35,8 +37,6 @@ def _session_max_age() -> int:
 
 
 def _guest_session_max_age() -> int:
-    """Return the configured guest session lifetime in seconds."""
-
     try:
         max_age = int(getattr(settings, "guest_session_max_age_seconds", 0))
     except (TypeError, ValueError):  # pragma: no cover - defensive fallback
@@ -44,60 +44,233 @@ def _guest_session_max_age() -> int:
     return max(60, max_age or 60 * 60 * 24)
 
 
-def guest_session_cookie_max_age() -> int:
-    """Return the guest session cookie max-age in seconds."""
+def _session_idle_timeout(kind: str) -> int:
+    key = (
+        "guest_session_idle_timeout_seconds"
+        if kind == "guest"
+        else "session_idle_timeout_seconds"
+    )
+    fallback = _guest_session_max_age() if kind == "guest" else _session_max_age()
+    try:
+        configured = int(getattr(settings, key, fallback))
+    except (TypeError, ValueError):  # pragma: no cover - defensive fallback
+        configured = fallback
+    return max(60, configured or fallback)
 
+
+def _last_seen_update_interval() -> int:
+    try:
+        configured = int(
+            getattr(settings, "session_last_seen_update_interval_seconds", 300)
+        )
+    except (TypeError, ValueError):  # pragma: no cover - defensive fallback
+        configured = 300
+    return max(0, configured)
+
+
+def _now() -> datetime:
+    return datetime.now(UTC).replace(microsecond=0)
+
+
+def _now_iso() -> str:
+    return _now().isoformat()
+
+
+def _parse_dt(value: Any) -> datetime | None:
+    if isinstance(value, datetime):
+        return value.astimezone(UTC) if value.tzinfo else value.replace(tzinfo=UTC)
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError:
+        return None
+    return parsed.astimezone(UTC) if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _hash_session_context(value: str | None) -> str | None:
+    if not value:
+        return None
+    pepper = settings.session_secret_key.strip()
+    material = f"{pepper}:{value}".encode("utf-8", errors="ignore")
+    return hashlib.sha256(material).hexdigest()
+
+
+def _request_user_agent_hash(request: Request | None) -> str | None:
+    if request is None:
+        return None
+    return _hash_session_context(request.headers.get("user-agent"))
+
+
+def _request_ip_hash(request: Request | None) -> str | None:
+    if request is None or request.client is None:
+        return None
+    return _hash_session_context(request.client.host)
+
+
+def guest_session_cookie_max_age() -> int:
     return _guest_session_max_age()
 
 
-def issue_session_token(google_sub: str) -> str:
-    """Generate a signed session token tied to the Google subject identifier."""
+def _create_session_record(
+    *,
+    kind: str,
+    user_id: str | None,
+    max_age_seconds: int,
+    request: Request | None,
+) -> str:
+    sid = secrets.token_urlsafe(32)
+    issued_at = _now()
+    expires_at = issued_at + timedelta(seconds=max_age_seconds)
+    payload: dict[str, Any] = {
+        "sid": sid,
+        "kind": kind,
+        "user_id": user_id,
+        "issued_at": issued_at.isoformat(),
+        "expires_at": expires_at.isoformat(),
+        "last_seen_at": issued_at.isoformat(),
+        "revoked_at": None,
+        "user_agent_hash": _request_user_agent_hash(request),
+        "created_ip_hash": _request_ip_hash(request),
+    }
+    create_session = getattr(store, "create_session", None)
+    if not callable(create_session):
+        raise RuntimeError("session store is not configured")
+    create_session(payload)
+    return sid
+
+
+def issue_session_token(google_sub: str, request: Request | None = None) -> str:
+    """Generate a signed opaque session token for an authenticated user."""
 
     serializer = _build_serializer(_SESSION_SALT)
-    payload = {
-        "sid": uuid.uuid4().hex,
-        "sub": google_sub,
-        "issued_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
-    }
-    return serializer.dumps(payload)
+    sid = _create_session_record(
+        kind="user",
+        user_id=google_sub,
+        max_age_seconds=_session_max_age(),
+        request=request,
+    )
+    return serializer.dumps({"sid": sid})
 
 
-def verify_session_token(token: str) -> dict:
-    """Decode a signed session token and return the embedded payload."""
+def issue_guest_session_token(request: Request | None = None) -> str:
+    """Generate a signed opaque guest session token for read-only browsing."""
+
+    serializer = _build_serializer(_GUEST_SESSION_SALT)
+    sid = _create_session_record(
+        kind="guest",
+        user_id=None,
+        max_age_seconds=_guest_session_max_age(),
+        request=request,
+    )
+    return serializer.dumps({"sid": sid})
+
+
+def _touch_session_if_needed(sid: str, record: Mapping[str, Any], *, now: datetime) -> None:
+    last_seen_at = _parse_dt(record.get("last_seen_at"))
+    interval = _last_seen_update_interval()
+    if last_seen_at is not None and (now - last_seen_at).total_seconds() < interval:
+        return
+    touch_session = getattr(store, "touch_session", None)
+    if callable(touch_session):
+        touch_session(sid, last_seen_at=now.isoformat())
+
+
+def _validate_session_record(
+    payload: Mapping[str, Any],
+    *,
+    expected_kind: str,
+) -> dict[str, Any]:
+    sid = str(payload.get("sid") or "").strip()
+    if not sid:
+        raise BadSignature("session id missing")
+    get_session = getattr(store, "get_session", None)
+    if not callable(get_session):
+        raise RuntimeError("session store is not configured")
+    record = get_session(sid)
+    if not isinstance(record, Mapping):
+        raise BadSignature("session record not found")
+    if record.get("kind") != expected_kind:
+        raise BadSignature("session kind mismatch")
+    if record.get("revoked_at"):
+        raise BadSignature("session revoked")
+
+    now = _now()
+    expires_at = _parse_dt(record.get("expires_at"))
+    if expires_at is None or now > expires_at:
+        raise SignatureExpired("session expired")
+    last_seen_at = _parse_dt(record.get("last_seen_at"))
+    if last_seen_at is not None:
+        idle_seconds = (now - last_seen_at).total_seconds()
+        if idle_seconds > _session_idle_timeout(expected_kind):
+            raise SignatureExpired("session idle timeout")
+
+    _touch_session_if_needed(sid, record, now=now)
+    user_id = record.get("user_id")
+    result = dict(payload)
+    result["sid"] = sid
+    result["kind"] = expected_kind
+    result["session_id"] = sid
+    if isinstance(user_id, str) and user_id:
+        result["sub"] = user_id
+        result["user_id"] = user_id
+    if expected_kind == "guest":
+        result["mode"] = "guest"
+    return result
+
+
+def verify_session_token(token: str) -> dict[str, Any]:
+    """Decode a signed user session token and validate server-side state."""
 
     serializer = _build_serializer(_SESSION_SALT)
-    return serializer.loads(token, max_age=_session_max_age())
+    payload = serializer.loads(token, max_age=_session_max_age())
+    if not isinstance(payload, Mapping):
+        raise BadSignature("invalid session payload")
+    if payload.get("sub"):
+        # Short-term compatibility for legacy signed payloads generated before
+        # server-side session records were introduced.
+        legacy = dict(payload)
+        legacy.setdefault("kind", "user")
+        legacy.setdefault("session_id", legacy.get("sid"))
+        legacy.setdefault("user_id", legacy.get("sub"))
+        return legacy
+    return _validate_session_record(payload, expected_kind="user")
 
 
-def issue_guest_session_token() -> str:
-    """Generate a signed guest session token for read-only browsing."""
+def verify_guest_session_token(token: str) -> dict[str, Any]:
+    """Decode a signed guest session token and validate server-side state."""
 
     serializer = _build_serializer(_GUEST_SESSION_SALT)
-    payload = {
-        "gid": uuid.uuid4().hex,
-        "issued_at": datetime.now(UTC).replace(microsecond=0).isoformat(),
-        "mode": "guest",
-    }
-    return serializer.dumps(payload)
+    payload = serializer.loads(token, max_age=_guest_session_max_age())
+    if not isinstance(payload, Mapping):
+        raise BadSignature("invalid guest session payload")
+    if payload.get("mode") == "guest" and payload.get("gid"):
+        legacy = dict(payload)
+        legacy.setdefault("kind", "guest")
+        legacy.setdefault("session_id", legacy.get("gid"))
+        return legacy
+    return _validate_session_record(payload, expected_kind="guest")
 
 
-def verify_guest_session_token(token: str) -> dict:
-    """Decode a signed guest session token and return the embedded payload."""
+def revoke_session_token(token: str, *, guest: bool = False) -> bool:
+    """Best-effort server-side revocation for an incoming session token."""
 
-    serializer = _build_serializer(_GUEST_SESSION_SALT)
-    return serializer.loads(token, max_age=_guest_session_max_age())
+    try:
+        payload = verify_guest_session_token(token) if guest else verify_session_token(token)
+    except (SignatureExpired, BadSignature, RuntimeError):
+        return False
+    sid = payload.get("sid") or payload.get("session_id")
+    if not isinstance(sid, str) or not sid:
+        return False
+    revoke_session = getattr(store, "revoke_session", None)
+    if not callable(revoke_session):
+        return False
+    return bool(revoke_session(sid, revoked_at=_now_iso()))
 
 
 def _session_log_context(
     request: Request, *, reason: str, user_id: str | None
 ) -> dict[str, object]:
-    """Compose structured log context aligned with AccessLog fields.
-
-    なぜ: Cloud Run 上でセッション検証失敗を素早くフィルタできるよう、
-    AccessLog と同一キー（path/client_ip/user_agent/request_id）で
-    失敗理由を記録する。
-    """
-
     client_ip = request.client.host if request.client else "unknown"
     return {
         "user_id": user_id,
@@ -110,16 +283,8 @@ def _session_log_context(
 
 
 def read_session_cookie(request: Request, cookie_name: str) -> str | None:
-    """Robustly read the session cookie even when other cookies are non‑RFC compliant.
+    """Read a cookie even when other Cookie header entries are non-RFC values."""
 
-    なぜ: Google Identity Services が発行する `g_state` など一部の Cookie は、値に
-    JSON 文字列をそのまま含めるため `Cookie` ヘッダー全体が RFC に厳密ではなくなり、
-    Python 標準の ``SimpleCookie`` パーサが例外を投げて `request.cookies` を空にして
-    しまうケースがある。その場合でもセッションクッキーだけは確実に取得したいので、
-    まず `request.cookies` を試しつつ、失敗時は生のヘッダーを手動で分解して取得する。
-    """
-
-    # 通常ケース: Starlette が正しく Cookie を構築している場合はこちらで十分。
     try:
         value = request.cookies.get(cookie_name)  # type: ignore[assignment]
     except Exception:  # pragma: no cover - defensive guard
@@ -127,7 +292,6 @@ def read_session_cookie(request: Request, cookie_name: str) -> str | None:
     if value:
         return value  # type: ignore[return-value]
 
-    # フォールバック: Cookie ヘッダーを手動パース（`;` 区切りの単純な形式を前提）。
     raw_header = request.headers.get("cookie") or request.headers.get("Cookie")
     if not raw_header:
         return None
@@ -142,35 +306,20 @@ def read_session_cookie(request: Request, cookie_name: str) -> str | None:
 
 
 def session_cookie_names() -> tuple[str, ...]:
-    """Return ordered cookie names that should carry the session token.
-
-    なぜ: Firebase Hosting は `__session` 以外の Cookie を Cloud Run へ転送しないため、
-    既定名（wp_session など）に加えて __session も必ずミラーする。
-    """
-
     configured = (settings.session_cookie_name or "wp_session").strip()
     primary = configured or "wp_session"
     names = [primary]
     if _FIREBASE_SESSION_COOKIE not in names:
         names.append(_FIREBASE_SESSION_COOKIE)
-    # dict.fromkeys preserves insertion order while removing duplicates.
     return tuple(dict.fromkeys(names))
 
 
 def guest_session_cookie_name() -> str:
-    """Return the cookie name used for signed guest sessions."""
-
     configured = (settings.guest_session_cookie_name or "wp_guest").strip()
     return configured or "wp_guest"
 
 
 def guest_session_cookie_names() -> tuple[str, ...]:
-    """Return cookie names that may carry the signed guest session token.
-
-    Firebase Hosting forwards only `__session` to Cloud Run, so the guest token
-    must be mirrored there just like the authenticated user session token.
-    """
-
     primary = guest_session_cookie_name()
     names = [primary]
     if _FIREBASE_SESSION_COOKIE not in names:
@@ -178,9 +327,15 @@ def guest_session_cookie_names() -> tuple[str, ...]:
     return tuple(dict.fromkeys(names))
 
 
-def resolve_guest_session_cookie(request: Request) -> str | None:
-    """Return the signed guest session token when present."""
+def resolve_session_cookie(request: Request) -> tuple[str | None, str | None]:
+    for cookie_name in session_cookie_names():
+        token = read_session_cookie(request, cookie_name)
+        if token:
+            return cookie_name, token
+    return None, None
 
+
+def resolve_guest_session_cookie(request: Request) -> str | None:
     for cookie_name in guest_session_cookie_names():
         token = read_session_cookie(request, cookie_name)
         if token:
@@ -189,8 +344,6 @@ def resolve_guest_session_cookie(request: Request) -> str | None:
 
 
 def _guest_log_context(request: Request, *, reason: str) -> dict[str, object]:
-    """Compose structured log context for guest-session failures."""
-
     client_ip = request.client.host if request.client else "unknown"
     return {
         "reason": reason,
@@ -201,14 +354,36 @@ def _guest_log_context(request: Request, *, reason: str) -> dict[str, object]:
     }
 
 
-def resolve_session_cookie(request: Request) -> tuple[str | None, str | None]:
-    """Return the first available session cookie value along with its name."""
+def _principal_from_user(user: Mapping[str, str], payload: Mapping[str, Any]) -> Principal:
+    user_id = str(payload.get("sub") or payload.get("user_id") or user.get("google_sub") or "")
+    return Principal(
+        kind="user",
+        user_id=user_id or None,
+        email=user.get("email"),
+        display_name=user.get("display_name"),
+        session_id=str(payload.get("sid") or payload.get("session_id") or "") or None,
+    )
 
-    for cookie_name in session_cookie_names():
-        token = read_session_cookie(request, cookie_name)
-        if token:
-            return cookie_name, token
-    return None, None
+
+def _attach_user_state(
+    request: Request, user: Mapping[str, str], payload: Mapping[str, Any]
+) -> Principal:
+    principal = _principal_from_user(user, payload)
+    request.state.user = dict(user)
+    request.state.user_id = principal.user_id
+    request.state.principal = principal
+    request.state.guest = False
+    return principal
+
+
+def _attach_guest_state(request: Request, payload: Mapping[str, Any]) -> Principal:
+    principal = Principal(
+        kind="guest",
+        session_id=str(payload.get("sid") or payload.get("session_id") or "") or None,
+    )
+    request.state.guest = True
+    request.state.principal = principal
+    return principal
 
 
 def _resolve_authenticated_user(
@@ -217,8 +392,6 @@ def _resolve_authenticated_user(
     log_missing: bool,
     allow_invalid_session: bool = False,
 ) -> dict[str, str] | None:
-    """Resolve an authenticated user from session cookies or return None."""
-
     _cookie_name, raw_token = resolve_session_cookie(request)
     if not raw_token:
         if log_missing:
@@ -266,7 +439,7 @@ def _resolve_authenticated_user(
             detail="Session configuration error",
         ) from exc
 
-    sub = payload.get("sub") if isinstance(payload, dict) else None
+    sub = payload.get("sub") if isinstance(payload, Mapping) else None
     if not sub:
         logger.warning(
             "session_validation_failed",
@@ -277,25 +450,22 @@ def _resolve_authenticated_user(
             detail="Invalid session payload",
         )
 
-    user = store.get_user_by_google_sub(sub)
+    user = store.get_user_by_google_sub(str(sub))
     if user is None:
         logger.warning(
             "session_validation_failed",
-            **_session_log_context(request, reason="user_not_found", user_id=sub),
+            **_session_log_context(request, reason="user_not_found", user_id=str(sub)),
         )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="User not found",
         )
 
-    request.state.user = user
-    request.state.user_id = sub
+    _attach_user_state(request, user, payload)
     return user
 
 
 async def get_current_user(request: Request) -> dict[str, str]:
-    """Validate session cookie and attach the authenticated user to the request state."""
-
     user = _resolve_authenticated_user(request, log_missing=True)
     if user is not None:
         return user
@@ -305,9 +475,25 @@ async def get_current_user(request: Request) -> dict[str, str]:
     )
 
 
-async def get_current_user_or_guest(request: Request) -> dict[str, str]:
-    """Allow authenticated users or signed guest sessions for read-only access."""
+async def get_current_user_principal(request: Request) -> Principal:
+    await get_current_user(request)
+    principal = getattr(request.state, "principal", None)
+    if isinstance(principal, Principal) and principal.is_user:
+        return principal
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="User session is required",
+    )
 
+
+def principal_from_request(request: Request) -> Principal:
+    if settings.disable_session_auth:
+        return Principal(kind="user", user_id="test-user")
+    principal = getattr(request.state, "principal", None)
+    return principal if isinstance(principal, Principal) else ANONYMOUS_PRINCIPAL
+
+
+async def get_current_user_or_guest(request: Request) -> dict[str, str]:
     user = _resolve_authenticated_user(
         request,
         log_missing=False,
@@ -366,7 +552,7 @@ async def get_current_user_or_guest(request: Request) -> dict[str, str]:
             detail="Guest session configuration error",
         ) from exc
 
-    if isinstance(payload, dict) and payload.get("mode") != "guest":
+    if isinstance(payload, Mapping) and payload.get("mode") != "guest":
         logger.warning(
             "guest_session_invalid",
             **_guest_log_context(request, reason="missing_guest_mode"),
@@ -376,5 +562,11 @@ async def get_current_user_or_guest(request: Request) -> dict[str, str]:
             detail="Invalid guest session payload",
         )
 
-    request.state.guest = True
+    _attach_guest_state(request, payload)
     return {"mode": "guest"}
+
+
+async def get_current_principal_or_guest(request: Request) -> Principal:
+    await get_current_user_or_guest(request)
+    principal = getattr(request.state, "principal", None)
+    return principal if isinstance(principal, Principal) else ANONYMOUS_PRINCIPAL

@@ -8,6 +8,9 @@ from ...models.quiz import Quiz, QuizGenerateRequest
 
 
 class QuizGenerateFlowAdapter(QuizGenerator):
+    def __init__(self, *, owner_user_id: str | None = None) -> None:
+        self._owner_user_id = owner_user_id
+
     async def generate(self, req: QuizGenerateRequest, store: object) -> Quiz:
-        flow = QuizGenerateFlow(store=store)
+        flow = QuizGenerateFlow(store=store, owner_user_id=self._owner_user_id)
         return await anyio.to_thread.run_sync(flow.run, req)

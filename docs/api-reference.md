@@ -16,13 +16,22 @@ frontend が Google login 設定などを取得します。
 
 ### `POST /api/auth/google`
 
-Google Identity Services の ID token を backend に渡し、通常セッション Cookie を発行します。
+Google Identity Services の ID token または `credential` を backend に渡し、通常セッション Cookie を発行します。Cookie には署名済みの opaque `sid` のみを入れ、session 実体は backend の server-side store で検証します。
 
 Request:
 
 ```json
 {
   "id_token": "<google-id-token>"
+}
+```
+
+GIS `credential` 形式:
+
+```json
+{
+  "credential": "<google-credential>",
+  "g_csrf_token": "<csrf-token-from-g_csrf_token-cookie>"
 }
 ```
 
@@ -53,7 +62,7 @@ Response:
 
 ### `POST /api/auth/logout`
 
-通常ログインまたはゲスト閲覧のセッション Cookie を失効させ、匿名状態へ戻します。
+通常ログインまたはゲスト閲覧のセッション Cookie を削除し、server-side session を revoke して匿名状態へ戻します。
 
 ## WordPack
 
@@ -101,7 +110,7 @@ Response:
 
 ### `GET /api/word/packs/{id}`
 
-指定 WordPack の詳細を返します。ゲスト閲覧では非公開 WordPack は 404 です。
+指定 WordPack の詳細を返します。ゲスト閲覧では非公開 WordPack は 404 です。ログイン済みユーザーは既定で legacy shared data を閲覧できますが、`ENFORCE_OWNER_SCOPING=true` では `owner_user_id` の一致を要求します。
 
 ### `DELETE /api/word/packs/{id}`
 
@@ -211,7 +220,7 @@ Quiz API は保存済み WordPack や lemma から長文読解 Quiz を生成、
 
 ### `GET /api/quiz/{id}`
 
-指定 Quiz の詳細を返します。ゲスト閲覧では非公開 Quiz は 404 です。
+指定 Quiz の詳細を返します。ゲスト閲覧では非公開 Quiz は 404 です。Attempt 保存はログイン済みユーザーのみ利用できます。
 
 ### `POST /api/quiz/{id}/guest-public`
 

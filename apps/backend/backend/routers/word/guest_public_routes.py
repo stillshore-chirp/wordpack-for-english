@@ -7,10 +7,14 @@ from ...application.wordpack.guest_public import (
     UpdateWordPackGuestPublicCommand,
     update_guest_public_flag,
 )
+from ...authorization.dependencies import require_user_permission
+from ...authorization.permissions import Permission
+from ...authorization.policies import ensure_user_write_allowed
+from ...authorization.principal import Principal
 from ...infrastructure.runtime import SystemClock
 from ...logging import logger
 from ...models.word import WordPackGuestPublicRequest, WordPackGuestPublicResponse
-from .dependencies import get_store, require_authenticated_user
+from .dependencies import get_store, get_word_pack_visibility
 
 router = APIRouter()
 
@@ -24,7 +28,7 @@ async def update_word_pack_guest_public(
     request: Request,
     word_pack_id: str,
     req: WordPackGuestPublicRequest,
-    _user: dict[str, str] = Depends(require_authenticated_user),
+    principal: Principal = Depends(require_user_permission(Permission.WORDPACK_UPDATE)),
 ) -> WordPackGuestPublicResponse:
     """WordPack単位のゲスト公開フラグを更新する。"""
 
@@ -33,8 +37,17 @@ async def update_word_pack_guest_public(
         guest_public=req.guest_public,
         updated_at=SystemClock().now_iso(),
     )
+    repository = get_store()
+    visibility = get_word_pack_visibility(repository, word_pack_id)
+    if visibility is None:
+        raise HTTPException(status_code=404, detail="WordPack not found")
+    ensure_user_write_allowed(
+        principal,
+        owner_user_id=visibility.get("owner_user_id"),
+        not_found_detail="WordPack not found",
+    )
     try:
-        result = update_guest_public_flag(repository=get_store(), command=command)
+        result = update_guest_public_flag(repository=repository, command=command)
     except NotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 

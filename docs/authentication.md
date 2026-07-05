@@ -5,10 +5,11 @@
 ## 構成
 
 - frontend は Google Identity Services で ID token を取得します。
-- backend は `/api/auth/google` で ID token を検証し、HttpOnly の署名付きセッション Cookie を発行します。
+- backend は `/api/auth/google` で ID token または GIS `credential` を検証し、HttpOnly の署名付きセッション Cookie を発行します。
 - frontend は ID token を長期保存しません。再読み込み時は Cookie と `/api/config` の応答から認証状態を再構築します。
 - ゲスト閲覧は `/api/auth/guest` で署名付きゲスト Cookie を発行し、読み取り専用 API だけを許可します。
 - ログアウトは `/api/auth/logout` で通常セッションとゲストセッションを失効させます。
+- Cookie の署名 payload は opaque な `sid` のみで、ユーザー ID やゲスト状態は Firestore の `sessions/{sid}` で検証します。
 
 ## Google OAuth クライアント作成
 
@@ -41,10 +42,11 @@ VITE_GOOGLE_CLIENT_ID=12345-abcdefgh.apps.googleusercontent.com
 
 1. ユーザーが「Googleでログイン」を押します。
 2. Google の popup で account を選びます。
-3. frontend が Google から受け取った credential を `id_token` として `/api/auth/google` へ送ります。
+3. frontend が Google から受け取った credential を `/api/auth/google` へ送ります。既存互換として `{ "id_token": "..." }` も受け付けます。
 4. backend が token、audience、email、email verification、hosted domain、allowlist を検証します。
-5. 成功時、backend が通常セッション Cookie を発行します。
-6. frontend はユーザー表示情報だけを local storage に保存します。
+5. GIS の `credential` と `g_csrf_token` を使う場合は、body と `g_csrf_token` Cookie の値が一致しないリクエストを拒否します。
+6. 成功時、backend が Firestore に server-side session を作成し、Cookie には署名済み `sid` だけを入れて返します。
+7. frontend はユーザー表示情報だけを local storage に保存します。
 
 `ADMIN_EMAIL_ALLOWLIST` が空の場合、開発/テストでは許可リストによる制限は無効です。本番では空のまま起動しないよう設定バリデーションで止めます。
 
@@ -65,17 +67,28 @@ VITE_GOOGLE_CLIENT_ID=12345-abcdefgh.apps.googleusercontent.com
 
 - `SESSION_COOKIE_NAME` の既定は `wp_session`
 - Firebase Hosting rewrite 経由でも届くよう、同じ token を `__session` にも配信します。
+- `wp_session` と `__session` の両方がある場合は通常セッションを優先します。
 
 ゲストセッション:
 
 - `GUEST_SESSION_COOKIE_NAME` の既定は `wp_guest`
 - 同じく `__session` にも配信します。
+- ログイン後に `wp_guest` が残っても、通常セッションが有効ならゲスト扱いにはしません。
 
 共通:
 
 - Cookie は HttpOnly です。
 - `SESSION_COOKIE_SECURE` は本番 HTTPS では true を指定します。
-- ログアウト時は通常セッション、ゲストセッション、`__session` を失効させます。
+- ログアウト時は通常セッション、ゲストセッション、`__session` を削除し、対応する server-side session を revoke します。
+- 絶対期限に加えて idle timeout を検証し、`last_seen_at` は設定された間隔より頻繁には更新しません。
+
+## CSRF 防御
+
+- unsafe method (`POST`, `PUT`, `PATCH`, `DELETE`) では Fetch Metadata (`Sec-Fetch-Site`) と `Origin` を確認します。
+- 明示的な cross-site unsafe request は 403 です。
+- `Origin` がある場合は、同一 origin、`CORS_ALLOWED_ORIGINS`、または `CSRF_TRUSTED_ORIGINS` に含まれる origin だけを許可します。
+- `CSRF_PROTECTION_ENABLED=false` は本番環境では起動時に拒否されます。
+- ブラウザ外のクライアントや TestClient のように `Origin` がない unsafe request は、Fetch Metadata で cross-site と示されない限り許可します。
 
 ## 認証失敗時の確認
 
@@ -89,6 +102,7 @@ VITE_GOOGLE_CLIENT_ID=12345-abcdefgh.apps.googleusercontent.com
 | 403 email unverified | Google アカウントのメール確認が済んでいるか |
 | domain mismatch | `GOOGLE_ALLOWED_HD` と ID token の hosted domain が一致するか |
 | session が復元されない | Cookie 名、Secure 属性、Hosting rewrite、`__session`、ブラウザ Cookie 設定 |
+| 403 CSRF check failed | `Origin`, `Sec-Fetch-Site`, `CORS_ALLOWED_ORIGINS`, `CSRF_TRUSTED_ORIGINS` |
 
 ## 構造化ログキー
 
@@ -113,4 +127,5 @@ Google 認証まわりでは次の key を確認します。
 - `change-me` など既知のサンプル値は使いません。
 - Google OAuth client secret、service account JSON、Cookie、ID token はリポジトリへコミットしません。
 - 本番では `CORS_ALLOWED_ORIGINS` と `ALLOWED_HOSTS` を明示し、ワイルドカードのままにしません。
+- 本番では `DISABLE_SESSION_AUTH=true` と `CSRF_PROTECTION_ENABLED=false` は起動時に拒否されます。
 - 認証エラー調査では token 原文、Cookie、request ID の実値を公開文書や PR 本文へ書きません。

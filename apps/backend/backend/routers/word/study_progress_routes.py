@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from ...application.wordpack.study_progress import study_progress_increments
+from ...authorization.dependencies import require_user_permission
+from ...authorization.permissions import Permission
+from ...authorization.principal import Principal
 from ...models.word import (
     ExampleStudyProgressResponse,
     StudyProgressRequest,
@@ -21,6 +24,7 @@ router = APIRouter()
 async def update_word_pack_study_progress(
     word_pack_id: str,
     req: StudyProgressRequest,
+    _principal: Principal = Depends(require_user_permission(Permission.WORDPACK_UPDATE)),
 ) -> WordPackStudyProgressResponse:
     """WordPack単位の確認/学習済みカウントを更新する。"""
 
@@ -45,6 +49,7 @@ async def update_word_pack_study_progress(
 async def update_example_study_progress(
     example_id: int,
     req: StudyProgressRequest,
+    _principal: Principal = Depends(require_user_permission(Permission.EXAMPLE_UPDATE)),
 ) -> ExampleStudyProgressResponse:
     """例文単位の確認/学習済みカウントを更新する。"""
 

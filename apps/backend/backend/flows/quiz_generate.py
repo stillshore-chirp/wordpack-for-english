@@ -180,9 +180,16 @@ def _stable_missing_link_id(quiz_id: str, lemma: str) -> str:
 
 
 class QuizGenerateFlow:
-    def __init__(self, *, store: object, llm: object | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        store: object,
+        llm: object | None = None,
+        owner_user_id: str | None = None,
+    ) -> None:
         self._store = store
         self._llm = llm
+        self._owner_user_id = owner_user_id
 
     def run(self, req: QuizGenerateRequest) -> Quiz:
         generation_started_at = _now_iso()
@@ -263,6 +270,7 @@ class QuizGenerateFlow:
             "generation_completed_at": generation_completed_at,
             "generation_duration_ms": duration_ms,
             "guest_public": False,
+            "owner_user_id": self._owner_user_id,
             "created_at": generation_completed_at,
             "updated_at": generation_completed_at,
         }

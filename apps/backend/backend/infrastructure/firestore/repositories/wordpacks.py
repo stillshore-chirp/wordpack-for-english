@@ -100,6 +100,10 @@ class FirestoreWordPackRepository(FirestoreBaseRepository):
                 if isinstance(existing_metadata, Mapping)
                 else dict(metadata)
             )
+        owner_user_id = None
+        if isinstance(metadata_payload, Mapping):
+            owner_raw = metadata_payload.get("owner_user_id")
+            owner_user_id = str(owner_raw).strip() if owner_raw else None
         created_at = (
             str(existing_data.get("created_at") or now) if existing.exists else now
         )
@@ -111,6 +115,7 @@ class FirestoreWordPackRepository(FirestoreBaseRepository):
             updated_at=now,
             existing_example_total=existing_examples_total,
             is_total_confident=counts_confident,
+            owner_user_id=owner_user_id,
         )
         payload = {
             "lemma_id": lemma_id,
@@ -424,6 +429,7 @@ class FirestoreWordPackRepository(FirestoreBaseRepository):
         updated_at: str,
         existing_example_total: int | None = None,
         is_total_confident: bool = False,
+        owner_user_id: str | None = None,
     ) -> dict[str, int]:
         # 例文数が 0 だと確実に分かっている場合のみ削除クエリを省略し、それ以外では安全側に倒す。
         should_delete_existing = not is_total_confident or existing_example_total not in (None, 0)
@@ -471,6 +477,7 @@ class FirestoreWordPackRepository(FirestoreBaseRepository):
                     "pack_updated_at": updated_at,
                     "lemma": lemma,
                     "sense_title": sense_title,
+                    "owner_user_id": owner_user_id,
                     **self._build_search_payload(en),
                 }
             )
@@ -600,6 +607,22 @@ class FirestoreWordPackRepository(FirestoreBaseRepository):
         if not snapshot.exists:
             return None
         return snapshot.to_dict() or {}
+
+    def get_word_pack_visibility(self, word_pack_id: str) -> Mapping[str, Any] | None:
+        payload = self.get_word_pack_metadata(word_pack_id)
+        if not isinstance(payload, Mapping):
+            return None
+        metadata = payload.get("metadata") or {}
+        owner_user_id = None
+        guest_public = False
+        if isinstance(metadata, Mapping):
+            owner_raw = metadata.get("owner_user_id")
+            owner_user_id = str(owner_raw).strip() if owner_raw else None
+            guest_public = bool(metadata.get("guest_public", False))
+        return {
+            "guest_public": guest_public,
+            "owner_user_id": owner_user_id,
+        }
 
     def _upsert_lemma(
         self,

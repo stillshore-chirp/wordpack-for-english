@@ -215,6 +215,11 @@ class FirestoreExampleRepository(FirestoreBaseRepository):
         pack_meta = self._wordpacks.get_word_pack_metadata(word_pack_id) or {}
         lemma_label = str(pack_meta.get("lemma_label") or "")
         sense_title = str(pack_meta.get("sense_title") or "")
+        metadata = pack_meta.get("metadata") or {}
+        owner_user_id = None
+        if isinstance(metadata, Mapping):
+            owner_raw = metadata.get("owner_user_id")
+            owner_user_id = str(owner_raw).strip() if owner_raw else None
         inserted = 0
         for item in items:
             en = str((item or {}).get("en") or "").strip()
@@ -248,6 +253,7 @@ class FirestoreExampleRepository(FirestoreBaseRepository):
                     "pack_updated_at": now,
                     "lemma": lemma_label,
                     "sense_title": sense_title,
+                    "owner_user_id": owner_user_id,
                     **self._build_search_payload(en),
                 }
             )

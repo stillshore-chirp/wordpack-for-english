@@ -31,6 +31,7 @@ def test_production_defaults_to_cloud_run_ranges() -> None:
         environment="production",
         allowed_hosts=(_CLOUD_RUN_HOST,),
         admin_email_allowlist=("admin@example.com",),
+        disable_session_auth=False,
         _env_file=None,
     )
     assert config.trusted_proxy_ips == ("35.191.0.0/16", "130.211.0.0/22")
@@ -45,6 +46,7 @@ def test_production_requires_explicit_proxy_when_overridden() -> None:
             trusted_proxy_ips=(),
             allowed_hosts=(_CLOUD_RUN_HOST,),
             admin_email_allowlist=("admin@example.com",),
+            disable_session_auth=False,
             _env_file=None,
         )
 

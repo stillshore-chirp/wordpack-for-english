@@ -45,6 +45,7 @@ class FirestoreArticleRepository(FirestoreBaseRepository):
                 else stored.get("generation_duration_ms")
             ),
             "guest_public": bool(kwargs.get("guest_public", stored.get("guest_public", False))),
+            "owner_user_id": kwargs.get("owner_user_id", stored.get("owner_user_id")),
         }
         doc_ref.set(payload, merge=True)
         if related_word_packs is not None:
@@ -162,6 +163,17 @@ class FirestoreArticleRepository(FirestoreBaseRepository):
             if data.get("article_id") == article_id:
                 link.reference.delete()
         return True
+
+    def get_article_visibility(self, article_id: str) -> dict[str, Any] | None:
+        doc = self._articles.document(article_id).get()
+        if not doc.exists:
+            return None
+        data = doc.to_dict() or {}
+        owner_raw = data.get("owner_user_id")
+        return {
+            "guest_public": bool(data.get("guest_public", False)),
+            "owner_user_id": str(owner_raw).strip() if owner_raw else None,
+        }
 
 
 FirestoreArticleStore = FirestoreArticleRepository

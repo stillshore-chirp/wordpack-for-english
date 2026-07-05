@@ -65,6 +65,7 @@ class FirestoreQuizRepository(FirestoreBaseRepository):
             "generation_completed_at": payload.get("generation_completed_at"),
             "generation_duration_ms": payload.get("generation_duration_ms"),
             "guest_public": bool(payload.get("guest_public", False)),
+            "owner_user_id": payload.get("owner_user_id", stored.get("owner_user_id")),
             "created_at": payload.get("created_at") or stored.get("created_at") or now,
             "updated_at": payload.get("updated_at") or now,
         }
@@ -113,6 +114,7 @@ class FirestoreQuizRepository(FirestoreBaseRepository):
             "generation_completed_at": data.get("generation_completed_at"),
             "generation_duration_ms": data.get("generation_duration_ms"),
             "guest_public": bool(data.get("guest_public", False)),
+            "owner_user_id": data.get("owner_user_id"),
             "created_at": str(data.get("created_at") or ""),
             "updated_at": str(data.get("updated_at") or ""),
         }
@@ -168,6 +170,17 @@ class FirestoreQuizRepository(FirestoreBaseRepository):
         doc_ref.update({"guest_public": value, "updated_at": self._now_iso()})
         return value
 
+    def get_quiz_visibility(self, quiz_id: str) -> dict[str, Any] | None:
+        doc = self._quizzes.document(quiz_id).get()
+        if not doc.exists:
+            return None
+        data = doc.to_dict() or {}
+        owner_raw = data.get("owner_user_id")
+        return {
+            "guest_public": bool(data.get("guest_public", False)),
+            "owner_user_id": str(owner_raw).strip() if owner_raw else None,
+        }
+
     def save_quiz_attempt(self, attempt_id: str, payload: Mapping[str, Any]) -> None:
         now = self._now_iso()
         self._quiz_attempts.document(attempt_id).set(
@@ -181,6 +194,7 @@ class FirestoreQuizRepository(FirestoreBaseRepository):
                 "started_at": payload.get("started_at"),
                 "submitted_at": payload.get("submitted_at") or now,
                 "elapsed_ms": payload.get("elapsed_ms"),
+                "owner_user_id": payload.get("owner_user_id"),
                 "created_at": payload.get("created_at") or now,
             }
         )

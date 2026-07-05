@@ -124,6 +124,7 @@ RUN_TIMEOUT_ARG=""
 MIN_INSTANCES_ARG=""
 NO_CPU_THROTTLING=false
 declare -a EXTRA_BUILD_ARGS=()
+declare -a CONFIG_PYTHON_CMD=()
 
 declare -A DEPLOY_ENV_KEYS=()
 declare -a IGNORE_DEPLOY_KEYS=(PROJECT_ID REGION CLOUD_RUN_SERVICE ARTIFACT_REPOSITORY IMAGE_TAG MACHINE_TYPE BUILD_TIMEOUT CLOUD_RUN_MIN_INSTANCES)
@@ -138,6 +139,23 @@ validate_min_instances() {
   fi
   err "Cloud Run minimum instances must be a non-negative integer or 'default'"
   exit 1
+}
+
+select_config_python_cmd() {
+  CONFIG_PYTHON_CMD=(python)
+
+  local is_apple_silicon current_arch
+  is_apple_silicon="$(sysctl -n hw.optional.arm64 2>/dev/null || true)"
+  [[ "$is_apple_silicon" == "1" ]] || return 0
+
+  current_arch="$(python -c 'import platform; print(platform.machine())' 2>/dev/null || true)"
+  [[ "$current_arch" == "x86_64" ]] || return 0
+
+  if command -v arch >/dev/null 2>&1 \
+    && arch -arm64 python -c 'import platform; raise SystemExit(0 if platform.machine() == "arm64" else 1)' >/dev/null 2>&1; then
+    CONFIG_PYTHON_CMD=(arch -arm64 python)
+    log "Detected x86_64 python on Apple Silicon; validating backend settings with native arm64 python"
+  fi
 }
 
 # コマンドライン引数のパース。
@@ -352,8 +370,9 @@ IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}:${IMAGE
 # Python 側の設定（Pydantic モデル）を一度ロードして、値が正しいかチェックします。
 # ここで失敗すれば Cloud Build へ進まないため、「壊れた設定で本番デプロイ」は防げます。
 require_cmd python
-log "Validating backend settings via python -m apps.backend.backend.config"
-PYTHONPATH="$REPO_ROOT" python -m apps.backend.backend.config >/dev/null
+select_config_python_cmd
+log "Validating backend settings via ${CONFIG_PYTHON_CMD[*]} -m apps.backend.backend.config"
+PYTHONPATH="$REPO_ROOT" "${CONFIG_PYTHON_CMD[@]}" -m apps.backend.backend.config >/dev/null
 log "Backend configuration validated successfully"
 
 # dry-run モードでは Cloud Build / Cloud Run には触らず、

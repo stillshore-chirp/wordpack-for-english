@@ -360,6 +360,9 @@ class ArticleImportFlow:
         "december",
     }
 
+    def __init__(self, *, owner_user_id: str | None = None) -> None:
+        self._owner_user_id = owner_user_id
+
     # ---- 役割別プロンプト（サブグラフ相当） ----
     def _prompt_title(self, text: str) -> str:
         return (
@@ -518,7 +521,14 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                 wp_id = generate_word_pack_id()
 
                 try:
-                    store.save_word_pack(wp_id, normalized, empty_word_pack.model_dump_json())
+                    store.save_word_pack(
+                        wp_id,
+                        normalized,
+                        empty_word_pack.model_dump_json(),
+                        metadata={"owner_user_id": self._owner_user_id}
+                        if self._owner_user_id
+                        else None,
+                    )
                     status = "created"
                     if lookup_error and warning_msg is None:
                         warning_msg = (
@@ -857,6 +867,7 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                         generation_started_at=started_at,
                         generation_completed_at=completed_at,
                         generation_duration_ms=duration_ms,
+                        owner_user_id=self._owner_user_id,
                     )
                     meta = store.get_article(article_id)
                     created_at = ""
@@ -963,6 +974,7 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                                 generation_started_at=started_at_db,
                                 generation_completed_at=completed_at_db,
                                 generation_duration_ms=fixed_duration,
+                                owner_user_id=self._owner_user_id,
                             )
                             s["llm_model"] = fixed_model or None
                             s["llm_params"] = fixed_params or None

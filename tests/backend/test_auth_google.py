@@ -131,6 +131,9 @@ def test_google_auth_success_flow(
     expected_hash = hashlib.sha256("user@example.com".lower().encode("utf-8")).hexdigest()[:12]
     assert latest["email_hash"] == expected_hash
     assert "email" not in latest
+    expected_user_hash = hashlib.sha256("sub-123".lower().encode("utf-8")).hexdigest()[:12]
+    assert latest["user_id_hash"] == expected_user_hash
+    assert "user_id" not in latest
     expected_display_hash = hashlib.sha256("Example User".lower().encode("utf-8")).hexdigest()[:12]
     assert latest["display_name_hash"] == expected_display_hash
     assert "display_name" not in latest
@@ -263,7 +266,9 @@ def test_google_auth_rejects_unverified_email(
     log = matching[-1]
     expected_hash = hashlib.sha256("pending@example.com".lower().encode("utf-8")).hexdigest()[:12]
     assert log["email_hash"] == expected_hash
-    assert log.get("user_id") == "sub-unverified"
+    expected_user_hash = hashlib.sha256("sub-unverified".lower().encode("utf-8")).hexdigest()[:12]
+    assert log["user_id_hash"] == expected_user_hash
+    assert "user_id" not in log
 
 
 def test_google_auth_invalid_signature(
