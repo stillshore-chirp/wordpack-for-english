@@ -81,7 +81,7 @@ class FirestoreRegenerateJobStore(_LegacyClockMixin, FirestoreRegenerateJobRepos
     """Legacy import path for the regenerate job repository."""
 
 
-class FirestoreSessionStore(_LegacyClockMixin, FirestoreSessionRepository):
+class FirestoreSessionStore(FirestoreSessionRepository):
     """Legacy import path for the session repository."""
 
 
