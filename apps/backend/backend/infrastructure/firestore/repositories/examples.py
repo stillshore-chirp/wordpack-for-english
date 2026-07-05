@@ -144,6 +144,14 @@ class FirestoreExampleRepository(FirestoreBaseRepository):
             )
         return (str(data.get("word_pack_id") or ""), next_checked, next_learned)
 
+    def get_example_word_pack_id(self, example_id: int) -> str | None:
+        snapshot = self._examples.document(str(example_id)).get()
+        if not snapshot.exists:
+            return None
+        data = snapshot.to_dict() or {}
+        word_pack_id = str(data.get("word_pack_id") or "").strip()
+        return word_pack_id or None
+
     def delete_example(self, word_pack_id: str, category: str, index: int) -> int | None:
         if index < 0:
             return None

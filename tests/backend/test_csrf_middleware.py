@@ -46,6 +46,22 @@ def test_trusted_origin_unsafe_request_is_allowed(monkeypatch) -> None:
     assert response.json() == {"ok": True}
 
 
+def test_trusted_origin_can_satisfy_cross_site_fetch_metadata(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "csrf_protection_enabled", True)
+    monkeypatch.setattr(settings, "csrf_trusted_origins", ("https://app.example",))
+
+    response = _client().post(
+        "/unsafe",
+        headers={
+            "origin": "https://app.example",
+            "sec-fetch-site": "cross-site",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+
+
 def test_missing_browser_origin_is_allowed_for_non_browser_clients(monkeypatch) -> None:
     monkeypatch.setattr(settings, "csrf_protection_enabled", True)
 

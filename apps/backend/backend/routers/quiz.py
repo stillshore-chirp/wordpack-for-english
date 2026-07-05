@@ -15,6 +15,7 @@ from ..authorization.policies import (
     ensure_user_write_allowed,
 )
 from ..authorization.principal import Principal
+from ..config import settings
 from ..infrastructure.llm.quiz_generator import QuizGenerateFlowAdapter
 from ..infrastructure.runtime import AsyncioTaskScheduler, PrefixedUuidGenerator, SystemClock
 from ..models.quiz import (
@@ -135,9 +136,23 @@ async def list_quizzes(
     offset: int = Query(default=0, ge=0),
 ) -> QuizListResponse:
     repository = get_store()
-    public_only = principal_from_request(request).is_guest
-    rows = repository.list_quizzes(limit=limit, offset=offset, public_only=public_only)
-    total = repository.count_quizzes(public_only=public_only)
+    principal = principal_from_request(request)
+    public_only = principal.is_guest
+    owner_user_id = (
+        principal.user_id
+        if principal.is_user and getattr(settings, "enforce_owner_scoping", False)
+        else None
+    )
+    rows = repository.list_quizzes(
+        limit=limit,
+        offset=offset,
+        public_only=public_only,
+        owner_user_id=owner_user_id,
+    )
+    total = repository.count_quizzes(
+        public_only=public_only,
+        owner_user_id=owner_user_id,
+    )
     items = [_list_item_from_quiz(Quiz.model_validate(row)) for row in rows]
     return QuizListResponse(items=items, total=total, limit=limit, offset=offset)
 
@@ -224,7 +239,16 @@ async def submit_quiz_attempt(
     req: QuizAttemptRequest,
     principal: Principal = Depends(require_user_permission(Permission.QUIZ_ATTEMPT_WRITE)),
 ) -> QuizAttemptResponse:
-    row = get_store().get_quiz(quiz_id)
+    repository = get_store()
+    visibility = repository.get_quiz_visibility(quiz_id)
+    if visibility is None:
+        raise HTTPException(status_code=404, detail="Quiz not found")
+    ensure_user_write_allowed(
+        principal,
+        owner_user_id=visibility.get("owner_user_id"),
+        not_found_detail="Quiz not found",
+    )
+    row = repository.get_quiz(quiz_id)
     if row is None:
         raise HTTPException(status_code=404, detail="Quiz not found")
     quiz = Quiz.model_validate(row)
@@ -243,7 +267,7 @@ async def submit_quiz_attempt(
         submitted_at=submitted_at,
         elapsed_ms=req.elapsed_ms,
     )
-    get_store().save_quiz_attempt(
+    repository.save_quiz_attempt(
         attempt_id,
         {
             "quiz_id": quiz_id,
@@ -271,9 +295,16 @@ async def list_quiz_attempts(
     quiz_id: str,
     limit: int = Query(default=20, ge=1, le=100),
     offset: int = Query(default=0, ge=0),
-    _principal: Principal = Depends(require_user_permission(Permission.QUIZ_READ)),
+    principal: Principal = Depends(require_user_permission(Permission.QUIZ_READ)),
 ) -> list[QuizAttemptResponse]:
-    if get_store().get_quiz(quiz_id) is None:
+    repository = get_store()
+    visibility = repository.get_quiz_visibility(quiz_id)
+    if visibility is None:
         raise HTTPException(status_code=404, detail="Quiz not found")
-    rows = get_store().list_quiz_attempts(quiz_id, limit=limit, offset=offset)
+    ensure_user_write_allowed(
+        principal,
+        owner_user_id=visibility.get("owner_user_id"),
+        not_found_detail="Quiz not found",
+    )
+    rows = repository.list_quiz_attempts(quiz_id, limit=limit, offset=offset)
     return [QuizAttemptResponse.model_validate(row) for row in rows]

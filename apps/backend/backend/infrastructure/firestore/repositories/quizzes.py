@@ -131,21 +131,36 @@ class FirestoreQuizRepository(FirestoreBaseRepository):
         offset: int = 0,
         *,
         public_only: bool = False,
+        owner_user_id: str | None = None,
     ) -> list[dict[str, Any]]:
         docs = list(self._quizzes.stream())
         if public_only:
             docs = [doc for doc in docs if bool((doc.to_dict() or {}).get("guest_public", False))]
+        elif owner_user_id is not None:
+            docs = [
+                doc
+                for doc in docs
+                if str((doc.to_dict() or {}).get("owner_user_id") or "") == owner_user_id
+            ]
         docs.sort(key=lambda d: str((d.to_dict() or {}).get("created_at") or ""), reverse=True)
         sliced = docs[max(0, offset) : max(0, offset) + max(0, limit)]
         return [self._hydrate_quiz(doc.id, doc.to_dict() or {}) for doc in sliced]
 
-    def count_quizzes(self, *, public_only: bool = False) -> int:
-        if not public_only:
-            return sum(1 for _ in self._quizzes.stream())
+    def count_quizzes(self, *, public_only: bool = False, owner_user_id: str | None = None) -> int:
+        if public_only:
+            return sum(
+                1
+                for snapshot in self._quizzes.stream()
+                if bool((snapshot.to_dict() or {}).get("guest_public", False))
+            )
+        if owner_user_id is not None:
+            return sum(
+                1
+                for snapshot in self._quizzes.stream()
+                if str((snapshot.to_dict() or {}).get("owner_user_id") or "") == owner_user_id
+            )
         return sum(
-            1
-            for snapshot in self._quizzes.stream()
-            if bool((snapshot.to_dict() or {}).get("guest_public", False))
+            1 for _ in self._quizzes.stream()
         )
 
     def delete_quiz(self, quiz_id: str) -> bool:

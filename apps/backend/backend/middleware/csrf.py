@@ -32,12 +32,14 @@ class CsrfProtectionMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         sec_fetch_site = (request.headers.get("sec-fetch-site") or "").lower()
+        origin = request.headers.get("origin")
+        if origin:
+            if not self._is_allowed_origin(request, origin):
+                return self._reject(request, reason="origin_mismatch", origin=origin)
+            return await call_next(request)
+
         if sec_fetch_site == "cross-site":
             return self._reject(request, reason="fetch_metadata_cross_site")
-
-        origin = request.headers.get("origin")
-        if origin and not self._is_allowed_origin(request, origin):
-            return self._reject(request, reason="origin_mismatch", origin=origin)
 
         return await call_next(request)
 

@@ -118,11 +118,18 @@ class FirestoreArticleRepository(FirestoreBaseRepository):
         )
 
     def list_articles(
-        self, limit: int = 50, offset: int = 0, *, public_only: bool = False
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        *,
+        public_only: bool = False,
+        owner_user_id: str | None = None,
     ) -> list[tuple[str, str, str, str, bool]]:
         query = self._articles
         if public_only:
             query = query.where("guest_public", "==", True)
+        elif owner_user_id is not None:
+            query = query.where("owner_user_id", "==", owner_user_id)
         docs = list(query.stream())
         docs.sort(key=lambda d: str((d.to_dict() or {}).get("created_at") or ""), reverse=True)
         sliced = docs[offset : offset + limit]
@@ -137,10 +144,14 @@ class FirestoreArticleRepository(FirestoreBaseRepository):
             for doc in sliced
         ]
 
-    def count_articles(self, *, public_only: bool = False) -> int:
+    def count_articles(
+        self, *, public_only: bool = False, owner_user_id: str | None = None
+    ) -> int:
         query = self._articles
         if public_only:
             query = query.where("guest_public", "==", True)
+        elif owner_user_id is not None:
+            query = query.where("owner_user_id", "==", owner_user_id)
         return sum(1 for _ in query.stream())
 
     def update_article_guest_public(self, article_id: str, guest_public: bool) -> bool | None:

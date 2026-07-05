@@ -13,6 +13,7 @@ from ...authorization.policies import (
     ensure_user_write_allowed,
 )
 from ...authorization.principal import Principal
+from ...config import settings
 from ...application.wordpack.create_empty_wordpack import build_empty_wordpack
 from ...infrastructure.llm.empty_wordpack_title import (
     EmptyWordPackTitleGenerationError,
@@ -88,6 +89,13 @@ async def list_word_packs(
             limit=limit, offset=offset
         )
         total = repository.count_public_word_packs()
+    elif principal.is_user and getattr(settings, "enforce_owner_scoping", False):
+        items_with_flags = repository.list_owned_word_packs_with_flags(
+            principal.user_id or "",
+            limit=limit,
+            offset=offset,
+        )
+        total = repository.count_owned_word_packs(principal.user_id or "")
     else:
         items_with_flags = repository.list_word_packs_with_flags(
             limit=limit, offset=offset

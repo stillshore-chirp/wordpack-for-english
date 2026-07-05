@@ -130,8 +130,19 @@ async def list_articles(
     request: Request,
     limit: int = Query(default=50, ge=1, le=100), offset: int = Query(default=0, ge=0)
 ) -> ArticleListResponse:
-    public_only = bool(getattr(request.state, "guest", False))
-    items_raw = store.list_articles(limit=limit, offset=offset, public_only=public_only)
+    principal = principal_from_request(request)
+    public_only = principal.is_guest
+    owner_user_id = (
+        principal.user_id
+        if principal.is_user and getattr(settings, "enforce_owner_scoping", False)
+        else None
+    )
+    items_raw = store.list_articles(
+        limit=limit,
+        offset=offset,
+        public_only=public_only,
+        owner_user_id=owner_user_id,
+    )
     items = [
         ArticleListItem(
             id=i[0],
@@ -142,7 +153,7 @@ async def list_articles(
         )
         for i in items_raw
     ]
-    total = store.count_articles(public_only=public_only)
+    total = store.count_articles(public_only=public_only, owner_user_id=owner_user_id)
     return ArticleListResponse(items=items, total=total, limit=limit, offset=offset)
 
 

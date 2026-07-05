@@ -73,6 +73,9 @@ class AppFirestoreRepository:
     def count_word_packs(self) -> int:
         return self.wordpacks.count_word_packs()
 
+    def count_owned_word_packs(self, owner_user_id: str) -> int:
+        return self.wordpacks.count_owned_word_packs(owner_user_id)
+
     def get_word_pack_metadata(self, word_pack_id: str) -> Mapping[str, Any] | None:
         return self.wordpacks.get_word_pack_metadata(word_pack_id)
 
@@ -88,6 +91,13 @@ class AppFirestoreRepository:
         self, limit: int = 50, offset: int = 0
     ) -> list[tuple[str, str, str, str, str, bool, Mapping[str, int], int, int, bool]]:
         return self.wordpacks.list_public_word_packs_with_flags(limit=limit, offset=offset)
+
+    def list_owned_word_packs_with_flags(
+        self, owner_user_id: str, limit: int = 50, offset: int = 0
+    ) -> list[tuple[str, str, str, str, str, bool, Mapping[str, int], int, int, bool]]:
+        return self.wordpacks.list_owned_word_packs_with_flags(
+            owner_user_id, limit=limit, offset=offset
+        )
 
     def delete_word_pack(self, word_pack_id: str) -> bool:
         return self.wordpacks.delete_word_pack(word_pack_id)
@@ -173,6 +183,9 @@ class AppFirestoreRepository:
             example_id, checked_increment, learned_increment
         )
 
+    def get_example_word_pack_id(self, example_id: int) -> str | None:
+        return self.examples.get_example_word_pack_id(example_id)
+
     def delete_example(self, word_pack_id: str, category: str, index: int) -> int | None:
         return self.examples.delete_example(word_pack_id, category, index)
 
@@ -256,14 +269,27 @@ class AppFirestoreRepository:
         return self.articles.get_article(article_id)
 
     def list_articles(
-        self, limit: int = 50, offset: int = 0, *, public_only: bool = False
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        *,
+        public_only: bool = False,
+        owner_user_id: str | None = None,
     ) -> list[tuple[str, str, str, str, bool]]:
         return self.articles.list_articles(
-            limit=limit, offset=offset, public_only=public_only
+            limit=limit,
+            offset=offset,
+            public_only=public_only,
+            owner_user_id=owner_user_id,
         )
 
-    def count_articles(self, *, public_only: bool = False) -> int:
-        return self.articles.count_articles(public_only=public_only)
+    def count_articles(
+        self, *, public_only: bool = False, owner_user_id: str | None = None
+    ) -> int:
+        return self.articles.count_articles(
+            public_only=public_only,
+            owner_user_id=owner_user_id,
+        )
 
     def update_article_guest_public(self, article_id: str, guest_public: bool) -> bool | None:
         return self.articles.update_article_guest_public(article_id, guest_public)
@@ -292,11 +318,22 @@ class AppFirestoreRepository:
         offset: int = 0,
         *,
         public_only: bool = False,
+        owner_user_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        return self.quizzes.list_quizzes(limit=limit, offset=offset, public_only=public_only)
+        return self.quizzes.list_quizzes(
+            limit=limit,
+            offset=offset,
+            public_only=public_only,
+            owner_user_id=owner_user_id,
+        )
 
-    def count_quizzes(self, *, public_only: bool = False) -> int:
-        return self.quizzes.count_quizzes(public_only=public_only)
+    def count_quizzes(
+        self, *, public_only: bool = False, owner_user_id: str | None = None
+    ) -> int:
+        return self.quizzes.count_quizzes(
+            public_only=public_only,
+            owner_user_id=owner_user_id,
+        )
 
     def delete_quiz(self, quiz_id: str) -> bool:
         return self.quizzes.delete_quiz(quiz_id)
