@@ -8,6 +8,7 @@ from starlette.middleware.cors import CORSMiddleware
 from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 
 from ..middleware import (
+    CsrfProtectionMiddleware,
     GuestWriteBlockMiddleware,
     RateLimitMiddleware,
     RequestIDMiddleware,
@@ -62,8 +63,9 @@ def configure_middleware(app: FastAPI, app_settings: Any) -> None:
     _maybe_add_timeout_middleware(app, app_settings)
     app.add_middleware(RequestIDMiddleware)
     app.add_middleware(GuestWriteBlockMiddleware)
+    app.add_middleware(CsrfProtectionMiddleware)
     # Middleware stack (inner -> outer):
-    # RequestID -> GuestWriteBlock -> AccessLog -> RateLimit
+    # RequestID -> GuestWriteBlock -> CsrfProtection -> AccessLog -> RateLimit
     # -> ForwardedHostTrustedHost -> SecurityHeaders -> ProxyHeaders.
     app.add_middleware(AccessLogAndMetricsMiddleware, app_settings=app_settings)
     app.add_middleware(

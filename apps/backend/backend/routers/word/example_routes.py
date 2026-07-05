@@ -5,6 +5,10 @@ from typing import Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from ...application.wordpack.errors import handle_flow_runtime_error
+from ...authorization.dependencies import require_user_permission
+from ...authorization.permissions import Permission
+from ...authorization.policies import ensure_user_write_allowed
+from ...authorization.principal import Principal
 from ...config import settings
 from ...infrastructure.llm.wordpack_generator import build_llm_info, get_override_value
 from ...flows.word_pack import WordPackFlow
@@ -18,7 +22,7 @@ from ...models.word import (
     ExampleTranscriptionTypingResponse,
 )
 from ...providers import get_llm_provider
-from .dependencies import get_store, require_authenticated_user
+from .dependencies import get_store, get_word_pack_visibility
 from .error_mapping import example_error_mapping
 from .schemas import ExamplesGenerateRequest
 
@@ -34,6 +38,7 @@ async def delete_example_from_word_pack(
     word_pack_id: str,
     category: ExampleCategory,
     index: int,
+    principal: Principal = Depends(require_user_permission(Permission.EXAMPLE_DELETE)),
 ) -> dict[str, object]:
     """保存済みWordPackから個々の例文を削除する（正規化テーブルを直接操作）。"""
 
@@ -41,6 +46,12 @@ async def delete_example_from_word_pack(
     wp = repository.get_word_pack(word_pack_id)
     if wp is None:
         raise HTTPException(status_code=404, detail="WordPack not found")
+    visibility = get_word_pack_visibility(repository, word_pack_id) or {}
+    ensure_user_write_allowed(
+        principal,
+        owner_user_id=visibility.get("owner_user_id"),
+        not_found_detail="WordPack not found",
+    )
 
     remaining = repository.delete_example(word_pack_id, category.value, index)
     if remaining is None:
@@ -62,7 +73,7 @@ async def generate_examples_for_word_pack(
     word_pack_id: str,
     category: ExampleCategory,
     req: ExamplesGenerateRequest | None = None,
-    _user: dict[str, str] = Depends(require_authenticated_user),
+    principal: Principal = Depends(require_user_permission(Permission.EXAMPLE_CREATE)),
 ) -> dict[str, Any]:
     """保存済みWordPackに、指定カテゴリの例文を2件追加生成して保存する。"""
 
@@ -70,6 +81,12 @@ async def generate_examples_for_word_pack(
     result = repository.get_word_pack(word_pack_id)
     if result is None:
         raise HTTPException(status_code=404, detail="WordPack not found")
+    visibility = get_word_pack_visibility(repository, word_pack_id) or {}
+    ensure_user_write_allowed(
+        principal,
+        owner_user_id=visibility.get("owner_user_id"),
+        not_found_detail="WordPack not found",
+    )
     lemma, _, _, _ = result
 
     req = req or ExamplesGenerateRequest()
@@ -200,6 +217,7 @@ async def list_examples(
 )
 async def bulk_delete_examples(
     req: ExamplesBulkDeleteRequest,
+    _principal: Principal = Depends(require_user_permission(Permission.EXAMPLE_DELETE)),
 ) -> ExamplesBulkDeleteResponse:
     """例文IDのリストを受け取り、一括で削除する。"""
 
@@ -213,7 +231,9 @@ async def bulk_delete_examples(
     summary="例文の文字起こし練習入力を記録",
 )
 async def update_example_transcription_typing(
-    example_id: int, req: ExampleTranscriptionTypingRequest
+    example_id: int,
+    req: ExampleTranscriptionTypingRequest,
+    _principal: Principal = Depends(require_user_permission(Permission.EXAMPLE_UPDATE)),
 ) -> ExampleTranscriptionTypingResponse:
     """入力長の妥当性を確認しつつ文字起こしカウントを加算する。"""
 

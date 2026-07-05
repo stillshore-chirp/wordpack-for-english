@@ -47,6 +47,7 @@ cp env.deploy.example .env.deploy
 - `SESSION_SECRET_KEY`
 - `ADMIN_EMAIL_ALLOWLIST`
 - `CORS_ALLOWED_ORIGINS`
+- `CSRF_PROTECTION_ENABLED=true`
 - `TRUSTED_PROXY_IPS`
 - `ALLOWED_HOSTS`
 - `GOOGLE_CLIENT_ID`
@@ -67,7 +68,7 @@ cp env.deploy.example .env.deploy
   --service wordpack-backend
 ```
 
-この段階で Pydantic 設定、必須環境変数、Cloud Run 向け env 変換を確認します。`ENVIRONMENT=production` で `ADMIN_EMAIL_ALLOWLIST`、`TRUSTED_PROXY_IPS`、`ALLOWED_HOSTS` などが不足している場合は、gcloud 実行前に失敗します。
+この段階で Pydantic 設定、必須環境変数、Cloud Run 向け env 変換を確認します。`ENVIRONMENT=production` で `ADMIN_EMAIL_ALLOWLIST`、`TRUSTED_PROXY_IPS`、`ALLOWED_HOSTS` などが不足している場合、または `DISABLE_SESSION_AUTH=true` / `CSRF_PROTECTION_ENABLED=false` が指定されている場合は、gcloud 実行前に失敗します。
 
 ## Cloud Run デプロイ
 

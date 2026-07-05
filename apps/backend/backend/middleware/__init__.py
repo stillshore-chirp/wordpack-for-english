@@ -20,6 +20,7 @@ from ..auth import (
 )
 from ..config import settings
 from ..logging import logger
+from .csrf import CsrfProtectionMiddleware
 
 # Forwarded host validation middleware lives in a dedicated module to keep
 # host header handling isolated from other cross-cutting middleware concerns.
@@ -31,6 +32,7 @@ __all__ = [
     "RequestIDMiddleware",
     "RateLimitMiddleware",
     "GuestWriteBlockMiddleware",
+    "CsrfProtectionMiddleware",
 ]
 
 
@@ -344,13 +346,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             )
             return self._anon_bucket_key, False
 
-        sub = payload.get("sub") if isinstance(payload, dict) else None
-        if isinstance(sub, str) and sub:
-            return sub, True
+        if isinstance(payload, dict):
+            for key in ("sub", "user_id", "session_id", "sid"):
+                value = payload.get(key)
+                if isinstance(value, str) and value:
+                    return value, True
 
         logger.debug(
             "rate_limit_session_invalid",
-            reason="missing_sub",
+            reason="missing_session_identity",
             client_ip=client_ip,
         )
         return self._anon_bucket_key, False

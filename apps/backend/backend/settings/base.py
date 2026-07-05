@@ -128,6 +128,20 @@ class Settings(BaseSettings):
         default=60 * 60 * 24 * 14,
         description="Session lifetime in seconds / セッションの寿命（秒）",
     )
+    session_idle_timeout_seconds: int = Field(
+        default=60 * 60 * 24 * 7,
+        description=(
+            "Idle timeout for authenticated server-side sessions / "
+            "認証済みサーバー側セッションのアイドルタイムアウト（秒）"
+        ),
+    )
+    session_last_seen_update_interval_seconds: int = Field(
+        default=300,
+        description=(
+            "Minimum interval for updating session last_seen_at / "
+            "セッション last_seen_at 更新の最小間隔（秒）"
+        ),
+    )
     guest_session_cookie_name: str = Field(
         default="wp_guest",
         description="Guest session cookie name / ゲストセッションCookie名",
@@ -135,6 +149,31 @@ class Settings(BaseSettings):
     guest_session_max_age_seconds: int = Field(
         default=60 * 60 * 24,
         description="Guest session lifetime in seconds / ゲストセッションの寿命（秒）",
+    )
+    guest_session_idle_timeout_seconds: int = Field(
+        default=60 * 60 * 24,
+        description=(
+            "Idle timeout for guest server-side sessions / "
+            "ゲストサーバー側セッションのアイドルタイムアウト（秒）"
+        ),
+    )
+    csrf_protection_enabled: bool = Field(
+        default=True,
+        description="Enable Fetch Metadata / Origin CSRF guard / CSRF ガードを有効化",
+    )
+    csrf_trusted_origins: Annotated[tuple[str, ...], NoDecode] = Field(
+        default=(),
+        description=(
+            "Comma separated origins allowed for unsafe cookie requests / "
+            "Cookie を伴う unsafe request を許可する Origin 一覧"
+        ),
+    )
+    enforce_owner_scoping: bool = Field(
+        default=False,
+        description=(
+            "Enforce owner_user_id checks for legacy-owned content / "
+            "owner_user_id による所有者スコープを強制する"
+        ),
     )
     llm_provider: str = Field(
         default="openai",
@@ -414,7 +453,7 @@ class Settings(BaseSettings):
 
         return tuple(normalised)
 
-    @field_validator("allowed_cors_origins", mode="before")
+    @field_validator("allowed_cors_origins", "csrf_trusted_origins", mode="before")
     @classmethod
     def _normalise_allowed_cors_origins(
         cls, raw_origins: object
@@ -614,6 +653,16 @@ class Settings(BaseSettings):
         if environment_name == "production" and not self.admin_email_allowlist:
             raise ValueError(
                 "ADMIN_EMAIL_ALLOWLIST must specify allowed admin emails in production"
+            )
+
+        if environment_name == "production" and self.disable_session_auth:
+            raise ValueError(
+                "DISABLE_SESSION_AUTH must not be enabled in production"
+            )
+
+        if environment_name == "production" and not self.csrf_protection_enabled:
+            raise ValueError(
+                "CSRF_PROTECTION_ENABLED must not be disabled in production"
             )
 
         is_trusted_proxy_explicit = "trusted_proxy_ips" in self.model_fields_set

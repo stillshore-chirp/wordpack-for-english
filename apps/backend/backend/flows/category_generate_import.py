@@ -36,6 +36,7 @@ class CategoryGenerateAndImportFlow:
         model: Optional[str] = None,
         reasoning: Optional[dict] = None,
         text: Optional[dict] = None,
+        owner_user_id: str | None = None,
     ) -> None:
         self._llm = get_llm_provider(
             model_override=model,
@@ -54,6 +55,7 @@ class CategoryGenerateAndImportFlow:
             # ArticleImportFlow は text_opts というキー名を採用しているため、ここで変換
             "text_opts": text,
         }
+        self._owner_user_id = owner_user_id
 
     def _prompt_lemma(
         self, category: ExampleCategory, attempted: list[str], avoid_existing: list[str]
@@ -222,7 +224,14 @@ class CategoryGenerateAndImportFlow:
         with span(
             trace=None, name="category.ensure_wordpack.create", input={"lemma": lemma}
         ):
-            store.save_word_pack(wp_id, lemma, empty_word_pack.model_dump_json())
+            store.save_word_pack(
+                wp_id,
+                lemma,
+                empty_word_pack.model_dump_json(),
+                metadata={"owner_user_id": self._owner_user_id}
+                if self._owner_user_id
+                else None,
+            )
         return wp_id
 
     def _generate_two_examples(
@@ -272,7 +281,7 @@ class CategoryGenerateAndImportFlow:
         # Import each example as an article
         article_ids: list[str] = []
         failures: list[dict[str, Any]] = []
-        art_flow = ArticleImportFlow()
+        art_flow = ArticleImportFlow(owner_user_id=self._owner_user_id)
         for idx, ex in enumerate(items):
             try:
                 with span(

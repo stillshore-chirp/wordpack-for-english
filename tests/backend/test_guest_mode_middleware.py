@@ -507,7 +507,7 @@ def test_guest_public_update_is_denied(
 
 
 def test_authenticated_user_not_treated_as_guest_when_cookie_lingers(
-    monkeypatch: pytest.MonkeyPatch,
+    guest_test_client: tuple[TestClient, AppFirestoreStore],
 ) -> None:
     """認証済みユーザーがゲスト Cookie を持っていてもゲスト扱いされないことを確認する。
     
@@ -515,23 +515,30 @@ def test_authenticated_user_not_treated_as_guest_when_cookie_lingers(
     ゲスト Cookie が残存していても認証済みとして扱われる。
     未登録語を要求した場合、403 (ゲスト拒否) ではなく 404 (未登録) を返すべき。
     
-    なぜ: 本来はセッション Cookie とゲスト Cookie の両方が存在する状況をテストすべきだが、
-          テスト環境で完全な認証フローをシミュレートするのは複雑なため、
-          request.state.user をモックして認証済み状態を再現する簡易的な検証を行う。
-    
-    注: この検証はユニットテストの限界を超えるため、E2E テストで補完することを推奨する。
-          ここでは、コードロジックが認証済みユーザーを優先することを確認する。
+    なぜ: Firebase Hosting 経由では __session が user/guest どちらの alias にもなるため、
+          ログイン後に wp_guest が残っても user の __session が優先される必要がある。
     """
-    # このテストはミドルウェアの順序やセッション認証の複雑な相互作用を伴うため、
-    # 現在のテストフレームワークでは適切にシミュレートできない。
-    # 代わりに、以下の検証を行う：
-    # 1. コードレビューで、認証済みユーザーのチェックが先に行われることを確認（Done）
-    # 2. E2E テストで、実際のログインフローでゲスト Cookie が残存する場合の挙動を検証（推奨）
-    
-    # この関数は後続の統合テストまたは E2E テストで実装する方針とし、
-    # ここではコードロジックのレビューによる検証で代替する。
-    pytest.skip(
-        "Authenticated user with lingering guest cookie requires full auth flow simulation. "
-        "Code logic has been updated to prioritize authenticated user check. "
-        "Will be covered in E2E integration test."
+    client, store = guest_test_client
+
+    guest_response = client.post("/api/auth/guest")
+    assert guest_response.status_code == HTTPStatus.OK
+    guest_cookie_name = settings.guest_session_cookie_name
+    assert client.cookies.get(guest_cookie_name)
+
+    user_id = "sub-cookie-lingers"
+    store.record_user_login(
+        google_sub=user_id,
+        email="linger@example.com",
+        display_name="Lingering Guest Cookie",
     )
+
+    import backend.auth as auth_module
+
+    user_token = auth_module.issue_session_token(user_id)
+    client.cookies.set(settings.session_cookie_name or "wp_session", user_token)
+    client.cookies.set("__session", user_token)
+    assert client.cookies.get(guest_cookie_name)
+
+    lookup = client.get("/api/word/", params={"lemma": "missing-authenticated"})
+    assert lookup.status_code == HTTPStatus.NOT_FOUND
+    assert lookup.json()["detail"] == "WordPack not found"

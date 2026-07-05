@@ -27,10 +27,11 @@ def test_production_requires_allowlist() -> None:
 
     with pytest.raises(ValueError):
         Settings(
-            environment="production",
-            allowed_hosts=(_CLOUD_RUN_HOST,),
-            _env_file=None,
-        )
+        environment="production",
+        allowed_hosts=(_CLOUD_RUN_HOST,),
+        disable_session_auth=False,
+        _env_file=None,
+    )
 
 
 def test_production_accepts_non_empty_allowlist() -> None:
@@ -40,6 +41,7 @@ def test_production_accepts_non_empty_allowlist() -> None:
         environment="production",
         allowed_hosts=(_CLOUD_RUN_HOST,),
         admin_email_allowlist=("admin@example.com", "owner@example.com"),
+        disable_session_auth=False,
         _env_file=None,
     )
 
@@ -64,6 +66,7 @@ def test_allowlist_accepts_comma_separated_env(monkeypatch: pytest.MonkeyPatch) 
         environment="production",
         allowed_hosts=(_CLOUD_RUN_HOST,),
         session_secret_key=_SAFE_SECRET,
+        disable_session_auth=False,
         _env_file=None,
     )
 

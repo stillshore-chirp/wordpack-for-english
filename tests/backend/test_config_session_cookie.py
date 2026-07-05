@@ -37,6 +37,7 @@ def test_session_cookie_secure_defaults_to_true_in_production() -> None:
         environment="production",
         allowed_hosts=(_CLOUD_RUN_HOST,),
         admin_email_allowlist=("admin@example.com",),
+        disable_session_auth=False,
         _env_file=None,
     )
     assert config.session_cookie_secure is True
@@ -50,6 +51,34 @@ def test_session_cookie_secure_respects_explicit_override() -> None:
         session_cookie_secure=False,
         allowed_hosts=(_CLOUD_RUN_HOST,),
         admin_email_allowlist=("admin@example.com",),
+        disable_session_auth=False,
         _env_file=None,
     )
     assert config.session_cookie_secure is False
+
+
+def test_production_rejects_disabled_session_auth() -> None:
+    """本番環境ではセッション認証無効化を拒否する。"""
+
+    with pytest.raises(ValueError, match="DISABLE_SESSION_AUTH"):
+        Settings(
+            environment="production",
+            allowed_hosts=(_CLOUD_RUN_HOST,),
+            admin_email_allowlist=("admin@example.com",),
+            disable_session_auth=True,
+            _env_file=None,
+        )
+
+
+def test_production_rejects_disabled_csrf_protection() -> None:
+    """本番環境では CSRF ガード無効化を拒否する。"""
+
+    with pytest.raises(ValueError, match="CSRF_PROTECTION_ENABLED"):
+        Settings(
+            environment="production",
+            allowed_hosts=(_CLOUD_RUN_HOST,),
+            admin_email_allowlist=("admin@example.com",),
+            disable_session_auth=False,
+            csrf_protection_enabled=False,
+            _env_file=None,
+        )

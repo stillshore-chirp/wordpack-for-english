@@ -16,6 +16,8 @@ from ..auth import (
     guest_session_cookie_names,
     issue_guest_session_token,
     issue_session_token,
+    read_session_cookie,
+    revoke_session_token,
     resolve_guest_session_cookie,
     resolve_session_cookie,
     session_cookie_names,
@@ -31,9 +33,18 @@ _google_request = google_requests.Request()
 
 
 class GoogleAuthRequest(BaseModel):
-    """Payload containing a Google-issued ID token from the frontend."""
+    """Payload containing Google Identity Services credential fields."""
 
-    id_token: str = Field(..., description="Google ID token generated on the client")
+    id_token: str | None = Field(default=None, description="Legacy Google ID token")
+    credential: str | None = Field(
+        default=None, description="Google Identity Services credential"
+    )
+    g_csrf_token: str | None = Field(
+        default=None, description="Google Identity Services CSRF token"
+    )
+
+    def token_value(self) -> str | None:
+        return self.credential or self.id_token
 
 
 class GoogleAuthResponse(BaseModel):
@@ -88,11 +99,35 @@ async def authenticate_with_google(payload: GoogleAuthRequest, request: Request)
             detail="Session secret key is not configured",
         )
 
+    token = payload.token_value()
+    if not token:
+        raise HTTPException(
+            status_code=HTTPStatus.BAD_REQUEST,
+            detail="Google credential is required",
+        )
+
+    if payload.credential is not None or payload.g_csrf_token is not None:
+        cookie_csrf_token = read_session_cookie(request, "g_csrf_token")
+        if (
+            not payload.g_csrf_token
+            or not cookie_csrf_token
+            or payload.g_csrf_token != cookie_csrf_token
+        ):
+            logger.warning(
+                "google_auth_failed",
+                user_id=None,
+                reason="csrf_token_mismatch",
+            )
+            raise HTTPException(
+                status_code=HTTPStatus.FORBIDDEN,
+                detail="Google CSRF token mismatch",
+            )
+
     try:
         # 許容する時計ずれ（nbf/iat/exp の境界緩和）。古い google-auth 互換のため TypeError 時は従来呼び出しにフォールバック。
         _skew = max(0, int(getattr(settings, "google_clock_skew_seconds", 0) or 0))
         id_info = _verify_google_id_token(
-            payload.id_token,
+            token,
             settings.google_client_id,
             _skew,
         )
@@ -110,6 +145,7 @@ async def authenticate_with_google(payload: GoogleAuthRequest, request: Request)
     display_name = id_info.get("name") or id_info.get("email")
     hosted_domain = id_info.get("hd") or id_info.get("hostedDomain")
     email_hash = _hash_for_log(email)
+    user_id_hash = _hash_for_log(str(google_sub) if google_sub else None)
     email_verified = id_info.get("email_verified")
 
     missing_claims = [
@@ -121,7 +157,7 @@ async def authenticate_with_google(payload: GoogleAuthRequest, request: Request)
     if not google_sub or not email or not display_name:
         logger.warning(
             "google_auth_failed",
-            user_id=google_sub,
+            user_id_hash=user_id_hash,
             reason="missing_claims",
             missing_claims=missing_claims,
             email_hash=email_hash,
@@ -133,7 +169,7 @@ async def authenticate_with_google(payload: GoogleAuthRequest, request: Request)
     if email_verified is not True:
         logger.warning(
             "google_auth_denied",
-            user_id=google_sub,
+            user_id_hash=user_id_hash,
             reason="email_unverified",
             email_hash=email_hash,
         )
@@ -146,7 +182,7 @@ async def authenticate_with_google(payload: GoogleAuthRequest, request: Request)
     if allowed_hd and hosted_domain != allowed_hd:
         logger.warning(
             "google_auth_denied",
-            user_id=google_sub,
+            user_id_hash=user_id_hash,
             reason="domain_mismatch",
             hosted_domain=hosted_domain,
             allowed_domain=allowed_hd,
@@ -161,7 +197,7 @@ async def authenticate_with_google(payload: GoogleAuthRequest, request: Request)
         if normalised_email not in allowlisted_emails:
             logger.warning(
                 "google_auth_denied",
-                user_id=google_sub,
+                user_id_hash=user_id_hash,
                 reason="email_not_allowlisted",
                 hosted_domain=hosted_domain,
                 email_hash=email_hash,
@@ -178,7 +214,7 @@ async def authenticate_with_google(payload: GoogleAuthRequest, request: Request)
         display_name=display_name,
         login_at=datetime.now(UTC),
     )
-    session_token = issue_session_token(google_sub)
+    session_token = issue_session_token(google_sub, request=request)
 
     response = JSONResponse(status_code=HTTPStatus.OK, content={"user": user})
     for cookie_name in session_cookie_names():
@@ -212,7 +248,7 @@ async def authenticate_as_guest(request: Request) -> JSONResponse:
             detail="Session secret key is not configured",
         )
 
-    guest_token = issue_guest_session_token()
+    guest_token = issue_guest_session_token(request=request)
     response = JSONResponse(status_code=HTTPStatus.OK, content={"mode": "guest"})
     for cookie_name in guest_session_cookie_names():
         response.set_cookie(
@@ -241,6 +277,7 @@ async def logout(request: Request, response: Response) -> Response:
     HttpOnly Cookie を使うため、このハンドラーで通常セッションと同じように失効させる。"""
 
     user_id, logout_mode = _resolve_logout_context(request)
+    _revoke_all_present_sessions(request)
 
     response.status_code = HTTPStatus.NO_CONTENT
     for cookie_name in dict.fromkeys((*session_cookie_names(), *guest_session_cookie_names())):
@@ -252,10 +289,24 @@ async def logout(request: Request, response: Response) -> Response:
         )
     logger.info(
         "logout_completed",
-        user_id=user_id,
+        user_id_hash=_hash_for_log(user_id),
         reason=logout_mode,
     )
     return response
+
+
+def _revoke_all_present_sessions(request: Request) -> None:
+    seen: set[tuple[str, str]] = set()
+    for cookie_name in session_cookie_names():
+        token = read_session_cookie(request, cookie_name)
+        if token and ("user", token) not in seen:
+            seen.add(("user", token))
+            revoke_session_token(token)
+    for cookie_name in guest_session_cookie_names():
+        token = read_session_cookie(request, cookie_name)
+        if token and ("guest", token) not in seen:
+            seen.add(("guest", token))
+            revoke_session_token(token, guest=True)
 
 
 def _resolve_logout_context(request: Request) -> tuple[str | None, str]:
@@ -269,6 +320,7 @@ def _resolve_logout_context(request: Request) -> tuple[str | None, str]:
         except (SignatureExpired, BadSignature, RuntimeError):
             session_invalid = True
         else:
+            revoke_session_token(session_token)
             sub = payload.get("sub") if isinstance(payload, dict) else None
             if not sub:
                 session_invalid = True
@@ -283,6 +335,7 @@ def _resolve_logout_context(request: Request) -> tuple[str | None, str]:
             return None, "guest_logout_invalid"
         if not isinstance(payload, dict) or payload.get("mode") != "guest":
             return None, "guest_logout_invalid"
+        revoke_session_token(guest_token, guest=True)
         request.state.guest = True
         return None, "guest_logout"
 
@@ -330,7 +383,7 @@ def _log_google_auth_success(
 
     logger.info(
         "google_auth_succeeded",
-        user_id=user_id,
+        user_id_hash=_hash_for_log(user_id),
         reason="authenticated",
         email_hash=_hash_for_log(email),
         display_name_hash=_hash_for_log(display_name),
