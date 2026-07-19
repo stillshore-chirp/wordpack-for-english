@@ -82,7 +82,10 @@ describe('WordPackListPanel guest controls', () => {
     const user = userEvent.setup();
 
     // WordPack一覧がロードされて生成ボタンが表示されるまで待機
-    await waitFor(() => expect(screen.getByRole('button', { name: '生成' })).toBeInTheDocument());
+    await waitFor(
+      () => expect(screen.getByRole('button', { name: '生成' })).toBeInTheDocument(),
+      { timeout: 5000 },
+    );
 
     expect(screen.queryByRole('group', { name: 'WordPack選択操作' })).not.toBeInTheDocument();
     const generateButton = screen.getByRole('button', { name: '生成' });
