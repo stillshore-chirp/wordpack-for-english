@@ -95,7 +95,7 @@ jobs:
         # CI 成功後にのみ実行される本番デプロイなので、サービスアカウントキーで明示的に認証する。
         # gcloud / Cloud Run 用の認証は auth action の credentials file を使う。
         id: gcp-auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@v3
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
           create_credentials_file: true
