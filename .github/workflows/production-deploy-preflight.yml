@@ -43,7 +43,7 @@ jobs:
         run: npm --prefix ./apps/frontend run build
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
@@ -159,7 +159,7 @@ jobs:
           project_id: ${{ env.CLOUD_RUN_PROJECT_ID }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
