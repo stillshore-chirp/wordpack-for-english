@@ -5,11 +5,20 @@ import { vi } from 'vitest';
 import type { MockedFunction } from 'vitest';
 import { AuthProvider, useAuth } from '../AuthContext';
 
-const googleProviderMock = vi.fn(({ children }: { clientId?: string; children: React.ReactNode }) => <>{children}</>);
+const googleProviderMock = vi.fn(
+  ({ children }: { clientId?: string; locale?: string; children: React.ReactNode }) => <>{children}</>,
+);
 
 vi.mock('@react-oauth/google', () => ({
-  GoogleOAuthProvider: ({ clientId, children }: { clientId: string; children: React.ReactNode }) =>
-    googleProviderMock({ clientId, children }),
+  GoogleOAuthProvider: ({
+    clientId,
+    locale,
+    children,
+  }: {
+    clientId: string;
+    locale?: string;
+    children: React.ReactNode;
+  }) => googleProviderMock({ clientId, locale, children }),
 }));
 
 const MissingFlagProbe: React.FC = () => {
@@ -104,7 +113,10 @@ describe('AuthProvider logging behaviour', () => {
       expect(screen.getByTestId('client-flag')).toHaveTextContent('ok');
     });
     expect(googleProviderMock).toHaveBeenCalledWith(
-      expect.objectContaining({ clientId: 'runtime-client.apps.googleusercontent.com' }),
+      expect.objectContaining({
+        clientId: 'runtime-client.apps.googleusercontent.com',
+        locale: 'ja',
+      }),
     );
   });
 
