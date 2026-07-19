@@ -114,7 +114,7 @@ jobs:
 
       - name: Set up Python
         # デプロイスクリプトが python -m apps.backend.backend.config で設定を検証するため Python 環境を用意する。
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
