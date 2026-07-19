@@ -13,7 +13,7 @@ langgraph
 chromadb
 cmudict
 g2p_en
-openai>=1.0.0
+openai>=2.46.0
 sentry-sdk
 # 短期復旧: 既存の観測コードは v2 系 API（trace/span）に合わせているため固定
 # v3 対応へ移行
