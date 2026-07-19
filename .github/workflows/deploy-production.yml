@@ -8,7 +8,8 @@ on:
 
 concurrency:
   group: deploy-production-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # canary 中断で traffic split を残さないよう、進行中の本番リリースは完走させて次を待機させる。
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -22,8 +23,13 @@ jobs:
     env:
       CLOUD_RUN_PROJECT_ID: ${{ secrets.GCP_SA_PROJECT_ID }}
       CLOUD_RUN_REGION: asia-northeast1
+      CLOUD_RUN_SERVICE: wordpack-backend
       CLOUD_RUN_ENV_FILE: .env.deploy
       CLOUD_RUN_MIN_INSTANCES: ${{ vars.CLOUD_RUN_MIN_INSTANCES || '1' }}
+      CLOUD_RUN_TRAFFIC_TAG: candidate
+      CLOUD_RUN_CANARY_PERCENT: "10"
+      CLOUD_RUN_CANARY_ATTEMPTS: "7"
+      CLOUD_RUN_CANARY_DELAY_SECONDS: "10"
       SKIP_FIRESTORE_INDEX_SYNC: "false"
       FIREBASE_PROJECT_ID: ${{ secrets.GCP_SA_PROJECT_ID }}
       TRIGGER_BRANCH: ${{ github.ref_name }}
@@ -116,7 +122,7 @@ jobs:
         # デプロイスクリプトが python -m apps.backend.backend.config で設定を検証するため Python 環境を用意する。
         uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
+          python-version: '3.14'
 
       - name: Install Python dependencies
         # Pydantic 設定検証など、デプロイ前の dry-run に必要な依存をインストールする。
@@ -130,17 +136,42 @@ jobs:
         env:
           CLOUD_RUN_PROJECT_ID: ${{ env.CLOUD_RUN_PROJECT_ID }}
           CLOUD_RUN_REGION: ${{ env.CLOUD_RUN_REGION }}
+          CLOUD_RUN_SERVICE: ${{ env.CLOUD_RUN_SERVICE }}
           CLOUD_RUN_ENV_FILE: ${{ env.CLOUD_RUN_ENV_FILE }}
           CLOUD_RUN_MIN_INSTANCES: ${{ env.CLOUD_RUN_MIN_INSTANCES }}
+          CLOUD_RUN_TRAFFIC_TAG: ${{ env.CLOUD_RUN_TRAFFIC_TAG }}
           SKIP_FIRESTORE_INDEX_SYNC: ${{ env.SKIP_FIRESTORE_INDEX_SYNC }}
         run: |
           make release-cloud-run \
             PROJECT_ID="${CLOUD_RUN_PROJECT_ID}" \
             REGION="${CLOUD_RUN_REGION}" \
+            SERVICE="${CLOUD_RUN_SERVICE}" \
             ENV_FILE="${CLOUD_RUN_ENV_FILE}" \
             MIN_INSTANCES="${CLOUD_RUN_MIN_INSTANCES}" \
+            NO_TRAFFIC=true \
+            TRAFFIC_TAG="${CLOUD_RUN_TRAFFIC_TAG}" \
             SKIP_FIRESTORE_INDEX_SYNC="${SKIP_FIRESTORE_INDEX_SYNC}" \
             TOOL=gcloud
+
+      - name: Promote staged Cloud Run revision
+        # タグ URL を直接検証してから 10% canary を 60 秒観測し、失敗時は直前の traffic 配分へ自動復旧する。
+        env:
+          CLOUD_RUN_PROJECT_ID: ${{ env.CLOUD_RUN_PROJECT_ID }}
+          CLOUD_RUN_REGION: ${{ env.CLOUD_RUN_REGION }}
+          CLOUD_RUN_SERVICE: ${{ env.CLOUD_RUN_SERVICE }}
+          CLOUD_RUN_TRAFFIC_TAG: ${{ env.CLOUD_RUN_TRAFFIC_TAG }}
+          CLOUD_RUN_CANARY_PERCENT: ${{ env.CLOUD_RUN_CANARY_PERCENT }}
+          CLOUD_RUN_CANARY_ATTEMPTS: ${{ env.CLOUD_RUN_CANARY_ATTEMPTS }}
+          CLOUD_RUN_CANARY_DELAY_SECONDS: ${{ env.CLOUD_RUN_CANARY_DELAY_SECONDS }}
+        run: |
+          scripts/promote_cloud_run_revision.sh \
+            --project-id "${CLOUD_RUN_PROJECT_ID}" \
+            --region "${CLOUD_RUN_REGION}" \
+            --service "${CLOUD_RUN_SERVICE}" \
+            --tag "${CLOUD_RUN_TRAFFIC_TAG}" \
+            --canary-percent "${CLOUD_RUN_CANARY_PERCENT}" \
+            --attempts "${CLOUD_RUN_CANARY_ATTEMPTS}" \
+            --delay-seconds "${CLOUD_RUN_CANARY_DELAY_SECONDS}"
 
       - name: Deploy Firebase Hosting
         # Cloud Run デプロイ後に Firebase Hosting を更新し、フロントエンドを同じリリースで揃える。
@@ -173,9 +204,8 @@ jobs:
             echo "- Commit: ${TRIGGER_SHA}"
             echo "- Trigger branch: ${TRIGGER_BRANCH}"
             echo "- Actor: ${{ github.actor }}"
-            echo "- Target project: ${CLOUD_RUN_PROJECT_ID}"
-            echo "- Region: ${CLOUD_RUN_REGION}"
-            echo "- Env file: ${CLOUD_RUN_ENV_FILE}"
+            echo "- Cloud Run rollout: tagged no-traffic candidate -> ${CLOUD_RUN_CANARY_PERCENT}% canary -> 100%"
+            echo "- Canary observation: $(( (CLOUD_RUN_CANARY_ATTEMPTS - 1) * CLOUD_RUN_CANARY_DELAY_SECONDS )) seconds"
             echo "- SKIP_FIRESTORE_INDEX_SYNC: ${SKIP_FIRESTORE_INDEX_SYNC}"
           } >> "$GITHUB_STEP_SUMMARY"
 

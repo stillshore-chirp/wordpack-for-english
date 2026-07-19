@@ -19,6 +19,8 @@ DEPLOY_CLOUD_RUN_ARGS = $(if $(PROJECT_ID),--project-id $(PROJECT_ID),) \
         $(if $(RUN_TIMEOUT),--run-timeout $(RUN_TIMEOUT),) \
         $(if $(MIN_INSTANCES),--min-instances $(MIN_INSTANCES),) \
         $(if $(NO_CPU_THROTTLING),--no-cpu-throttling,) \
+        $(if $(filter true,$(NO_TRAFFIC)),--no-traffic,) \
+        $(if $(TRAFFIC_TAG),--traffic-tag $(TRAFFIC_TAG),) \
         $(if $(GENERATE_SECRET),--generate-secret,) \
         $(if $(SECRET_LENGTH),--secret-length $(SECRET_LENGTH),) \
         $(if $(DRY_RUN),--dry-run,) \

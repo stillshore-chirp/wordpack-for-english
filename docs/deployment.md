@@ -18,7 +18,7 @@
 - `firebase-tools`
 - Docker
 - Node.js 20.19.0+
-- Python 3.13
+- Python 3.14
 
 初回は次を済ませます。
 
@@ -133,6 +133,35 @@ SKIP_FIRESTORE_INDEX_SYNC=true make release-cloud-run \
   ENV_FILE=configs/cloud-run/ci.env
 ```
 
+### Cloud Run の段階リリース
+
+GitHub Actions の本番デプロイは、Cloud Run の新 revision をすぐに全面公開しません。`candidate` tag を付けて traffic 0% でデプロイし、tag URL の `/healthz` を確認した後、10% canary を 60 秒間観測します。すべて成功した場合だけ 100% へ昇格し、その後に Firebase Hosting を更新します。
+
+canary 中の health check または traffic 更新に失敗した場合、`scripts/promote_cloud_run_revision.sh` はデプロイ前に記録した revision ごとの traffic 配分へ自動で戻します。traffic を割り当てる前の候補確認で失敗した場合は、本番 traffic に変更はありません。自動復旧自体が失敗した場合は、[OPERATIONS.md](../OPERATIONS.md) の手動 rollback を実施してください。
+
+同じ手順を手動で実行する場合:
+
+```bash
+make release-cloud-run \
+  PROJECT_ID=<project-id> \
+  REGION=asia-northeast1 \
+  SERVICE=wordpack-backend \
+  ENV_FILE=.env.deploy \
+  NO_TRAFFIC=true \
+  TRAFFIC_TAG=candidate
+
+scripts/promote_cloud_run_revision.sh \
+  --project-id <project-id> \
+  --region asia-northeast1 \
+  --service wordpack-backend \
+  --tag candidate \
+  --canary-percent 10 \
+  --attempts 7 \
+  --delay-seconds 10
+```
+
+`--no-traffic` は、候補を直接検証できるよう `--traffic-tag` と組み合わせた場合だけ受け付けます。
+
 ## Firebase Hosting
 
 Firebase Hosting は frontend の静的ファイルと `/api/**` rewrite を担当します。`firebase.json` では `apps/frontend/dist` を public directory とし、API は Cloud Run へ rewrite します。
@@ -169,6 +198,7 @@ firebase deploy --only hosting --project <firebase-project-id>
 - 手動実行用に `workflow_dispatch` もあります。
 - PR では本番 deploy job を作りません。
 - CI 成功を必須にする場合は、GitHub の branch protection で必要な check を指定します。
+- Cloud Run は traffic 0% の候補作成、tag URL の health check、10% canary、60 秒の継続確認、100% 昇格の順に進みます。canary 失敗時は直前の traffic 配分へ自動復旧します。
 - Cloud Run の minimum instances は repository variable `CLOUD_RUN_MIN_INSTANCES` で上書きできます。未設定時は紹介用 URL の初回体験を優先して `1` を使います。費用優先へ戻す場合は `0` を設定します。
 
 必要な repository secrets:

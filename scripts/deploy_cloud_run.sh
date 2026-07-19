@@ -43,6 +43,8 @@ Options:
   --run-timeout <duration>   Cloud Run request timeout, e.g. 360s, 10m (default: use existing service setting)
   --min-instances <count>    Cloud Run minimum instances, e.g. 0, 1, default (default: keep current)
   --no-cpu-throttling        Disable CPU throttling to allow background work after responses (default: keep current)
+  --no-traffic               Deploy a tagged revision without changing production traffic
+  --traffic-tag <tag>        Tag for a no-traffic candidate revision
   --generate-secret          Generate SESSION_SECRET_KEY via openssl if missing
   --secret-length <bytes>    Byte size for openssl rand -base64 (default: 48)
   --machine-type <type>      Cloud Build machine type (default: e2-medium)
@@ -123,6 +125,8 @@ BUILD_TIMEOUT="30m"
 RUN_TIMEOUT_ARG=""
 MIN_INSTANCES_ARG=""
 NO_CPU_THROTTLING=false
+NO_TRAFFIC=false
+TRAFFIC_TAG=""
 declare -a EXTRA_BUILD_ARGS=()
 declare -a CONFIG_PYTHON_CMD=()
 
@@ -139,6 +143,17 @@ validate_min_instances() {
   fi
   err "Cloud Run minimum instances must be a non-negative integer or 'default'"
   exit 1
+}
+
+validate_traffic_settings() {
+  if [[ -n "$TRAFFIC_TAG" && ! "$TRAFFIC_TAG" =~ ^[a-z]([-a-z0-9]{0,61}[a-z0-9])?$ ]]; then
+    err "Cloud Run traffic tag must be a lowercase DNS label of at most 63 characters"
+    exit 1
+  fi
+  if [[ "$NO_TRAFFIC" == true && -z "$TRAFFIC_TAG" ]]; then
+    err "--no-traffic requires --traffic-tag so the candidate can be health checked"
+    exit 1
+  fi
 }
 
 select_config_python_cmd() {
@@ -198,6 +213,14 @@ while [[ $# -gt 0 ]]; do
       NO_CPU_THROTTLING=true
       shift 1
       ;;
+    --no-traffic)
+      NO_TRAFFIC=true
+      shift 1
+      ;;
+    --traffic-tag)
+      TRAFFIC_TAG="$2"
+      shift 2
+      ;;
     --build-arg)
       EXTRA_BUILD_ARGS+=("$2")
       shift 2
@@ -251,6 +274,8 @@ if [[ ! "$SECRET_LENGTH" =~ ^[0-9]+$ ]]; then
   err "--secret-length must be numeric"
   exit 1
 fi
+
+validate_traffic_settings
 
 if [[ ! -f "$ENV_FILE" ]]; then
   err "Env file does not exist: $ENV_FILE"
@@ -383,6 +408,9 @@ if [[ "$DRY_RUN" == true ]]; then
   if [[ -n "$MIN_INSTANCES" ]]; then
     log "Prepared Cloud Run minimum instances: $MIN_INSTANCES"
   fi
+  if [[ "$NO_TRAFFIC" == true ]]; then
+    log "Prepared Cloud Run traffic mode: tagged candidate without production traffic"
+  fi
   exit 0
 fi
 
@@ -489,6 +517,12 @@ if [[ -n "${MIN_INSTANCES:-}" ]]; then
 fi
 if [[ "${NO_CPU_THROTTLING}" == "true" ]]; then
   RUN_ARGS+=(--no-cpu-throttling)
+fi
+if [[ "$NO_TRAFFIC" == true ]]; then
+  RUN_ARGS+=(--no-traffic)
+fi
+if [[ -n "$TRAFFIC_TAG" ]]; then
+  RUN_ARGS+=(--tag "$TRAFFIC_TAG")
 fi
 
 gcloud run deploy "$SERVICE_NAME" \

@@ -45,7 +45,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
+          python-version: '3.14'
 
       - name: Install backend dependencies for Cloud Run dry-run
         run: |
@@ -59,7 +59,9 @@ jobs:
             --env-file configs/cloud-run/ci.env \
             --project-id ci-placeholder-project \
             --region asia-northeast1 \
-            --service wordpack-backend
+            --service wordpack-backend \
+            --no-traffic \
+            --traffic-tag candidate
 
       - name: Plan Firebase Hosting API deploy without writes
         run: |
@@ -84,6 +86,7 @@ jobs:
           files = [
               Path(".github/workflows/deploy-production.yml"),
               Path("scripts/deploy_cloud_run.sh"),
+              Path("scripts/promote_cloud_run_revision.sh"),
               Path("scripts/deploy_firestore_indexes.sh"),
               Path("scripts/deploy_firebase_hosting.py"),
               Path("Makefile"),
@@ -161,7 +164,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: '3.13'
+          python-version: '3.14'
 
       - name: Verify gcloud can mint an access token
         run: |

@@ -21,7 +21,7 @@ jobs:
       API_P95_THRESHOLD_MS: "2000"
     strategy:
       matrix:
-        python-version: ['3.13']
+        python-version: ['3.14']
     steps:
       - name: Checkout
         uses: actions/checkout@v4

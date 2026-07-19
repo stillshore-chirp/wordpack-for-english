@@ -101,6 +101,25 @@ def test_backend_ci_builds_and_health_checks_python_314_container() -> None:
     )
 
 
+def test_production_runtime_and_single_version_jobs_default_to_python_314() -> None:
+    """Contract: production uses 3.14 while backend CI keeps the 3.13 compatibility lane."""
+    dockerfile = _read_text("Dockerfile.backend")
+    assert "ARG PYTHON_VERSION=3.14" in dockerfile
+
+    single_version_workflows = [
+        ".github/workflows/deploy-production.yml",
+        ".github/workflows/deploy-dry-run.yml",
+        ".github/workflows/production-deploy-preflight.yml",
+        ".github/workflows/perf-backend.yml",
+        ".github/workflows/playwright-visual.yml",
+        ".github/workflows/playwright-nightly.yml",
+    ]
+    for path in single_version_workflows:
+        yml = _read_text(path)
+        assert "3.14" in yml, f"{path} must use Python 3.14"
+        assert "3.13" not in yml, f"{path} must not remain pinned to Python 3.13"
+
+
 def test_ci_does_not_embed_production_deploy_job() -> None:
     """
     Contract: production deployment is owned by deploy-production.yml.
@@ -114,7 +133,15 @@ def test_ci_does_not_embed_production_deploy_job() -> None:
             "environment: production",
         ],
     )
-    _assert_contains_all(yml, ["cloud_run_guard:", "deploy_cloud_run.sh --dry-run"])
+    _assert_contains_all(
+        yml,
+        [
+            "cloud_run_guard:",
+            "deploy_cloud_run.sh --dry-run",
+            "shellcheck scripts/deploy_cloud_run.sh scripts/promote_cloud_run_revision.sh",
+            "--no-traffic --traffic-tag candidate",
+        ],
+    )
 
 
 def test_deploy_production_workflow_runs_on_main_push_or_manual_only() -> None:
@@ -127,6 +154,25 @@ def test_deploy_production_workflow_runs_on_main_push_or_manual_only() -> None:
     _assert_contains_all(on_block, ["push:", "branches:", "main", "workflow_dispatch:"])
     _assert_contains_none(on_block, ["workflow_run:", "pull_request:"])
     _assert_contains_none(yml, ["github.event.workflow_run."])
+    assert "cancel-in-progress: false" in yml
+
+
+def test_deploy_production_promotes_a_health_checked_no_traffic_candidate() -> None:
+    """Contract: Hosting deploy waits for the staged Cloud Run rollout to succeed."""
+    yml = _read_text(".github/workflows/deploy-production.yml")
+
+    _assert_contains_all(
+        yml,
+        [
+            "NO_TRAFFIC=true",
+            'TRAFFIC_TAG="${CLOUD_RUN_TRAFFIC_TAG}"',
+            "scripts/promote_cloud_run_revision.sh",
+            '--canary-percent "${CLOUD_RUN_CANARY_PERCENT}"',
+            '--attempts "${CLOUD_RUN_CANARY_ATTEMPTS}"',
+            '--delay-seconds "${CLOUD_RUN_CANARY_DELAY_SECONDS}"',
+        ],
+    )
+    assert yml.index("Promote staged Cloud Run revision") < yml.index("Deploy Firebase Hosting")
 
 
 def test_deploy_production_uses_api_based_hosting_deploy() -> None:
