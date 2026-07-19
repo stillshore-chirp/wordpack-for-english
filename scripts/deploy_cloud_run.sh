@@ -391,7 +391,11 @@ fi
 require_cmd git
 IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short HEAD)}"
 IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}:${IMAGE_TAG}"
-DEPLOYMENT_VERSION="$IMAGE_TAG"
+DEPLOYMENT_VERSION="${DEPLOYMENT_VERSION:-$IMAGE_TAG}"
+if [[ ! "$DEPLOYMENT_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
+  err "DEPLOYMENT_VERSION must use 1-128 URL-safe marker characters"
+  exit 1
+fi
 export DEPLOYMENT_VERSION
 add_env_key "DEPLOYMENT_VERSION"
 

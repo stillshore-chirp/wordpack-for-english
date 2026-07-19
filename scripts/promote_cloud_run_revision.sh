@@ -134,6 +134,10 @@ if [[ ! "$HEALTH_URL" =~ ^https:// ]]; then
   err "--health-url must use https://"
   exit 1
 fi
+if [[ ! "$EXPECTED_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
+  err "--expected-version must use 1-128 URL-safe marker characters"
+  exit 1
+fi
 
 require_cmd gcloud
 require_cmd curl

@@ -131,6 +131,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Prepare unique deployment marker
+        # 同じ commit の再実行でも旧 revision と候補を区別できるよう、実行ごとに新しい marker を生成する。
+        run: |
+          set -euo pipefail
+          DEPLOYMENT_VERSION="$(python -c 'import secrets; print(secrets.token_hex(16))')"
+          echo "::add-mask::${DEPLOYMENT_VERSION}"
+          echo "DEPLOYMENT_VERSION=${DEPLOYMENT_VERSION}" >> "${GITHUB_ENV}"
+
       - name: Run production Cloud Run release
         # Firestore インデックス同期の有無は環境変数で制御し、Makefile 側で一元管理する。
         # TOOL=gcloud で gcloud 認証の Firestore Admin API を使い、Firebase CLI と gcloud alpha に依存しない。
@@ -166,9 +174,7 @@ jobs:
           CLOUD_RUN_CANARY_DELAY_SECONDS: ${{ env.CLOUD_RUN_CANARY_DELAY_SECONDS }}
           CLOUD_RUN_CANARY_REQUESTS_PER_ATTEMPT: ${{ env.CLOUD_RUN_CANARY_REQUESTS_PER_ATTEMPT }}
           FIREBASE_PROJECT_ID: ${{ env.FIREBASE_PROJECT_ID }}
-          TRIGGER_SHA: ${{ env.TRIGGER_SHA }}
         run: |
-          EXPECTED_VERSION="$(git rev-parse --short "${TRIGGER_SHA}")"
           scripts/promote_cloud_run_revision.sh \
             --project-id "${CLOUD_RUN_PROJECT_ID}" \
             --region "${CLOUD_RUN_REGION}" \
@@ -179,7 +185,7 @@ jobs:
             --delay-seconds "${CLOUD_RUN_CANARY_DELAY_SECONDS}" \
             --requests-per-attempt "${CLOUD_RUN_CANARY_REQUESTS_PER_ATTEMPT}" \
             --health-url "https://${FIREBASE_PROJECT_ID}.web.app/api/config" \
-            --expected-version "${EXPECTED_VERSION}"
+            --expected-version "${DEPLOYMENT_VERSION}"
 
       - name: Deploy Firebase Hosting
         # Cloud Run デプロイ後に Firebase Hosting を更新し、フロントエンドを同じリリースで揃える。

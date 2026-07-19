@@ -96,6 +96,9 @@ make deploy-cloud-run PROJECT_ID=<project-id> REGION=asia-northeast1
 本番リリースでは `make release-cloud-run` を使うと、Firestore インデックス同期、Cloud Run dry-run、本番デプロイの順序を固定できます。
 
 ```bash
+DEPLOYMENT_VERSION="$(openssl rand -hex 16)"
+export DEPLOYMENT_VERSION
+
 make release-cloud-run \
   PROJECT_ID=<project-id> \
   REGION=asia-northeast1 \
@@ -160,11 +163,11 @@ scripts/promote_cloud_run_revision.sh \
   --delay-seconds 10 \
   --requests-per-attempt 10 \
   --health-url https://<firebase-project-id>.web.app/api/config \
-  --expected-version <image-tag>
+  --expected-version "${DEPLOYMENT_VERSION}"
 ```
 
 `--no-traffic` は、候補を一意に識別できるよう `--traffic-tag` と組み合わせた場合だけ受け付けます。
-デプロイスクリプトは image tag と同じ値を `DEPLOYMENT_VERSION` として候補 revision に設定します。`/api/config` は既存フィールドを維持し、`DEPLOYMENT_VERSION` が設定された revision だけ `deployment_version` も返します。これにより、初回導入時の旧 revision も同じ probe に 200 を返しつつ、revision 名や非公開 URL を workflow log に出さず、本番 traffic が候補まで到達したことを確認できます。各 probe は cache 回避用の query を付けます。
+GitHub Actions は実行ごとにランダムな `DEPLOYMENT_VERSION` を生成し、値を log で mask して候補 revision に設定します。手動実行でも、同じ commit や image tag を再デプロイしたときに旧 revision を候補と誤認しないよう、上の例のように毎回新しい値を指定してください。未指定時だけ image tag を fallback として使います。`/api/config` は既存フィールドを維持し、`DEPLOYMENT_VERSION` が設定された revision だけ `deployment_version` も返します。これにより、初回導入時の旧 revision も同じ probe に 200 を返しつつ、revision 名や非公開 URL を workflow log に出さず、本番 traffic が候補まで到達したことを確認できます。各 probe は cache 回避用の query を付けます。
 
 ## Firebase Hosting
 

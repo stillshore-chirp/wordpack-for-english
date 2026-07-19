@@ -172,9 +172,13 @@ def test_deploy_production_promotes_a_health_checked_no_traffic_candidate() -> N
             '--delay-seconds "${CLOUD_RUN_CANARY_DELAY_SECONDS}"',
             '--requests-per-attempt "${CLOUD_RUN_CANARY_REQUESTS_PER_ATTEMPT}"',
             '--health-url "https://${FIREBASE_PROJECT_ID}.web.app/api/config"',
-            '--expected-version "${EXPECTED_VERSION}"',
+            "Prepare unique deployment marker",
+            "secrets.token_hex(16)",
+            'echo "::add-mask::${DEPLOYMENT_VERSION}"',
+            '--expected-version "${DEPLOYMENT_VERSION}"',
         ],
     )
+    assert "EXPECTED_VERSION=" not in yml
     assert yml.index("Promote staged Cloud Run revision") < yml.index("Deploy Firebase Hosting")
 
 

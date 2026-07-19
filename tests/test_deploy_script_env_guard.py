@@ -78,7 +78,7 @@ def test_deploy_script_supports_tagged_no_traffic_candidates() -> None:
     assert 'RUN_ARGS+=(--tag "$TRAFFIC_TAG")' in deploy_script
     assert "$(if $(filter true,$(NO_TRAFFIC)),--no-traffic,)" in makefile
     assert "$(if $(TRAFFIC_TAG),--traffic-tag $(TRAFFIC_TAG),)" in makefile
-    assert 'DEPLOYMENT_VERSION="$IMAGE_TAG"' in deploy_script
+    assert 'DEPLOYMENT_VERSION="${DEPLOYMENT_VERSION:-$IMAGE_TAG}"' in deploy_script
     assert 'add_env_key "DEPLOYMENT_VERSION"' in deploy_script
 
 
