@@ -96,13 +96,13 @@ jobs:
 
       - name: Set up gcloud SDK
         # gcloud CLI をプロジェクト/リージョンに合わせて準備する。Cloud Run / Cloud Build は GA コマンドのみ使用。
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@v3
         with:
           project_id: ${{ env.CLOUD_RUN_PROJECT_ID }}
 
       - name: Set up Node.js for frontend build
         # Firebase Hosting の公開 artifact を作るため Node.js を用意する。
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
 
@@ -114,7 +114,7 @@ jobs:
 
       - name: Set up Python
         # デプロイスクリプトが python -m apps.backend.backend.config で設定を検証するため Python 環境を用意する。
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 

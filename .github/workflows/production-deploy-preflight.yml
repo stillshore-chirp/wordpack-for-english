@@ -28,7 +28,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up Node.js for frontend artifact
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
           cache: 'npm'
@@ -43,7 +43,7 @@ jobs:
         run: npm --prefix ./apps/frontend run build
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
@@ -154,12 +154,12 @@ jobs:
           export_environment_variables: true
 
       - name: Set up gcloud SDK
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@v3
         with:
           project_id: ${{ env.CLOUD_RUN_PROJECT_ID }}
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
