@@ -21,7 +21,7 @@ test.describe('認証導線', () => {
     });
 
     await test.step('Then: ログイン済み UI が表示される', async () => {
-      await page.waitForURL('**/', { waitUntil: 'domcontentloaded' });
+      await page.waitForURL('**/lexicon', { waitUntil: 'domcontentloaded' });
       await page.waitForLoadState('networkidle');
       // なぜ: ログイン状態の操作は常時表示のサイドバー下部に集約しているため。
       await expect(page.getByRole('button', { name: 'ログアウト' })).toBeVisible();
