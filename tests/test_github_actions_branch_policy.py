@@ -65,7 +65,40 @@ def test_deploy_dry_run_is_main_only() -> None:
     )
     assert "develop" not in yml, "deploy-dry-run must not run on develop"
     # Sanity: ensure this workflow is actually the one touching GCP.
-    _assert_contains_all(yml, ["google-github-actions/auth@v2", "setup-gcloud@v2"])
+    _assert_contains_all(yml, ["google-github-actions/auth@v2", "setup-gcloud@v3"])
+
+
+def test_backend_ci_runs_real_pytest_on_supported_python_versions() -> None:
+    """Contract: backend CI must run pytest with Java 21 and propagate failures."""
+    yml = _read_text(".github/workflows/ci.yml")
+
+    _assert_contains_all(
+        yml,
+        [
+            "python-version: ['3.13', '3.14']",
+            "actions/setup-java@v5",
+            "distribution: temurin",
+            "java-version: '21'",
+            'firebase emulators:exec --only firestore --project "${FIRESTORE_PROJECT_ID}" --config firebase.json "python -m pytest"',
+        ],
+    )
+    _assert_contains_none(yml, ["pytest | cat", '"pytest" | cat'])
+
+
+def test_backend_ci_builds_and_health_checks_python_314_container() -> None:
+    """Contract: Python 3.14 compatibility includes the production Docker path."""
+    yml = _read_text(".github/workflows/ci.yml")
+
+    _assert_contains_all(
+        yml,
+        [
+            "backend_container:",
+            "--build-arg PYTHON_VERSION=3.14",
+            "-f Dockerfile.backend",
+            "--env FIRESTORE_PROJECT_ID=wordpack-ci",
+            "http://127.0.0.1:8080/healthz",
+        ],
+    )
 
 
 def test_ci_does_not_embed_production_deploy_job() -> None:

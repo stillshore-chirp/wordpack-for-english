@@ -45,7 +45,7 @@ jobs:
       ENABLE_FIRESTORE_EMULATOR: "true"
     strategy:
       matrix:
-        python-version: ['3.13']
+        python-version: ['3.13', '3.14']
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -57,13 +57,19 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
 
+      - name: Set up Java for Firebase Emulator
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
       - name: Cache pip
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          key: ${{ runner.os }}-python-${{ matrix.python-version }}-pip-${{ hashFiles('requirements.txt') }}
           restore-keys: |
-            ${{ runner.os }}-pip-
+            ${{ runner.os }}-python-${{ matrix.python-version }}-pip-
 
       - name: Install dependencies
         run: |
@@ -77,10 +83,54 @@ jobs:
         run: |
           if [ "${ENABLE_FIRESTORE_EMULATOR}" = "true" ]; then
             npm install -g firebase-tools@15.22.0
-            FIRESTORE_EMULATOR_HOST="127.0.0.1:${FIRESTORE_EMULATOR_PORT}" FIRESTORE_PROJECT_ID="${FIRESTORE_PROJECT_ID}" firebase emulators:exec --only firestore --project "${FIRESTORE_PROJECT_ID}" --config firebase.json "pytest" | cat
+            FIRESTORE_EMULATOR_HOST="127.0.0.1:${FIRESTORE_EMULATOR_PORT}" FIRESTORE_PROJECT_ID="${FIRESTORE_PROJECT_ID}" firebase emulators:exec --only firestore --project "${FIRESTORE_PROJECT_ID}" --config firebase.json "python -m pytest"
           else
-            pytest | cat
+            python -m pytest
           fi
+
+  backend_container:
+    name: Backend container smoke (Python 3.14)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Build Python 3.14 backend image
+        run: docker build --build-arg PYTHON_VERSION=3.14 -f Dockerfile.backend -t wordpack-backend:python-3.14 .
+
+      - name: Start backend container
+        run: |
+          docker run --detach \
+            --name wordpack-backend-python314-smoke \
+            --env-file .env.ci \
+            --env FIRESTORE_PROJECT_ID=wordpack-ci \
+            --env GCP_PROJECT_ID=wordpack-ci \
+            --env FIRESTORE_EMULATOR_HOST=127.0.0.1:8081 \
+            --publish 127.0.0.1:8080:8080 \
+            wordpack-backend:python-3.14
+
+      - name: Verify backend health
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent --show-error --header 'Host: localhost' http://127.0.0.1:8080/healthz; then
+              exit 0
+            fi
+            if [ "$(docker inspect --format='{{.State.Running}}' wordpack-backend-python314-smoke)" != "true" ]; then
+              docker logs wordpack-backend-python314-smoke
+              exit 1
+            fi
+            sleep 1
+          done
+          docker logs wordpack-backend-python314-smoke
+          exit 1
+
+      - name: Remove backend smoke container
+        if: ${{ always() }}
+        run: docker rm --force wordpack-backend-python314-smoke || true
 
   security_headers:
     name: Security headers tests (pytest)

@@ -17,6 +17,16 @@
 | Playwright smoke | `npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/auth.spec.ts tests/e2e/guest.spec.ts tests/e2e/wordpack.spec.ts` | [playwright-e2e.md](./playwright-e2e.md) |
 | Visual regression | `E2E_BASE_URL=http://127.0.0.1:5173 npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/visual.spec.ts` | [visual-regression.md](./visual-regression.md) |
 
+Firestore Emulator を使う Backend CI は Java 21 を前提とし、Python 3.13 と 3.14 の両方で同じ pytest suite を実行します。さらに `Dockerfile.backend` を Python 3.14 でビルドし、コンテナの `/healthz` まで確認します。ローカルで同じ suite を実行する場合は、Java 21 と Firebase CLI を用意したうえで次を使います。
+
+```bash
+FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 \
+FIRESTORE_PROJECT_ID=wordpack-ci \
+GCP_PROJECT_ID=wordpack-ci \
+PYTHONPATH=apps/backend \
+firebase emulators:exec --only firestore --project wordpack-ci --config firebase.json "python -m pytest"
+```
+
 ## 種別ごとの正本
 
 - Backend performance: [docs/testing/backend-performance.md](./backend-performance.md)
