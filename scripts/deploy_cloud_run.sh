@@ -156,6 +156,30 @@ validate_traffic_settings() {
   fi
 }
 
+append_tagged_candidate_host() {
+  [[ "$NO_TRAFFIC" == true ]] || return 0
+
+  local service_url service_host candidate_host
+  service_url="$(gcloud run services describe "$SERVICE_NAME" \
+    --project "$PROJECT_ID" \
+    --region "$REGION" \
+    --format='value(status.url)' \
+    --quiet)"
+  service_host="${service_url#https://}"
+  service_host="${service_host%%/*}"
+  if [[ -z "$service_host" || ! "$service_host" =~ ^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$ ]]; then
+    err "Could not derive the Cloud Run service host required for tagged candidate health checks"
+    exit 1
+  fi
+
+  candidate_host="${TRAFFIC_TAG}---${service_host}"
+  if [[ ",${ALLOWED_HOSTS}," != *",${candidate_host},"* ]]; then
+    ALLOWED_HOSTS="${ALLOWED_HOSTS:+${ALLOWED_HOSTS},}${candidate_host}"
+    export ALLOWED_HOSTS
+  fi
+  log "Added the exact tagged candidate host to ALLOWED_HOSTS for staged health checks"
+}
+
 select_config_python_cmd() {
   CONFIG_PYTHON_CMD=(python)
 
@@ -425,6 +449,7 @@ else
 fi
 
 ensure_gcloud
+append_tagged_candidate_host
 
 # Cloud Build にソースコードを送って Docker イメージをビルドします。
 # IMAGE_URI には「リージョン + Artifact Registry + イメージタグ」が入っています。

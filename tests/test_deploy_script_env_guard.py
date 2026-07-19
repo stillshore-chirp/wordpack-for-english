@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -100,6 +101,70 @@ def test_deploy_script_requires_a_tag_for_no_traffic_mode() -> None:
 
     assert proc.returncode != 0
     assert "--no-traffic requires --traffic-tag" in proc.stdout + proc.stderr
+
+
+def test_deploy_script_adds_exact_tagged_host_to_candidate_env(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    captured_env = tmp_path / "cloud-run-env.yml"
+    gcloud_log = tmp_path / "gcloud.log"
+    fake_gcloud = fake_bin / "gcloud"
+    fake_gcloud.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "printf '%s\\n' \"$*\" >> \"${GCLOUD_LOG}\"\n"
+        "if [ \"$1 $2 $3\" = \"run services describe\" ]; then\n"
+        "  printf '%s\\n' 'https://wordpack-backend-123.asia-northeast1.run.app'\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [ \"$1 $2 $3\" = \"run deploy wordpack-backend\" ]; then\n"
+        "  while [ \"$#\" -gt 0 ]; do\n"
+        "    if [ \"$1\" = \"--env-vars-file\" ]; then\n"
+        "      cp \"$2\" \"${CAPTURED_ENV}\"\n"
+        "      break\n"
+        "    fi\n"
+        "    shift\n"
+        "  done\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    fake_gcloud.chmod(0o755)
+
+    proc = subprocess.run(
+        [
+            "scripts/deploy_cloud_run.sh",
+            "--env-file",
+            "configs/cloud-run/ci.env",
+            "--project-id",
+            "ci-placeholder-project",
+            "--region",
+            "asia-northeast1",
+            "--service",
+            "wordpack-backend",
+            "--no-traffic",
+            "--traffic-tag",
+            "candidate",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{Path(sys.executable).parent}:{os.environ['PATH']}",
+            "GCLOUD_LOG": str(gcloud_log),
+            "CAPTURED_ENV": str(captured_env),
+            "SKIP_FIRESTORE_INDEX_SYNC": "true",
+            "DISABLE_SESSION_AUTH": "false",
+        },
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    deployed_env = captured_env.read_text(encoding="utf-8")
+    assert (
+        'ALLOWED_HOSTS: "ci-wordpack.a.run.app,api-ci.wordpack.dev,'
+        'candidate---wordpack-backend-123.asia-northeast1.run.app"'
+    ) in deployed_env
+    assert "*.run.app" not in deployed_env
 
 
 def test_release_cloud_run_stops_when_index_sync_fails(tmp_path: Path) -> None:

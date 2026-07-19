@@ -161,6 +161,7 @@ scripts/promote_cloud_run_revision.sh \
 ```
 
 `--no-traffic` は、候補を直接検証できるよう `--traffic-tag` と組み合わせた場合だけ受け付けます。
+デプロイスクリプトは既存 Cloud Run service の既定 URL から、その tag 専用 Host を導出し、当該 Host だけを候補 revision の `ALLOWED_HOSTS` に追加します。Cloud Run 全体を許可する wildcard は追加しません。
 
 ## Firebase Hosting
 
