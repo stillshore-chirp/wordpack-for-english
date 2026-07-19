@@ -139,6 +139,7 @@ def request_trace(
                                 status_message=str(exc)[:500],
                             )
                         except Exception:
+                            # 観測失敗で本来のアプリ例外を隠さない。
                             pass
                         raise
                     finally:
@@ -148,6 +149,7 @@ def request_trace(
                         try:
                             parent_span.update(metadata=final_metadata)
                         except Exception:
+                            # duration の記録失敗はリクエスト結果へ影響させない。
                             pass
             return
     # --- v3: context manager でスパンを開始し、その内側で処理を実行する ---
@@ -274,6 +276,7 @@ def span(
                             status_message=str(exc)[:500],
                         )
                     except Exception:
+                        # 観測失敗で本来のアプリ例外を隠さない。
                         pass
                     raise
                 finally:
@@ -283,6 +286,7 @@ def span(
                     try:
                         s.update(metadata=final_metadata)
                     except Exception:
+                        # duration の記録失敗は処理結果へ影響させない。
                         pass
         finally:
             pass

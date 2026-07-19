@@ -92,16 +92,17 @@ def test_langfuse_v4_observations_record_errors(
     monkeypatch.setattr(tracing, "_langfuse_client", client)
     monkeypatch.setattr(tracing, "propagate_attributes", fake_propagate_attributes)
 
-    with pytest.raises(RuntimeError, match="boom"):
-        with tracing.request_trace(name="request"):
-            raise RuntimeError("boom")
-
-    error_update = client.observations[0].updates[0]
-    assert error_update["level"] == "ERROR"
-    assert error_update["status_message"] == "boom"
-    final_metadata = client.observations[0].updates[-1]["metadata"]
-    assert final_metadata["error"] == "boom"
-    assert "duration_ms" in final_metadata
+    try:
+        with pytest.raises(RuntimeError, match="boom"):
+            with tracing.request_trace(name="request"):
+                raise RuntimeError("boom")
+    finally:
+        error_update = client.observations[0].updates[0]
+        assert error_update["level"] == "ERROR"
+        assert error_update["status_message"] == "boom"
+        final_metadata = client.observations[0].updates[-1]["metadata"]
+        assert final_metadata["error"] == "boom"
+        assert "duration_ms" in final_metadata
 
 
 def test_langfuse_v4_child_observation_records_errors(
@@ -116,12 +117,13 @@ def test_langfuse_v4_child_observation_records_errors(
     monkeypatch.setattr(tracing, "_langfuse_client", client)
     monkeypatch.setattr(tracing, "propagate_attributes", fake_propagate_attributes)
 
-    with tracing.request_trace(name="request") as trace_context:
-        with pytest.raises(ValueError, match="child failed"):
-            with tracing.span(trace=trace_context["trace"], name="child"):
-                raise ValueError("child failed")
-
-    child_updates = client.observations[1].updates
-    assert child_updates[0]["level"] == "ERROR"
-    assert child_updates[0]["status_message"] == "child failed"
-    assert child_updates[-1]["metadata"]["error"] == "child failed"
+    try:
+        with tracing.request_trace(name="request") as trace_context:
+            with pytest.raises(ValueError, match="child failed"):
+                with tracing.span(trace=trace_context["trace"], name="child"):
+                    raise ValueError("child failed")
+    finally:
+        child_updates = client.observations[1].updates
+        assert child_updates[0]["level"] == "ERROR"
+        assert child_updates[0]["status_message"] == "child failed"
+        assert child_updates[-1]["metadata"]["error"] == "child failed"
