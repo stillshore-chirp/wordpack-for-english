@@ -16,6 +16,7 @@
 - [`docs/ai-governance/00-index.md`](docs/ai-governance/00-index.md)、[`docs/ai-governance/02-uiux-review-framework.md`](docs/ai-governance/02-uiux-review-framework.md)、[`docs/ai-governance/03-evidence-and-completion-gates.md`](docs/ai-governance/03-evidence-and-completion-gates.md) を読む。
 - 変更内容に応じて、ユーザー価値、熟練者効率、満足感・信頼感の詳細文書も読む。
 - 完了前に state matrix、novice simulation、ユーザー価値評価、accessibility review、visual hierarchy review、熟練者効率確認、満足感・信頼感確認、counter-review、検証証跡を残す。コードが build できるだけでは UI/UX 完了ではない。
+- UI 変更がある PR では、該当画面・状態の変更前スクリーンショットと変更後スクリーンショットを PR 本文に添付する。取得できない場合は、理由、代替証跡、残リスクを PR 本文と最終回答に明記し、完了扱いにしない。
 
 ---
 

@@ -3,8 +3,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-import pytest
-
 from backend.application.quiz import generation_jobs
 from backend.models.quiz import Quiz, QuizGenerateRequest
 
@@ -119,28 +117,41 @@ class PersistentJobStore:
         return dict(record) if record is not None else None
 
 
-class FakeQuizGenerateFlow:
-    def __init__(self, *, store: object) -> None:
-        self._store = store
-
-    def run(self, req: QuizGenerateRequest) -> Quiz:
+class FakeQuizGenerator:
+    async def generate(self, req: QuizGenerateRequest, store: object) -> Quiz:
         return Quiz.model_validate(_quiz_payload())
 
 
-def test_quiz_generation_job_status_reads_persistent_store(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+class FakeClock:
+    def now_iso(self) -> str:
+        return "2024-01-01T00:00:00+00:00"
+
+
+class FakeIdGenerator:
+    def new_id(self) -> str:
+        return "quiz-job:persistent"
+
+
+def test_quiz_generation_job_status_reads_persistent_store() -> None:
     async def scenario() -> None:
         store = PersistentJobStore()
-        monkeypatch.setattr(generation_jobs, "QuizGenerateFlow", FakeQuizGenerateFlow)
 
         req = QuizGenerateRequest.model_validate({"lemmas": ["latency"]})
-        enqueued = await generation_jobs.enqueue_quiz_generation_job(req, store)
+        enqueued = await generation_jobs.enqueue_quiz_generation_job(
+            req,
+            store,
+            generator=FakeQuizGenerator(),
+            scheduler=None,
+            id_generator=FakeIdGenerator(),
+            clock=FakeClock(),
+        )
         generation_jobs._quiz_generation_jobs.clear()
 
         status = None
         for _ in range(20):
-            status = await generation_jobs.get_quiz_generation_job(enqueued.job_id, store)
+            status = await generation_jobs.get_quiz_generation_job(
+                enqueued.job_id, store, clock=FakeClock()
+            )
             if status is not None and status.status == "succeeded":
                 break
             await asyncio.sleep(0.01)

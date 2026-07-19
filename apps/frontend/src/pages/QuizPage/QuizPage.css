@@ -151,10 +151,28 @@
   padding: 0.35rem 0.7rem;
 }
 
-.quiz-generator label {
+.quiz-generator label,
+.quiz-field {
   min-width: 0;
   display: grid;
   gap: 0.35rem;
+  color: var(--quiz-muted);
+  font-size: 0.83rem;
+  font-weight: 800;
+}
+
+.quiz-field-heading {
+  min-width: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.quiz-field-heading label {
+  min-width: auto;
+  display: inline;
   color: var(--quiz-muted);
   font-size: 0.83rem;
   font-weight: 800;

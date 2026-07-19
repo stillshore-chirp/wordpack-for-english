@@ -8,6 +8,7 @@ export {
 
 export {
   createEmptyWordPackRequest,
+  deleteWordPackRequest,
   fetchWordPack,
   fetchWordPackList,
   generateWordPackRequest,

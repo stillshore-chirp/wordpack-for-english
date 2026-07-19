@@ -3,7 +3,7 @@ import { useAuth } from '../../AuthContext';
 import { AppRightRail, RailCard } from '../../components/AppRightRail';
 import { GuestLock } from '../../components/GuestLock';
 import { WordPackPreviewModal } from '../../components/WordPackPreviewModal';
-import { ApiError } from '../../lib/fetcher';
+import { ApiError } from '../../shared/api/ApiError';
 import { validateLemmaInput } from '../../lib/lemmaValidation';
 import { APP_EVENTS, dispatchAppEvent } from '../../shared/events/appEvents';
 import {

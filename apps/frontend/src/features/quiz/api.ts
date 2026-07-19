@@ -1,4 +1,4 @@
-import { fetchJson } from '../../lib/fetcher';
+import { fetchJson } from '../../shared/api/fetchJson';
 import type {
   Quiz,
   QuizAttemptRequest,

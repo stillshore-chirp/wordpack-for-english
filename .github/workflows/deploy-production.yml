@@ -23,6 +23,7 @@ jobs:
       CLOUD_RUN_PROJECT_ID: ${{ secrets.GCP_SA_PROJECT_ID }}
       CLOUD_RUN_REGION: asia-northeast1
       CLOUD_RUN_ENV_FILE: .env.deploy
+      CLOUD_RUN_MIN_INSTANCES: ${{ vars.CLOUD_RUN_MIN_INSTANCES || '1' }}
       SKIP_FIRESTORE_INDEX_SYNC: "false"
       FIREBASE_PROJECT_ID: ${{ secrets.GCP_SA_PROJECT_ID }}
       TRIGGER_BRANCH: ${{ github.ref_name }}
@@ -95,13 +96,13 @@ jobs:
 
       - name: Set up gcloud SDK
         # gcloud CLI をプロジェクト/リージョンに合わせて準備する。Cloud Run / Cloud Build は GA コマンドのみ使用。
-        uses: google-github-actions/setup-gcloud@v2
+        uses: google-github-actions/setup-gcloud@v3
         with:
           project_id: ${{ env.CLOUD_RUN_PROJECT_ID }}
 
       - name: Set up Node.js for frontend build
         # Firebase Hosting の公開 artifact を作るため Node.js を用意する。
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: '22'
 
@@ -113,7 +114,7 @@ jobs:
 
       - name: Set up Python
         # デプロイスクリプトが python -m apps.backend.backend.config で設定を検証するため Python 環境を用意する。
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
@@ -130,12 +131,14 @@ jobs:
           CLOUD_RUN_PROJECT_ID: ${{ env.CLOUD_RUN_PROJECT_ID }}
           CLOUD_RUN_REGION: ${{ env.CLOUD_RUN_REGION }}
           CLOUD_RUN_ENV_FILE: ${{ env.CLOUD_RUN_ENV_FILE }}
+          CLOUD_RUN_MIN_INSTANCES: ${{ env.CLOUD_RUN_MIN_INSTANCES }}
           SKIP_FIRESTORE_INDEX_SYNC: ${{ env.SKIP_FIRESTORE_INDEX_SYNC }}
         run: |
           make release-cloud-run \
             PROJECT_ID="${CLOUD_RUN_PROJECT_ID}" \
             REGION="${CLOUD_RUN_REGION}" \
             ENV_FILE="${CLOUD_RUN_ENV_FILE}" \
+            MIN_INSTANCES="${CLOUD_RUN_MIN_INSTANCES}" \
             SKIP_FIRESTORE_INDEX_SYNC="${SKIP_FIRESTORE_INDEX_SYNC}" \
             TOOL=gcloud
 

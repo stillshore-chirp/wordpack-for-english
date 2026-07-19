@@ -456,7 +456,11 @@ export const AuthProvider: React.FC<{ clientId: string; children: React.ReactNod
     return contextNode;
   }
 
-  return <GoogleOAuthProvider clientId={normalizedClientId}>{contextNode}</GoogleOAuthProvider>;
+  return (
+    <GoogleOAuthProvider clientId={normalizedClientId} locale="ja">
+      {contextNode}
+    </GoogleOAuthProvider>
+  );
 };
 
 export const useAuth = (): AuthContextValue => {

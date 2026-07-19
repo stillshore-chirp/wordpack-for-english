@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSettings } from '../../SettingsContext';
-import { ApiError } from '../../lib/fetcher';
+import { ApiError } from '../../shared/api/ApiError';
 import { createEmptyWordPackRequest, fetchWordPack } from '../../features/wordpack/api';
 import { useWordPackList } from '../../features/wordpack/hooks/useWordPackList';
 import type { WordPack } from '../../features/wordpack/types';

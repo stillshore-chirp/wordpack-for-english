@@ -34,6 +34,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--config", default="firebase.json", help="Path to firebase.json.")
     parser.add_argument("--public", help="Hosting public directory override.")
     parser.add_argument("--channel", default="live", help="Hosting channel ID.")
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--plan-only",
+        action="store_true",
+        help="Build the Hosting deploy plan without gcloud auth or Hosting API requests.",
+    )
+    mode.add_argument(
+        "--probe-only",
+        action="store_true",
+        help="Run the deploy plan and a read-only Hosting API probe without creating a version or release.",
+    )
     return parser.parse_args()
 
 
@@ -210,6 +221,36 @@ def version_id(version_name: str) -> str:
     return version_name.rstrip("/").split("/")[-1]
 
 
+def release_path(quoted_site: str, channel: str) -> str:
+    if channel == "live":
+        return f"/sites/{quoted_site}/releases"
+    quoted_channel = urllib.parse.quote(channel, safe="")
+    return f"/sites/{quoted_site}/channels/{quoted_channel}/releases"
+
+
+def print_preflight_plan(site: str, channel: str, files: dict[str, bytes], final_config: dict) -> None:
+    quoted_site = urllib.parse.quote(site, safe="")
+    print(f"[deploy_firebase_hosting] Preflight target site: {site}")
+    print(f"[deploy_firebase_hosting] Preflight target channel: {channel}")
+    print(f"[deploy_firebase_hosting] Preflight file count: {len(files)}")
+    print(
+        "[deploy_firebase_hosting] Preflight rewrite count: "
+        f"{len(final_config.get('rewrites', []))}"
+    )
+    print("[deploy_firebase_hosting] Planned write API requests:")
+    print(f"  - POST /sites/{quoted_site}/versions")
+    print("  - POST /{versionName}:populateFiles")
+    print("  - POST {uploadUrl}/{contentHash} for required uploads")
+    print(f"  - PATCH /sites/{quoted_site}/versions/{{versionId}}?update_mask=status,config")
+    print(f"  - POST {release_path(quoted_site, channel)}?versionName={{versionName}}")
+
+
+def probe_hosting_api(api: HostingApi, quoted_site: str, channel: str) -> None:
+    path = release_path(quoted_site, channel)
+    print(f"[deploy_firebase_hosting] Probing Hosting releases list: GET {path}")
+    api.request("GET", path, query={"pageSize": "1"})
+
+
 def deploy() -> None:
     args = parse_args()
     site = args.site or args.project
@@ -225,14 +266,23 @@ def deploy() -> None:
     hashes = {path: hashlib.sha256(content).hexdigest() for path, content in files.items()}
     print(f"[deploy_firebase_hosting] Prepared {len(files)} file(s) for site {site}")
 
+    final_config = {"rewrites": convert_rewrites(hosting_config.get("rewrites"))}
+    quoted_site = urllib.parse.quote(site, safe="")
+    if args.plan_only:
+        print_preflight_plan(site, args.channel, files, final_config)
+        print("[deploy_firebase_hosting] Plan-only preflight complete; no API requests were executed")
+        return
+
     token = run_gcloud_access_token()
     api = HostingApi(token, os.environ.get("FIREBASE_HOSTING_API_BASE_URL", DEFAULT_API_BASE))
-    quoted_site = urllib.parse.quote(site, safe="")
 
-    print(f"[deploy_firebase_hosting] Verifying Firebase Hosting site {site}")
-    api.request("GET", f"/sites/{quoted_site}")
+    if args.probe_only:
+        print_preflight_plan(site, args.channel, files, final_config)
+        probe_hosting_api(api, quoted_site, args.channel)
+        print("[deploy_firebase_hosting] Probe-only preflight complete; no write API requests were executed")
+        return
 
-    print("[deploy_firebase_hosting] Creating Hosting version")
+    print(f"[deploy_firebase_hosting] Creating Hosting version for site {site}")
     create_result = api.request("POST", f"/sites/{quoted_site}/versions", {"status": "CREATED"})
     name = create_result.get("name")
     if not isinstance(name, str) or not name:
@@ -258,20 +308,19 @@ def deploy() -> None:
         )
     print(f"[deploy_firebase_hosting] Uploaded {len(required_hashes)} new file(s)")
 
-    final_config = {"rewrites": convert_rewrites(hosting_config.get("rewrites"))}
     vid = version_id(name)
     print("[deploy_firebase_hosting] Finalizing Hosting version")
     api.request(
         "PATCH",
         f"/sites/{quoted_site}/versions/{urllib.parse.quote(vid, safe='')}",
         {"status": "FINALIZED", "config": final_config},
-        query={"updateMask": "status,config"},
+        query={"update_mask": "status,config"},
     )
 
     print(f"[deploy_firebase_hosting] Releasing version to channel {args.channel}")
     api.request(
         "POST",
-        f"/sites/{quoted_site}/channels/{urllib.parse.quote(args.channel, safe='')}/releases",
+        release_path(quoted_site, args.channel),
         {},
         query={"versionName": name},
     )

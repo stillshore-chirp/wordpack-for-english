@@ -1,0 +1,46 @@
+{
+  "task": "clean-architecture-completion",
+  "issue": 522,
+  "branch": "codex/complete-clean-architecture",
+  "base_branch": "origin/main",
+  "status": "in_progress",
+  "completed": [
+    "issue_first",
+    "mandatory_docs_review",
+    "backend_architecture_boundary_test",
+    "frontend_architecture_boundary_script",
+    "ci_frontend_architecture_check",
+    "wordpack_flow_infrastructure_adapter",
+    "empty_wordpack_title_adapter",
+    "wordpack_guest_public_application_cleanup",
+    "wordpack_regeneration_job_ports",
+    "quiz_generation_job_ports",
+    "frontend_feature_api_shared_transport",
+    "backend_test_module_isolation",
+    "docs_update",
+    "full_verification"
+  ],
+  "in_progress": [],
+  "pending": [
+    "commit",
+    "push",
+    "pull_request",
+    "ci_watch",
+    "codex_review_threads"
+  ],
+  "verification": {
+    "backend_targeted": "passed: ENVIRONMENT=test FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIRESTORE_PROJECT_ID=wordpack-ci GCP_PROJECT_ID=wordpack-ci ADMIN_EMAIL_ALLOWLIST=test@example.com SESSION_SECRET_KEY=<test-only random 32+ chars> PYTHONPATH=apps/backend pytest -q --no-cov tests/backend/test_architecture_boundaries.py tests/backend/test_word_regenerate_async.py tests/backend/test_quiz_generation_jobs.py tests/backend/test_word_router_package.py tests/backend/test_quiz_api.py",
+    "backend_full": "passed: FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 FIRESTORE_PROJECT_ID=wordpack-ci GCP_PROJECT_ID=wordpack-ci ADMIN_EMAIL_ALLOWLIST=test@example.com SESSION_SECRET_KEY=<test-only random 32+ chars> PYTHONPATH=apps/backend pytest -q --no-cov",
+    "security_headers": "passed: PYTHONPATH=apps/backend pytest -q --no-cov tests/test_security_headers.py",
+    "frontend_architecture": "passed: node ./scripts/check_frontend_architecture_boundaries.mjs",
+    "frontend_typecheck": "passed: cd apps/frontend && npx tsc -p tsconfig.json",
+    "frontend_tests": "passed: cd apps/frontend && npm test -- --coverage --silent",
+    "frontend_build": "passed: cd apps/frontend && npm run build",
+    "playwright_smoke": "passed: npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/auth.spec.ts tests/e2e/guest.spec.ts tests/e2e/wordpack.spec.ts",
+    "diff_check": "passed: git diff --check"
+  },
+  "notes": [
+    "origin/main is used as base because local main is checked out by another worktree.",
+    "No user-visible UI behavior change is intended; frontend changes route existing calls through feature/shared adapters."
+  ]
+}

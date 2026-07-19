@@ -47,16 +47,19 @@ def _reload_backend_app(
     # backend.* を一度破棄して設定と永続層のキャッシュをリセット
     for name in list(sys.modules.keys()):
         if name == "backend" or name.startswith("backend."):
-            sys.modules.pop(name)
+            monkeypatch.delitem(sys.modules, name, raising=False)
 
     # 必須依存が未導入でも import できるよう最低限スタブ化
     lg_mod = types.ModuleType("langgraph")
     graph_mod = types.ModuleType("langgraph.graph")
     graph_mod.StateGraph = object  # 最小限のダミー
     lg_mod.graph = graph_mod
-    sys.modules.setdefault("langgraph", lg_mod)
-    sys.modules.setdefault("langgraph.graph", graph_mod)
-    sys.modules.setdefault("chromadb", types.SimpleNamespace())
+    if "langgraph" not in sys.modules:
+        monkeypatch.setitem(sys.modules, "langgraph", lg_mod)
+    if "langgraph.graph" not in sys.modules:
+        monkeypatch.setitem(sys.modules, "langgraph.graph", graph_mod)
+    if "chromadb" not in sys.modules:
+        monkeypatch.setitem(sys.modules, "chromadb", types.SimpleNamespace())
     client = use_fake_firestore_client(monkeypatch, firestore_client)
 
     # 設定・ストアを新しい環境変数で初期化

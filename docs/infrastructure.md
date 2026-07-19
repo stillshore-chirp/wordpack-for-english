@@ -130,6 +130,7 @@ flowchart LR
         FrontendTest["Frontend tests<br/>(vitest)"]
         PlaywrightSmoke["Playwright smoke<br/>(PR critical flows)"]
         CloudRunGuard["Cloud Run config guard<br/>(dry-run)"]
+        DeployPreflight["Production deploy preflight<br/>(no deploy)"]
     end
 
     subgraph CD["CD"]
@@ -147,6 +148,7 @@ flowchart LR
     BackendTest --> PlaywrightSmoke
     FrontendTest --> PlaywrightSmoke
     SecurityTest --> CloudRunGuard
+    Actions -->|PR| DeployPreflight
     Actions -->|main push| DryRun
     Actions -->|main push| ProductionDeploy
     ProductionDeploy --> FirestoreIndex
@@ -164,23 +166,23 @@ flowchart LR
 | **Playwright smoke** | `pull_request`（Backend / Frontend テスト成功後） | Playwright の主要導線スモークテスト（`auth.spec.ts` / `guest.spec.ts` / `wordpack.spec.ts`） |
 | **Visual regression** | `pull_request`（UI 変更のみ） | UI 変更が検知された場合に Playwright の視覚回帰 (`tests/e2e/visual.spec.ts`) を実行 |
 | **Cloud Run config guard** | Security headers 成功後 | デプロイスクリプトの lint と dry-run 検証 |
+| **Production deploy preflight** | `pull_request` / `pull_request_target` / 手動実行 | PR コードでは secrets なしの frontend build、Cloud Run dry-run、Hosting API plan を実行し、secrets を使う read-only probe は base branch の信頼済みコードだけで実行 |
 | **Cloud Run dry-run** | `main` push | `CD / Cloud Run dry-run` として main に取り込まれた commit のチェック一覧に表示し、`make release-cloud-run` の dry-run モードを実行 |
 | **Deploy to production** | `main` push / 手動実行 | `deploy-production.yml` が `make release-cloud-run` と Firebase Hosting deploy を実行。PR では本番デプロイ job を作らない |
 
-Cloud Run dry-run と `Deploy to production` は `main` ブランチへの push で直接起動し、GitHub のコミットチェック一覧に CD の状態を表示する。PR では本番デプロイ job を作らず、マージ前のデプロイ検証は CI 内の Cloud Run config guard に限定する。CI 成功を必須にする場合は main ブランチ保護でチェックを必須化する。
+Cloud Run dry-run と `Deploy to production` は `main` ブランチへの push で直接起動し、GitHub のコミットチェック一覧に CD の状態を表示する。PR では本番デプロイ job を作らず、`Production deploy preflight` で非破壊の事前検証を行う。CI 成功を必須にする場合は main ブランチ保護でチェックを必須化する。
 
-CD のチェック表示は GitHub Actions と Cloud Build の二経路で行う。main への push または手動リリース時は `Deploy to production` ワークフローが起動する。Cloud Build は `cloudbuild.backend.yaml` 内で GitHub Checks API に結果を送信する。`deploy-production.yml` から `GITHUB_CHECKS_TOKEN` を渡すことで、Cloud Build の成功結果もコミットチェック一覧に追加される。
+CD のチェック表示は GitHub Actions に集約する。main への push または手動リリース時は `Deploy to production` ワークフローが起動し、その job の成功/失敗で本番デプロイの状態を確認する。Cloud Build は `cloudbuild.backend.yaml` でバックエンド image build のみを担当し、GitHub Checks API への通知は行わない。これにより Cloud Build 内の外部通知が詰まって Cloud Run デプロイ開始前に止まるリスクを避ける。
 
 ### E2E 実行レイヤ（Playwright）
 
-Playwright の E2E は実行レイヤごとにスコープとブラウザを分離する。PR では最短のスモークのみを CI に含め、回帰は schedule（cron）または手動実行（workflow_dispatch）で起動する専用ワークフローで扱う。
+Playwright の E2E は実行レイヤごとにスコープとブラウザを分離する。PR では最短のスモークのみを CI に含め、フル回帰は必要時に手動実行（workflow_dispatch）で起動する専用ワークフローで扱う。
 
 | レイヤ | トリガー | ブラウザ | 実行コマンド | 成果物 |
 |---|---|---|---|---|
 | PR スモーク | `pull_request` | Chromium | `npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/auth.spec.ts tests/e2e/guest.spec.ts tests/e2e/wordpack.spec.ts` | `playwright-report/`, `test-results/` |
 | PR ビジュアル回帰 | `pull_request`（`apps/frontend/src/**`, `apps/frontend/**/*.css`, `apps/frontend/**/*.tsx` の変更時） | Chromium | `npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/visual.spec.ts` | `playwright-report/`, `test-results/` |
-| 夜間回帰 | `schedule (cron: 0 2 * * *)` / `workflow_dispatch` | Chromium | `npx playwright test -c tests/e2e/playwright.config.ts --browser=chromium` | `playwright-report/`, `test-results/` |
-| 週次クロスブラウザ | `schedule (cron: 0 3 * * 1)` / `workflow_dispatch` | Firefox / WebKit | `npx playwright test -c tests/e2e/playwright.config.ts --browser=firefox` / `npx playwright test -c tests/e2e/playwright.config.ts --browser=webkit` | `playwright-report/`, `test-results/` |
+| 手動回帰 | `workflow_dispatch` | Chromium | `npx playwright test -c tests/e2e/playwright.config.ts --browser=chromium` | `playwright-report/`, `test-results/` |
 
 各レイヤの実行前に `npx playwright install --with-deps` を実行してブラウザを取得する。成果物は GitHub Actions の Artifacts として 90 日保持する。ビジュアル回帰の差分画像や HTML レポートは対象ワークフローの実行画面から `playwright-report/` と `test-results/` をダウンロードして確認する。
 

@@ -17,6 +17,7 @@ DEPLOY_CLOUD_RUN_ARGS = $(if $(PROJECT_ID),--project-id $(PROJECT_ID),) \
         $(if $(MACHINE_TYPE),--machine-type $(MACHINE_TYPE),) \
         $(if $(BUILD_TIMEOUT),--timeout $(BUILD_TIMEOUT),) \
         $(if $(RUN_TIMEOUT),--run-timeout $(RUN_TIMEOUT),) \
+        $(if $(MIN_INSTANCES),--min-instances $(MIN_INSTANCES),) \
         $(if $(NO_CPU_THROTTLING),--no-cpu-throttling,) \
         $(if $(GENERATE_SECRET),--generate-secret,) \
         $(if $(SECRET_LENGTH),--secret-length $(SECRET_LENGTH),) \

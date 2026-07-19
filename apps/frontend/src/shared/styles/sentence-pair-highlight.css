@@ -1,0 +1,23 @@
+.sentence-pair-highlight {
+  border-radius: 6px;
+  transition: background-color 120ms ease, box-shadow 120ms ease;
+}
+
+.sentence-pair-highlight.is-paired {
+  cursor: pointer;
+}
+
+.sentence-pair-highlight.is-active {
+  background: color-mix(in srgb, var(--dict-accent) 20%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--dict-accent) 48%, transparent);
+}
+
+.sentence-pair-highlight.is-pinned {
+  background: color-mix(in srgb, var(--dict-green) 20%, transparent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--dict-green) 48%, transparent);
+}
+
+.sentence-pair-highlight:focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--dict-accent) 42%, transparent);
+  outline-offset: 2px;
+}

@@ -21,6 +21,53 @@ def test_deploy_script_requires_firestore_project_id_or_gcp_project_id() -> None
     assert "FIRESTORE_PROJECT_ID, GCP_PROJECT_ID, GOOGLE_CLOUD_PROJECT, or PROJECT_ID" in text
 
 
+def test_deploy_script_supports_cloud_run_min_instances() -> None:
+    deploy_script = Path("scripts/deploy_cloud_run.sh").read_text(encoding="utf-8")
+    makefile = Path("Makefile").read_text(encoding="utf-8")
+    ci_workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
+    dry_run_workflow = Path(".github/workflows/deploy-dry-run.yml").read_text(encoding="utf-8")
+    production_workflow = Path(".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
+    deploy_env_example = Path("env.deploy.example").read_text(encoding="utf-8")
+
+    assert "--min-instances <count>" in deploy_script
+    assert "CLOUD_RUN_MIN_INSTANCES: 例 0, 1, default" in deploy_script
+    assert 'RUN_ARGS+=(--min "$MIN_INSTANCES")' in deploy_script
+    assert "$(if $(MIN_INSTANCES),--min-instances $(MIN_INSTANCES),)" in makefile
+    assert "--min-instances 1" in ci_workflow
+    assert 'CLOUD_RUN_MIN_INSTANCES: "1"' in dry_run_workflow
+    assert "MIN_INSTANCES=${{ env.CLOUD_RUN_MIN_INSTANCES }}" in dry_run_workflow
+    assert "CLOUD_RUN_MIN_INSTANCES: ${{ vars.CLOUD_RUN_MIN_INSTANCES || '1' }}" in production_workflow
+    assert 'MIN_INSTANCES="${CLOUD_RUN_MIN_INSTANCES}"' in production_workflow
+    assert "CLOUD_RUN_MIN_INSTANCES=1" in deploy_env_example
+
+
+def test_deploy_script_rejects_invalid_cloud_run_min_instances() -> None:
+    proc = subprocess.run(
+        [
+            "scripts/deploy_cloud_run.sh",
+            "--dry-run",
+            "--env-file",
+            "configs/cloud-run/ci.env",
+            "--project-id",
+            "ci-placeholder-project",
+            "--region",
+            "asia-northeast1",
+            "--service",
+            "wordpack-backend",
+            "--min-instances",
+            "one",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    combined_output = proc.stdout + proc.stderr
+
+    assert proc.returncode != 0
+    assert "Cloud Run minimum instances must be a non-negative integer or 'default'" in combined_output
+    assert "Validating backend settings" not in combined_output
+
+
 def test_release_cloud_run_stops_when_index_sync_fails(tmp_path: Path) -> None:
     fake_cloud_run = tmp_path / "fake_cloud_run.sh"
     fake_cloud_run.write_text(

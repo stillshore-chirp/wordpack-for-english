@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-import sys
+from importlib import import_module
+from collections.abc import Mapping
 from typing import Any, Awaitable, Callable
 
 from fastapi import Request
 
-from ...application.wordpack.generate_wordpack import run_wordpack_flow as _run_wordpack_flow
+from ...infrastructure.llm.wordpack_generator import run_wordpack_flow as _run_wordpack_flow
 from ...auth import get_current_user
 from ...config import settings
 from ...id_factory import generate_word_pack_id as _generate_word_pack_id
@@ -28,7 +29,10 @@ async def require_authenticated_user(request: Request) -> dict[str, str]:
 
 
 def _word_router_package() -> Any | None:
-    return sys.modules.get("backend.routers.word")
+    try:
+        return import_module("backend.routers.word")
+    except Exception:
+        return None
 
 
 def get_store() -> Any:
@@ -45,3 +49,32 @@ def next_word_pack_id() -> str:
 def get_run_wordpack_flow() -> Callable[..., Awaitable[Any]]:
     package = _word_router_package()
     return getattr(package, "run_wordpack_flow", run_wordpack_flow)
+
+
+def get_word_pack_visibility(repository: Any, word_pack_id: str) -> Mapping[str, Any] | None:
+    resolver = getattr(repository, "get_word_pack_visibility", None)
+    if callable(resolver):
+        return resolver(word_pack_id)
+
+    get_word_pack = getattr(repository, "get_word_pack", None)
+    if callable(get_word_pack) and get_word_pack(word_pack_id) is None:
+        return None
+
+    guest_public = False
+    is_guest_public = getattr(repository, "is_word_pack_guest_public", None)
+    if callable(is_guest_public):
+        guest_public = bool(is_guest_public(word_pack_id))
+
+    owner_user_id = None
+    get_metadata = getattr(repository, "get_word_pack_metadata", None)
+    metadata_payload = get_metadata(word_pack_id) if callable(get_metadata) else None
+    metadata = (
+        metadata_payload.get("metadata")
+        if isinstance(metadata_payload, Mapping)
+        else None
+    )
+    if isinstance(metadata, Mapping):
+        owner_raw = metadata.get("owner_user_id")
+        owner_user_id = str(owner_raw).strip() if owner_raw else None
+
+    return {"guest_public": guest_public, "owner_user_id": owner_user_id}

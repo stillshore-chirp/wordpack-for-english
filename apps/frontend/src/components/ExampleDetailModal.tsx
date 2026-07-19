@@ -7,6 +7,8 @@ import { useAuth } from '../AuthContext';
 import { GuestLock } from './GuestLock';
 import { formatDateJst } from '../lib/date';
 import { buildExampleTranslationPairs, splitExampleExplanation } from '../lib/exampleExplanation';
+import { SentencePairSpan, useSentencePairHighlight } from './SentencePairHighlighter';
+import { createManualSentenceSegment } from '../lib/sentenceAlignment';
 
 export interface ExampleItemData {
   id: number;
@@ -173,6 +175,11 @@ export const ExampleDetailModal: React.FC<ExampleDetailModalProps> = ({
     transcriptionUpdating || !isTranscriptionWithinRange || transcriptionInput.trim().length === 0;
   const explanationSections = splitExampleExplanation(item?.grammar_ja);
   const translationPairs = item ? buildExampleTranslationPairs(item.en, item.ja) : [];
+  const exampleHighlightKey = item ? `${item.id}:${item.en}:${item.ja}` : null;
+  const exampleSentenceHighlight = useSentencePairHighlight(
+    Boolean(item?.ja?.trim()) && translationPairs.length > 1,
+    exampleHighlightKey,
+  );
   const formattedPackUpdatedAt = item?.word_pack_updated_at ? formatDateJst(item.word_pack_updated_at) || item.word_pack_updated_at : null;
   const formattedCreatedAt = item ? formatDateJst(item.created_at) || item.created_at : null;
 
@@ -254,6 +261,9 @@ export const ExampleDetailModal: React.FC<ExampleDetailModalProps> = ({
             line-height: 1.65;
             white-space: pre-wrap;
             overflow-wrap: anywhere;
+          }
+          .example-detail-sentence {
+            display: inline;
           }
           .example-detail-explanation {
             display: grid;
@@ -347,19 +357,42 @@ export const ExampleDetailModal: React.FC<ExampleDetailModalProps> = ({
             </div>
           </div>
           <ol className="example-detail-pairs" aria-label="原文と日本語訳の対応">
-            {translationPairs.map((pair) => (
-              <li key={`${pair.index}-${pair.en}`} className="example-detail-pair">
-                <span className="example-detail-pair__index" aria-hidden="true">{pair.index}</span>
-                <div className="example-detail-pair__text">
-                  <span className="example-detail-label">原文</span>
-                  <p>{pair.en}</p>
-                </div>
-                <div className="example-detail-pair__text">
-                  <span className="example-detail-label">日本語訳</span>
-                  <p>{pair.ja}</p>
-                </div>
-              </li>
-            ))}
+            {translationPairs.map((pair) => {
+              const pairKey = `sentence-${pair.index}`;
+              const englishSentence = createManualSentenceSegment(`example-en-${pair.index}`, pairKey, pair.index, pair.en);
+              const japaneseSentence = createManualSentenceSegment(`example-ja-${pair.index}`, pairKey, pair.index, pair.ja);
+              return (
+                <li key={`${pair.index}-${pair.en}`} className="example-detail-pair">
+                  <span className="example-detail-pair__index" aria-hidden="true">{pair.index}</span>
+                  <div className="example-detail-pair__text">
+                    <span className="example-detail-label">原文</span>
+                    <p>
+                      <SentencePairSpan
+                        sentence={englishSentence}
+                        language="en"
+                        highlight={exampleSentenceHighlight}
+                        className="example-detail-sentence"
+                      >
+                        {pair.en}
+                      </SentencePairSpan>
+                    </p>
+                  </div>
+                  <div className="example-detail-pair__text">
+                    <span className="example-detail-label">日本語訳</span>
+                    <p>
+                      <SentencePairSpan
+                        sentence={japaneseSentence}
+                        language="ja"
+                        highlight={exampleSentenceHighlight}
+                        className="example-detail-sentence"
+                      >
+                        {pair.ja}
+                      </SentencePairSpan>
+                    </p>
+                  </div>
+                </li>
+              );
+            })}
           </ol>
         </section>
         {item.grammar_ja ? (

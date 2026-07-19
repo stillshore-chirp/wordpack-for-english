@@ -3,17 +3,18 @@ from __future__ import annotations
 import json
 
 from fastapi import APIRouter, HTTPException, Query, Request
-from itsdangerous import BadSignature, SignatureExpired
 
+from ...auth import principal_from_request
 from ...application.wordpack.lookup_wordpack import (
     WordLookupResponse,
     build_lookup_response,
 )
-from ...auth import resolve_guest_session_cookie, verify_guest_session_token
+from ...authorization.policies import ResourceVisibility, ensure_read_allowed
 from ...models.word import WordPackRequest, _validate_lemma
 from .dependencies import (
     get_run_wordpack_flow,
     get_store,
+    get_word_pack_visibility,
     next_word_pack_id,
     run_wordpack_flow as default_run_wordpack_flow,
 )
@@ -44,9 +45,16 @@ async def lookup_word(
         if packed is None:
             raise HTTPException(status_code=404, detail="word pack not found")
 
-        if bool(getattr(request.state, "guest", False)):
-            if not repository.is_word_pack_guest_public(word_pack_id):
-                raise HTTPException(status_code=404, detail="word pack not found")
+        visibility = get_word_pack_visibility(repository, word_pack_id) or {}
+        ensure_read_allowed(
+            principal_from_request(request),
+            ResourceVisibility(
+                exists=True,
+                guest_public=bool(visibility.get("guest_public", False)),
+                owner_user_id=visibility.get("owner_user_id"),
+                not_found_detail="word pack not found",
+            ),
+        )
 
         lemma_from_store, data_json, created_at, updated_at = packed
         try:
@@ -62,17 +70,8 @@ async def lookup_word(
             updated_at=updated_at,
         )
 
-    is_guest = bool(getattr(request.state, "guest", False))
-    if not is_guest:
-        guest_token = resolve_guest_session_cookie(request)
-        if guest_token:
-            try:
-                verify_guest_session_token(guest_token)
-            except (SignatureExpired, BadSignature, RuntimeError):
-                pass
-            else:
-                is_guest = True
-    if is_guest:
+    principal = principal_from_request(request)
+    if principal.is_guest:
         raise HTTPException(
             status_code=403, detail="Guest mode cannot generate WordPack"
         )
@@ -91,7 +90,12 @@ async def lookup_word(
         http_error_mapping=generation_error_mapping(),
     )
     word_pack_id = next_word_pack_id()
-    repository.save_word_pack(word_pack_id, normalized_lemma, word_pack.model_dump_json())
+    repository.save_word_pack(
+        word_pack_id,
+        normalized_lemma,
+        word_pack.model_dump_json(),
+        metadata={"owner_user_id": principal.user_id},
+    )
 
     packed = repository.get_word_pack(word_pack_id)
     if packed is not None:

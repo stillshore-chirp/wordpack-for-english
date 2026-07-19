@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-import sys
+from importlib import import_module
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from ...application.common.errors import NotFoundError
 from ...application.wordpack import regenerate_jobs as regenerate_jobs_module
 from ...application.wordpack.regenerate_jobs import (
     RegenerateJob,
@@ -12,21 +13,20 @@ from ...application.wordpack.regenerate_jobs import (
     enqueue_regenerate_job,
     get_regenerate_job,
 )
+from ...authorization.dependencies import require_user_permission
+from ...authorization.permissions import Permission
+from ...authorization.policies import ensure_user_write_allowed
+from ...authorization.principal import Principal
+from ...infrastructure.runtime import AsyncioTaskScheduler, UuidHexGenerator
 from ...models.word import WordPack, WordPackRegenerateRequest
-from .dependencies import get_run_wordpack_flow, get_store, require_authenticated_user
+from .dependencies import get_run_wordpack_flow, get_store, get_word_pack_visibility
 from .error_mapping import regeneration_error_mapping
 
 router = APIRouter()
 
 
-def _word_router_package():
-    return sys.modules.get("backend.routers.word")
-
-
-def _sync_regenerate_job_dependencies() -> None:
-    package = _word_router_package()
-    regenerate_jobs_module.store = get_store()
-    regenerate_jobs_module.run_wordpack_flow = get_run_wordpack_flow()
+def _sync_legacy_regenerate_job_registry() -> None:
+    package = import_module("backend.routers.word")
     regenerate_jobs_module._regenerate_jobs = getattr(
         package, "_regenerate_jobs", _regenerate_jobs
     )
@@ -45,7 +45,7 @@ def _sync_regenerate_job_dependencies() -> None:
 async def regenerate_word_pack(
     word_pack_id: str,
     req: WordPackRegenerateRequest,
-    _user: dict[str, str] = Depends(require_authenticated_user),
+    principal: Principal = Depends(require_user_permission(Permission.WORDPACK_UPDATE)),
 ) -> WordPack:
     """既存のWordPackを再生成する。"""
 
@@ -53,6 +53,12 @@ async def regenerate_word_pack(
     result = repository.get_word_pack(word_pack_id)
     if result is None:
         raise HTTPException(status_code=404, detail="WordPack not found")
+    visibility = get_word_pack_visibility(repository, word_pack_id) or {}
+    ensure_user_write_allowed(
+        principal,
+        owner_user_id=visibility.get("owner_user_id"),
+        not_found_detail="WordPack not found",
+    )
 
     lemma, _, _, _ = result
 
@@ -61,10 +67,15 @@ async def regenerate_word_pack(
             lemma=lemma,
             req_opts=req,
             scope=req.regenerate_scope,
-            http_error_mapping=regeneration_error_mapping(),
+            error_mapping=regeneration_error_mapping(),
         )
 
-        repository.save_word_pack(word_pack_id, lemma, word_pack.model_dump_json())
+        repository.save_word_pack(
+            word_pack_id,
+            lemma,
+            word_pack.model_dump_json(),
+            metadata={"owner_user_id": principal.user_id},
+        )
         return word_pack
     except RuntimeError:
         # run_wordpack_flow 内で HTTPException へ変換済み。それ以外は既定処理へ委譲。
@@ -80,12 +91,32 @@ async def regenerate_word_pack(
 async def enqueue_regenerate_word_pack(
     word_pack_id: str,
     req: WordPackRegenerateRequest,
-    _user: dict[str, str] = Depends(require_authenticated_user),
+    principal: Principal = Depends(require_user_permission(Permission.WORDPACK_UPDATE)),
 ) -> RegenerateJob:
     """Enqueue an async regenerate job and return job ID immediately."""
 
-    _sync_regenerate_job_dependencies()
-    return await enqueue_regenerate_job(word_pack_id, req)
+    _sync_legacy_regenerate_job_registry()
+    repository = get_store()
+    visibility = get_word_pack_visibility(repository, word_pack_id)
+    if visibility is None:
+        raise HTTPException(status_code=404, detail="WordPack not found")
+    ensure_user_write_allowed(
+        principal,
+        owner_user_id=visibility.get("owner_user_id"),
+        not_found_detail="WordPack not found",
+    )
+    try:
+        return await enqueue_regenerate_job(
+            word_pack_id,
+            req,
+            repository=repository,
+            flow=get_run_wordpack_flow(),
+            scheduler=AsyncioTaskScheduler(),
+            id_generator=UuidHexGenerator(),
+            error_mapping=regeneration_error_mapping(),
+        )
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @router.get(
@@ -98,5 +129,12 @@ async def get_regenerate_job_status(
 ) -> RegenerateJob:
     """Return current job status and result when available."""
 
-    _sync_regenerate_job_dependencies()
-    return await get_regenerate_job(word_pack_id, job_id)
+    _sync_legacy_regenerate_job_registry()
+    try:
+        return await get_regenerate_job(
+            word_pack_id,
+            job_id,
+            repository=get_store(),
+        )
+    except NotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

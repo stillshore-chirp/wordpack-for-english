@@ -1,39 +1,39 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from dataclasses import dataclass
 
-from fastapi import HTTPException, Request
+from ..common.errors import NotFoundError
 
-from ...logging import logger
-from ...models.word import WordPackGuestPublicRequest, WordPackGuestPublicResponse
+
+@dataclass(frozen=True)
+class UpdateWordPackGuestPublicCommand:
+    word_pack_id: str
+    guest_public: bool
+    updated_at: str
+
+
+@dataclass(frozen=True)
+class UpdateWordPackGuestPublicResult:
+    word_pack_id: str
+    guest_public: bool
 
 
 def update_guest_public_flag(
     *,
-    request: Request,
-    repository,
-    word_pack_id: str,
-    req: WordPackGuestPublicRequest,
-) -> WordPackGuestPublicResponse:
-    metadata = repository.get_word_pack_metadata(word_pack_id)
+    repository: object,
+    command: UpdateWordPackGuestPublicCommand,
+) -> UpdateWordPackGuestPublicResult:
+    metadata = repository.get_word_pack_metadata(command.word_pack_id)
     if metadata is None:
-        raise HTTPException(status_code=404, detail="WordPack not found")
+        raise NotFoundError("WordPack not found")
 
-    now = datetime.now(UTC).isoformat()
     repository.update_word_pack_metadata(
-        word_pack_id,
-        updated_at=now,
-        guest_public=req.guest_public,
+        command.word_pack_id,
+        updated_at=command.updated_at,
+        guest_public=command.guest_public,
     )
 
-    logger.info(
-        "wordpack_guest_public_updated",
-        word_pack_id=word_pack_id,
-        user_id=getattr(request.state, "user_id", None),
-        guest_public=req.guest_public,
-    )
-
-    return WordPackGuestPublicResponse(
-        word_pack_id=word_pack_id,
-        guest_public=req.guest_public,
+    return UpdateWordPackGuestPublicResult(
+        word_pack_id=command.word_pack_id,
+        guest_public=command.guest_public,
     )

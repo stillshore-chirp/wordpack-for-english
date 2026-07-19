@@ -5,6 +5,7 @@ from .articles import FirestoreArticleRepository
 from .examples import FirestoreExampleRepository
 from .quizzes import FirestoreQuizRepository, QuizGenerationJobStatus
 from .regenerate_jobs import FirestoreRegenerateJobRepository, RegenerateJobStatus
+from .sessions import FirestoreSessionRepository
 from .users import FirestoreUserRepository
 from .wordpacks import FirestoreWordPackRepository
 
@@ -18,6 +19,7 @@ class AppFirestoreRepository:
     article_repository_cls = FirestoreArticleRepository
     quiz_repository_cls = FirestoreQuizRepository
     regenerate_job_repository_cls = FirestoreRegenerateJobRepository
+    session_repository_cls = FirestoreSessionRepository
 
     def __init__(self, *, client: firestore.Client | None = None) -> None:
         self._client = client or firestore.Client()
@@ -27,6 +29,7 @@ class AppFirestoreRepository:
         self.articles = self.article_repository_cls(self._client)
         self.quizzes = self.quiz_repository_cls(self._client)
         self.regenerate_jobs = self.regenerate_job_repository_cls(self._client)
+        self.sessions = self.session_repository_cls(self._client)
 
     # --- Users ---
     def record_user_login(
@@ -70,6 +73,9 @@ class AppFirestoreRepository:
     def count_word_packs(self) -> int:
         return self.wordpacks.count_word_packs()
 
+    def count_owned_word_packs(self, owner_user_id: str) -> int:
+        return self.wordpacks.count_owned_word_packs(owner_user_id)
+
     def get_word_pack_metadata(self, word_pack_id: str) -> Mapping[str, Any] | None:
         return self.wordpacks.get_word_pack_metadata(word_pack_id)
 
@@ -85,6 +91,13 @@ class AppFirestoreRepository:
         self, limit: int = 50, offset: int = 0
     ) -> list[tuple[str, str, str, str, str, bool, Mapping[str, int], int, int, bool]]:
         return self.wordpacks.list_public_word_packs_with_flags(limit=limit, offset=offset)
+
+    def list_owned_word_packs_with_flags(
+        self, owner_user_id: str, limit: int = 50, offset: int = 0
+    ) -> list[tuple[str, str, str, str, str, bool, Mapping[str, int], int, int, bool]]:
+        return self.wordpacks.list_owned_word_packs_with_flags(
+            owner_user_id, limit=limit, offset=offset
+        )
 
     def delete_word_pack(self, word_pack_id: str) -> bool:
         return self.wordpacks.delete_word_pack(word_pack_id)
@@ -127,6 +140,9 @@ class AppFirestoreRepository:
             guest_public=guest_public,
         )
 
+    def get_word_pack_visibility(self, word_pack_id: str) -> Mapping[str, Any] | None:
+        return self.wordpacks.get_word_pack_visibility(word_pack_id)
+
     # --- Regenerate jobs ---
     def create_regenerate_job(
         self,
@@ -166,6 +182,9 @@ class AppFirestoreRepository:
         return self.examples.update_example_study_progress(
             example_id, checked_increment, learned_increment
         )
+
+    def get_example_word_pack_id(self, example_id: int) -> str | None:
+        return self.examples.get_example_word_pack_id(example_id)
 
     def delete_example(self, word_pack_id: str, category: str, index: int) -> int | None:
         return self.examples.delete_example(word_pack_id, category, index)
@@ -250,20 +269,36 @@ class AppFirestoreRepository:
         return self.articles.get_article(article_id)
 
     def list_articles(
-        self, limit: int = 50, offset: int = 0, *, public_only: bool = False
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        *,
+        public_only: bool = False,
+        owner_user_id: str | None = None,
     ) -> list[tuple[str, str, str, str, bool]]:
         return self.articles.list_articles(
-            limit=limit, offset=offset, public_only=public_only
+            limit=limit,
+            offset=offset,
+            public_only=public_only,
+            owner_user_id=owner_user_id,
         )
 
-    def count_articles(self, *, public_only: bool = False) -> int:
-        return self.articles.count_articles(public_only=public_only)
+    def count_articles(
+        self, *, public_only: bool = False, owner_user_id: str | None = None
+    ) -> int:
+        return self.articles.count_articles(
+            public_only=public_only,
+            owner_user_id=owner_user_id,
+        )
 
     def update_article_guest_public(self, article_id: str, guest_public: bool) -> bool | None:
         return self.articles.update_article_guest_public(article_id, guest_public)
 
     def delete_article(self, article_id: str) -> bool:
         return self.articles.delete_article(article_id)
+
+    def get_article_visibility(self, article_id: str) -> Mapping[str, Any] | None:
+        return self.articles.get_article_visibility(article_id)
 
     # --- Quizzes ---
     def save_quiz(
@@ -283,17 +318,31 @@ class AppFirestoreRepository:
         offset: int = 0,
         *,
         public_only: bool = False,
+        owner_user_id: str | None = None,
     ) -> list[dict[str, Any]]:
-        return self.quizzes.list_quizzes(limit=limit, offset=offset, public_only=public_only)
+        return self.quizzes.list_quizzes(
+            limit=limit,
+            offset=offset,
+            public_only=public_only,
+            owner_user_id=owner_user_id,
+        )
 
-    def count_quizzes(self, *, public_only: bool = False) -> int:
-        return self.quizzes.count_quizzes(public_only=public_only)
+    def count_quizzes(
+        self, *, public_only: bool = False, owner_user_id: str | None = None
+    ) -> int:
+        return self.quizzes.count_quizzes(
+            public_only=public_only,
+            owner_user_id=owner_user_id,
+        )
 
     def delete_quiz(self, quiz_id: str) -> bool:
         return self.quizzes.delete_quiz(quiz_id)
 
     def update_quiz_guest_public(self, quiz_id: str, guest_public: bool) -> bool | None:
         return self.quizzes.update_quiz_guest_public(quiz_id, guest_public)
+
+    def get_quiz_visibility(self, quiz_id: str) -> Mapping[str, Any] | None:
+        return self.quizzes.get_quiz_visibility(quiz_id)
 
     def save_quiz_attempt(self, attempt_id: str, payload: Mapping[str, Any]) -> None:
         self.quizzes.save_quiz_attempt(attempt_id, payload)
@@ -339,6 +388,19 @@ class AppFirestoreRepository:
 
     def get_quiz_generation_job(self, job_id: str) -> Mapping[str, Any] | None:
         return self.quizzes.get_quiz_generation_job(job_id)
+
+    # --- Sessions ---
+    def create_session(self, payload: Mapping[str, Any]) -> None:
+        self.sessions.create_session(payload)
+
+    def get_session(self, sid: str) -> Mapping[str, Any] | None:
+        return self.sessions.get_session(sid)
+
+    def revoke_session(self, sid: str, *, revoked_at: str) -> bool:
+        return self.sessions.revoke_session(sid, revoked_at=revoked_at)
+
+    def touch_session(self, sid: str, *, last_seen_at: str) -> bool:
+        return self.sessions.touch_session(sid, last_seen_at=last_seen_at)
 
 
 AppFirestoreStore = AppFirestoreRepository

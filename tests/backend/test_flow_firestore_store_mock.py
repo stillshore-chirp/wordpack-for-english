@@ -42,7 +42,7 @@ def test_category_flow_operates_with_firestore_store(
     monkeypatch.setattr(category_module, "get_llm_provider", lambda **_: dummy_llm)
 
     article_stub = SimpleNamespace(run=lambda req: SimpleNamespace(id="article-from-stub"))
-    monkeypatch.setattr(category_module, "ArticleImportFlow", lambda: article_stub)
+    monkeypatch.setattr(category_module, "ArticleImportFlow", lambda **_: article_stub)
 
     class DummyCategoryFlow(CategoryGenerateAndImportFlow):
         """LLM 依存部を固定化したテスト専用フロー。"""

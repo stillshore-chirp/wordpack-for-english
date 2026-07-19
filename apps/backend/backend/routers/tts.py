@@ -5,12 +5,15 @@ import threading
 import time
 from typing import Any, Iterator
 
-from fastapi import APIRouter, Body, HTTPException, Request, status
+from fastapi import APIRouter, Body, Depends, HTTPException, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, ValidationError, constr
 
 from ..config import settings
+from ..authorization.dependencies import require_user_permission
+from ..authorization.permissions import Permission
+from ..authorization.principal import Principal
 from ..logging import logger
 
 try:
@@ -136,7 +139,11 @@ def _map_openai_exception(exc: Exception) -> tuple[int, str, str]:
 
 
 @router.post("", response_class=StreamingResponse)
-def synth(request: Request, payload: dict[str, Any] = Body(...)) -> StreamingResponse:
+def synth(
+    request: Request,
+    payload: dict[str, Any] = Body(...),
+    _principal: Principal = Depends(require_user_permission(Permission.TTS_CREATE)),
+) -> StreamingResponse:
     """Synthesize speech using OpenAI TTS and stream MP3 audio to the client."""
     t0 = time.perf_counter()
     request_id = _loggable_request_id(request)

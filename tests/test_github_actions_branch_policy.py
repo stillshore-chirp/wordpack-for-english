@@ -129,3 +129,50 @@ def test_deploy_production_uses_api_based_hosting_deploy() -> None:
             "TOOL=firebase",
         ],
     )
+
+
+def test_production_deploy_preflight_checks_prs_without_deploying() -> None:
+    """
+    Contract: PRs get a non-deploying production preflight. Static checks run on
+    the PR code without secrets, while the authenticated probe uses
+    pull_request_target and trusted base code for read-only API checks.
+    """
+    yml = _read_text(".github/workflows/production-deploy-preflight.yml")
+    on_block = _extract_on_block(yml)
+
+    _assert_contains_all(
+        on_block,
+        [
+            "pull_request:",
+            "pull_request_target:",
+            "workflow_dispatch:",
+            "branches:",
+            "main",
+        ],
+    )
+    _assert_contains_all(
+        yml,
+        [
+            "Static deploy preflight",
+            "Authenticated deploy read-only probe",
+            "production-deploy-preflight-${{ github.workflow }}-${{ github.event_name }}-",
+            "github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'",
+            "github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch'",
+            "ref: ${{ github.event.pull_request.base.sha }}",
+            "--plan-only",
+            "--probe-only",
+            "deploy_cloud_run.sh \\",
+            "gcloud auth print-access-token --quiet >/dev/null",
+            "pageSize=0",
+            "google-github-actions/auth@v2",
+            "scripts/deploy_firebase_hosting.py",
+        ],
+    )
+    _assert_contains_none(
+        yml,
+        [
+            "environment: production",
+            "firebase deploy --only hosting",
+            "pageSize=1",
+        ],
+    )

@@ -100,6 +100,10 @@ class FirestoreWordPackRepository(FirestoreBaseRepository):
                 if isinstance(existing_metadata, Mapping)
                 else dict(metadata)
             )
+        owner_user_id = None
+        if isinstance(metadata_payload, Mapping):
+            owner_raw = metadata_payload.get("owner_user_id")
+            owner_user_id = str(owner_raw).strip() if owner_raw else None
         created_at = (
             str(existing_data.get("created_at") or now) if existing.exists else now
         )
@@ -111,6 +115,7 @@ class FirestoreWordPackRepository(FirestoreBaseRepository):
             updated_at=now,
             existing_example_total=existing_examples_total,
             is_total_confident=counts_confident,
+            owner_user_id=owner_user_id,
         )
         payload = {
             "lemma_id": lemma_id,
@@ -192,6 +197,17 @@ class FirestoreWordPackRepository(FirestoreBaseRepository):
             raise RuntimeError(msg) from exc
         return self._extract_count_from_aggregation(aggregation)
 
+    def count_owned_word_packs(self, owner_user_id: str) -> int:
+        """Return WordPack count visible to the owner-scoped strict mode."""
+
+        query = self._ordered_word_pack_query().where("metadata.owner_user_id", "==", owner_user_id)
+        try:
+            aggregation = query.count().get()
+        except AttributeError as exc:  # pragma: no cover - defensive fallback
+            msg = "Firestore client does not support aggregation queries"
+            raise RuntimeError(msg) from exc
+        return self._extract_count_from_aggregation(aggregation)
+
     def has_guest_demo_word_pack(self) -> bool:
         """ゲスト閲覧用のデモデータが存在するかを軽量クエリで確認する。"""
 
@@ -204,32 +220,40 @@ class FirestoreWordPackRepository(FirestoreBaseRepository):
         self, limit: int = 50, offset: int = 0
     ) -> list[tuple[str, str, str, str, str, bool, Mapping[str, int], int, int, bool]]:
         docs = self._fetch_word_pack_snapshots(limit, offset)
-        results: list[tuple[str, str, str, str, str, bool, Mapping[str, int], int, int, bool]] = []
-        for doc in docs:
-            data = doc.to_dict() or {}
-            counts_raw = data.get("examples_category_counts") or {}
-            counts = {cat: int(counts_raw.get(cat, 0)) for cat in EXAMPLE_CATEGORIES}
-            total = sum(counts.values())
-            checked = normalize_non_negative_int(data.get("checked_only_count"))
-            learned = normalize_non_negative_int(data.get("learned_count"))
-            metadata = data.get("metadata") or {}
-            results.append(
-                (
-                    doc.id,
-                    str(data.get("lemma_label") or ""),
-                    str(data.get("sense_title") or ""),
-                    str(data.get("created_at") or ""),
-                    str(data.get("updated_at") or ""),
-                    total == 0,
-                    counts,
-                    checked,
-                    learned,
-                    bool(metadata.get("guest_public", False))
-                    if isinstance(metadata, Mapping)
-                    else False,
-                )
-            )
-        return results
+        return [self._word_pack_list_item_with_flags(doc) for doc in docs]
+
+    def list_owned_word_packs_with_flags(
+        self, owner_user_id: str, limit: int = 50, offset: int = 0
+    ) -> list[tuple[str, str, str, str, str, bool, Mapping[str, int], int, int, bool]]:
+        query = self._ordered_word_pack_query().where("metadata.owner_user_id", "==", owner_user_id)
+        if offset:
+            query = query.offset(max(0, int(offset)))
+        query = query.limit(max(0, int(limit)))
+        return [self._word_pack_list_item_with_flags(doc) for doc in query.stream()]
+
+    def _word_pack_list_item_with_flags(
+        self, doc: firestore.DocumentSnapshot
+    ) -> tuple[str, str, str, str, str, bool, Mapping[str, int], int, int, bool]:
+        data = doc.to_dict() or {}
+        counts_raw = data.get("examples_category_counts") or {}
+        counts = {cat: int(counts_raw.get(cat, 0)) for cat in EXAMPLE_CATEGORIES}
+        total = sum(counts.values())
+        checked = normalize_non_negative_int(data.get("checked_only_count"))
+        learned = normalize_non_negative_int(data.get("learned_count"))
+        metadata = data.get("metadata") or {}
+        guest_public = bool(metadata.get("guest_public", False)) if isinstance(metadata, Mapping) else False
+        return (
+            doc.id,
+            str(data.get("lemma_label") or ""),
+            str(data.get("sense_title") or ""),
+            str(data.get("created_at") or ""),
+            str(data.get("updated_at") or ""),
+            total == 0,
+            counts,
+            checked,
+            learned,
+            guest_public,
+        )
 
     def list_public_word_packs_with_flags(
         self, limit: int = 50, offset: int = 0
@@ -238,33 +262,7 @@ class FirestoreWordPackRepository(FirestoreBaseRepository):
         if offset:
             query = query.offset(max(0, int(offset)))
         query = query.limit(max(0, int(limit)))
-        docs = list(query.stream())
-        results: list[tuple[str, str, str, str, str, bool, Mapping[str, int], int, int, bool]] = []
-        for doc in docs:
-            data = doc.to_dict() or {}
-            counts_raw = data.get("examples_category_counts") or {}
-            counts = {cat: int(counts_raw.get(cat, 0)) for cat in EXAMPLE_CATEGORIES}
-            total = sum(counts.values())
-            checked = normalize_non_negative_int(data.get("checked_only_count"))
-            learned = normalize_non_negative_int(data.get("learned_count"))
-            metadata = data.get("metadata") or {}
-            results.append(
-                (
-                    doc.id,
-                    str(data.get("lemma_label") or ""),
-                    str(data.get("sense_title") or ""),
-                    str(data.get("created_at") or ""),
-                    str(data.get("updated_at") or ""),
-                    total == 0,
-                    counts,
-                    checked,
-                    learned,
-                    bool(metadata.get("guest_public", False))
-                    if isinstance(metadata, Mapping)
-                    else False,
-                )
-            )
-        return results
+        return [self._word_pack_list_item_with_flags(doc) for doc in query.stream()]
 
     def is_word_pack_guest_public(self, word_pack_id: str) -> bool:
         payload = self.get_word_pack_metadata(word_pack_id) or {}
@@ -424,6 +422,7 @@ class FirestoreWordPackRepository(FirestoreBaseRepository):
         updated_at: str,
         existing_example_total: int | None = None,
         is_total_confident: bool = False,
+        owner_user_id: str | None = None,
     ) -> dict[str, int]:
         # 例文数が 0 だと確実に分かっている場合のみ削除クエリを省略し、それ以外では安全側に倒す。
         should_delete_existing = not is_total_confident or existing_example_total not in (None, 0)
@@ -471,6 +470,7 @@ class FirestoreWordPackRepository(FirestoreBaseRepository):
                     "pack_updated_at": updated_at,
                     "lemma": lemma,
                     "sense_title": sense_title,
+                    "owner_user_id": owner_user_id,
                     **self._build_search_payload(en),
                 }
             )
@@ -600,6 +600,22 @@ class FirestoreWordPackRepository(FirestoreBaseRepository):
         if not snapshot.exists:
             return None
         return snapshot.to_dict() or {}
+
+    def get_word_pack_visibility(self, word_pack_id: str) -> Mapping[str, Any] | None:
+        payload = self.get_word_pack_metadata(word_pack_id)
+        if not isinstance(payload, Mapping):
+            return None
+        metadata = payload.get("metadata") or {}
+        owner_user_id = None
+        guest_public = False
+        if isinstance(metadata, Mapping):
+            owner_raw = metadata.get("owner_user_id")
+            owner_user_id = str(owner_raw).strip() if owner_raw else None
+            guest_public = bool(metadata.get("guest_public", False))
+        return {
+            "guest_public": guest_public,
+            "owner_user_id": owner_user_id,
+        }
 
     def _upsert_lemma(
         self,

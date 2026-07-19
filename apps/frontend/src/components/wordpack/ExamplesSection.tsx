@@ -6,7 +6,9 @@ import { highlightLemma } from '../../lib/highlight';
 import { useLemmaTooltip } from './useLemmaTooltip';
 import { useAuth } from '../../AuthContext';
 import { GuestLock } from '../GuestLock';
-import { splitExampleExplanation } from '../../lib/exampleExplanation';
+import { buildExampleTranslationPairs, splitExampleExplanation } from '../../lib/exampleExplanation';
+import { SentencePairSpan, useSentencePairHighlight } from '../SentencePairHighlighter';
+import { createManualSentenceSegment } from '../../lib/sentenceAlignment';
 
 export type ExampleCategory = keyof Examples;
 
@@ -45,6 +47,18 @@ export const ExamplesSection: React.FC<ExamplesSectionProps> = ({
 }) => {
   const { isGuest } = useAuth();
   const exampleCategories = useMemo(() => (['Dev', 'CS', 'LLM', 'Business', 'Common'] as ExampleCategory[]), []);
+  const examplesHighlightKey = useMemo(
+    () => [
+      data.id ?? '',
+      data.lemma,
+      data.sense_title,
+      ...exampleCategories.flatMap((category) => (
+        (data.examples?.[category] ?? []).map((example) => `${category}:${example.en}\u0000${example.ja}`)
+      )),
+    ].join('\u0001'),
+    [data.id, data.lemma, data.sense_title, data.examples, exampleCategories],
+  );
+  const exampleSentenceHighlight = useSentencePairHighlight(true, examplesHighlightKey);
   const styleDefinition = useMemo(
     () => `
       .ex-grid { display: grid; grid-template-columns: 1fr; gap: 0.75rem; }
@@ -53,6 +67,8 @@ export const ExamplesSection: React.FC<ExamplesSectionProps> = ({
       .ex-label { display: block; color: var(--color-subtle); font-size: 0.85rem; font-weight: 600; }
       .ex-en { font-weight: 600; line-height: 1.55; overflow-wrap: anywhere; }
       .ex-ja { color: var(--color-text); opacity: 0.92; line-height: 1.65; }
+      .ex-sentence-list { display: inline; }
+      .ex-sentence { display: inline; }
       .ex-grammar { color: var(--color-subtle); font-size: 0.92rem; line-height: 1.6; }
       .ex-grammar p { margin: 0; white-space: pre-wrap; }
       .ex-grammar details { margin-top: 0.35rem; }
@@ -192,6 +208,8 @@ export const ExamplesSection: React.FC<ExamplesSectionProps> = ({
             <div className="ex-grid">
               {(data.examples[category] as ExampleItem[]).map((ex: ExampleItem, index: number) => {
                 const explanationSections = splitExampleExplanation(ex.grammar_ja);
+                const translationPairs = buildExampleTranslationPairs(ex.en, ex.ja);
+                const canHighlightSentencePairs = translationPairs.length > 1;
                 return (
                   <article
                     key={index}
@@ -212,11 +230,60 @@ export const ExamplesSection: React.FC<ExamplesSectionProps> = ({
                       onMouseOut={handleMouseOut}
                     >
                       <span className="ex-label">[{index + 1}] 英文</span>
-                      <span>{renderExampleEnText(ex.en, data.lemma)}</span>
+                      <span className="ex-sentence-list">
+                        {translationPairs.map((pair, pairIndex) => {
+                          const sentenceKey = `example-${category}-${index}-sentence-${pair.index}`;
+                          const pairKey = canHighlightSentencePairs ? sentenceKey : null;
+                          const sentence = createManualSentenceSegment(
+                            `${sentenceKey}-en`,
+                            pairKey,
+                            pair.index,
+                            pair.en,
+                          );
+                          return (
+                            <React.Fragment key={sentence.key}>
+                              <SentencePairSpan
+                                sentence={sentence}
+                                language="en"
+                                highlight={exampleSentenceHighlight}
+                                className="ex-sentence"
+                                interactive={false}
+                              >
+                                {renderExampleEnText(pair.en, data.lemma)}
+                              </SentencePairSpan>
+                              {pairIndex < translationPairs.length - 1 ? ' ' : null}
+                            </React.Fragment>
+                          );
+                        })}
+                      </span>
                     </div>
                     <div className="ex-block ex-ja">
                       <span className="ex-label">日本語訳</span>
-                      <span>{ex.ja}</span>
+                      <span className="ex-sentence-list">
+                        {translationPairs.map((pair, pairIndex) => {
+                          const sentenceKey = `example-${category}-${index}-sentence-${pair.index}`;
+                          const pairKey = canHighlightSentencePairs ? sentenceKey : null;
+                          const sentence = createManualSentenceSegment(
+                            `${sentenceKey}-ja`,
+                            pairKey,
+                            pair.index,
+                            pair.ja,
+                          );
+                          return (
+                            <React.Fragment key={sentence.key}>
+                              <SentencePairSpan
+                                sentence={sentence}
+                                language="ja"
+                                highlight={exampleSentenceHighlight}
+                                className="ex-sentence"
+                              >
+                                {pair.ja}
+                              </SentencePairSpan>
+                              {pairIndex < translationPairs.length - 1 ? ' ' : null}
+                            </React.Fragment>
+                          );
+                        })}
+                      </span>
                     </div>
                     {ex.grammar_ja ? (
                       <div className="ex-block ex-grammar">

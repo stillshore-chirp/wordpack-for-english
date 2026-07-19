@@ -10,6 +10,8 @@
 | Security headers | `PYTHONPATH=apps/backend pytest -q --no-cov tests/test_security_headers.py` | セキュリティヘッダー検証 |
 | Frontend typecheck | `cd apps/frontend && npx tsc -p tsconfig.json` | TypeScript 型検査 |
 | Frontend tests | `cd apps/frontend && npm test -- --coverage --silent` | Vitest + coverage |
+| Backend architecture boundaries | `PYTHONPATH=apps/backend pytest -q --no-cov tests/backend/test_architecture_boundaries.py` | Domain/Application の禁止 import と runtime 直呼び出しを検査 |
+| Frontend architecture boundaries | `node ./scripts/check_frontend_architecture_boundaries.mjs` | page / feature layer の API transport 直参照と legacy fetcher import を検査 |
 | Backend p95 | `API_P95_THRESHOLD_MS=1500 PYTHONPATH=apps/backend pytest -q --no-cov tests/test_api_performance.py` | [backend-performance.md](./backend-performance.md) |
 | Frontend integration | `cd apps/frontend && INTEGRATION_TEST=true BACKEND_PROXY_TARGET=http://127.0.0.1:8000 npm run test` | [frontend-integration-tests.md](./frontend-integration-tests.md) |
 | Playwright smoke | `npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/auth.spec.ts tests/e2e/guest.spec.ts tests/e2e/wordpack.spec.ts` | [playwright-e2e.md](./playwright-e2e.md) |
@@ -26,6 +28,7 @@
 ## 実行判断
 
 - backend のロジック、API、設定、Firestore 境界を変える場合は backend pytest を優先します。
+- Domain / Application / frontend feature 境界を変える場合は architecture boundary check を含めます。
 - セキュリティヘッダー、CORS、host、proxy、session まわりを変える場合は security headers test を含めます。
 - frontend の TypeScript / React / hook / UI state を変える場合は typecheck と Vitest を実行します。
 - 主要導線やユーザー操作が変わる場合は Playwright smoke を検討します。

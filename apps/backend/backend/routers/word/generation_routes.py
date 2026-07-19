@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends
 
+from ...authorization.dependencies import require_user_permission
+from ...authorization.permissions import Permission
+from ...authorization.principal import Principal
 from ...logging import logger
 from ...models.word import GeneratedWordPackResponse, WordPackRequest
-from .dependencies import get_run_wordpack_flow, get_store, next_word_pack_id, require_authenticated_user
+from .dependencies import get_run_wordpack_flow, get_store, next_word_pack_id
 from .error_mapping import generation_error_mapping
 
 router = APIRouter()
@@ -19,7 +22,7 @@ router = APIRouter()
 )
 async def generate_word_pack(
     req: WordPackRequest,
-    _user: dict[str, str] = Depends(require_authenticated_user),
+    principal: Principal = Depends(require_user_permission(Permission.WORDPACK_GENERATE)),
 ) -> GeneratedWordPackResponse:
     """Generate a new word pack using LangGraph flow."""
 
@@ -38,7 +41,12 @@ async def generate_word_pack(
         )
 
         word_pack_id = next_word_pack_id()
-        get_store().save_word_pack(word_pack_id, req.lemma, word_pack.model_dump_json())
+        get_store().save_word_pack(
+            word_pack_id,
+            req.lemma,
+            word_pack.model_dump_json(),
+            metadata={"owner_user_id": principal.user_id},
+        )
 
         logger.info(
             "wordpack_generate_response",

@@ -144,6 +144,14 @@ class FirestoreExampleRepository(FirestoreBaseRepository):
             )
         return (str(data.get("word_pack_id") or ""), next_checked, next_learned)
 
+    def get_example_word_pack_id(self, example_id: int) -> str | None:
+        snapshot = self._examples.document(str(example_id)).get()
+        if not snapshot.exists:
+            return None
+        data = snapshot.to_dict() or {}
+        word_pack_id = str(data.get("word_pack_id") or "").strip()
+        return word_pack_id or None
+
     def delete_example(self, word_pack_id: str, category: str, index: int) -> int | None:
         if index < 0:
             return None
@@ -215,6 +223,11 @@ class FirestoreExampleRepository(FirestoreBaseRepository):
         pack_meta = self._wordpacks.get_word_pack_metadata(word_pack_id) or {}
         lemma_label = str(pack_meta.get("lemma_label") or "")
         sense_title = str(pack_meta.get("sense_title") or "")
+        metadata = pack_meta.get("metadata") or {}
+        owner_user_id = None
+        if isinstance(metadata, Mapping):
+            owner_raw = metadata.get("owner_user_id")
+            owner_user_id = str(owner_raw).strip() if owner_raw else None
         inserted = 0
         for item in items:
             en = str((item or {}).get("en") or "").strip()
@@ -248,6 +261,7 @@ class FirestoreExampleRepository(FirestoreBaseRepository):
                     "pack_updated_at": now,
                     "lemma": lemma_label,
                     "sense_title": sense_title,
+                    "owner_user_id": owner_user_id,
                     **self._build_search_payload(en),
                 }
             )

@@ -3,8 +3,13 @@ import { useSettings } from '../SettingsContext';
 import { useModal } from '../ModalContext';
 import { useConfirmDialog } from '../ConfirmDialogContext';
 import { useNotifications } from '../NotificationsContext';
-import { fetchJson, ApiError } from '../lib/fetcher';
-import { regenerateWordPackRequest, updateGuestPublicFlag } from '../lib/wordpack';
+import { ApiError } from '../shared/api/ApiError';
+import {
+  deleteWordPackRequest,
+  fetchWordPackList,
+  regenerateWordPackRequest,
+  updateGuestPublicFlag,
+} from '../features/wordpack/api';
 import { useAbortableAsync, AbortError } from '../lib/hooks';
 import { loadSessionState, saveSessionState } from '../lib/storage';
 import { assignSetValues, retainSetValues, toggleSetValue } from '../lib/set';
@@ -18,7 +23,7 @@ import { useAuth } from '../AuthContext';
 import { GuestLock } from './GuestLock';
 import { GuestPublicToggle } from './GuestPublicToggle';
 import { APP_EVENTS, dispatchAppEvent } from '../shared/events/appEvents';
-import type { WordPackListItem, WordPackListResponse } from '../features/wordpack/types';
+import type { WordPackListItem } from '../features/wordpack/types';
 
 // 削除ボタンの共通コンポーネント
 interface DeleteButtonProps {
@@ -277,7 +282,9 @@ export const WordPackListPanel: React.FC = () => {
 
       try {
         const res = await runAbortable((signal) =>
-          fetchJson<WordPackListResponse>(`${apiBase}/word/packs?limit=${PAGE_LIMIT}&offset=${newOffset}`, {
+          fetchWordPackList(apiBase, {
+            limit: PAGE_LIMIT,
+            offset: newOffset,
             signal,
           }),
         );
@@ -415,9 +422,7 @@ export const WordPackListPanel: React.FC = () => {
     setMsg(null);
 
     try {
-      await fetchJson(`${apiBase}/word/packs/${wordPack.id}`, {
-        method: 'DELETE',
-      });
+      await deleteWordPackRequest(apiBase, wordPack.id);
       setMsg({ kind: 'status', text: 'WordPackを削除しました' });
       await loadWordPacks(offset);
       setSelectedIds((prev) => (prev.has(wordPack.id) ? toggleSetValue(prev, wordPack.id) : prev));
@@ -560,7 +565,7 @@ export const WordPackListPanel: React.FC = () => {
     try {
       for (const id of ids) {
         try {
-          await fetchJson(`${apiBase}/word/packs/${id}`, { method: 'DELETE' });
+          await deleteWordPackRequest(apiBase, id);
           deleted += 1;
         } catch (error) {
           const err = error instanceof ApiError ? error.message : 'WordPackの削除に失敗しました';

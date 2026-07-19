@@ -23,17 +23,27 @@ def test_cloud_build_has_backend_config_and_deploy_script_uses_it() -> None:
     ), "deploy_cloud_run.sh must use cloudbuild.backend.yaml via --config"
 
 
-def test_deploy_script_always_defines_github_check_substitutions() -> None:
+def test_cloud_build_does_not_call_github_checks_api() -> None:
     """
-    Contract: cloudbuild.backend.yaml references _GITHUB_* substitutions even when
-    GitHub Checks integration is disabled. The deploy script must pass empty
-    values instead of omitting them, otherwise gcloud builds submit can fail
-    before Cloud Run deployment starts.
+    Contract: production deploy visibility is owned by GitHub Actions. Cloud
+    Build must not call the GitHub Checks API from inside the remote build,
+    because that network side-effect can block the backend image build and
+    prevent Cloud Run deployment from starting.
     """
 
+    config_text = Path("cloudbuild.backend.yaml").read_text(encoding="utf-8")
     deploy_script = Path("scripts/deploy_cloud_run.sh").read_text(encoding="utf-8")
-    assert '_GITHUB_CHECKS_TOKEN=${GITHUB_CHECKS_TOKEN:-}' in deploy_script
-    assert '_GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-}' in deploy_script
-    assert '_GITHUB_SHA=${GITHUB_SHA:-}' in deploy_script
-    assert '_GITHUB_RUN_URL=${GITHUB_RUN_URL:-}' in deploy_script
-    assert 'if [[ -n "${GITHUB_CHECKS_TOKEN:-}" ]]' not in deploy_script
+
+    forbidden = [
+        "GITHUB_CHECKS_TOKEN",
+        "_GITHUB_CHECKS_TOKEN",
+        "_GITHUB_REPOSITORY",
+        "_GITHUB_SHA",
+        "_GITHUB_RUN_URL",
+        "api.github.com/repos",
+        "check-runs",
+        "create-github-check",
+        "complete-github-check",
+    ]
+    assert not [snippet for snippet in forbidden if snippet in config_text]
+    assert not [snippet for snippet in forbidden if snippet in deploy_script]

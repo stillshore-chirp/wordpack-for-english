@@ -45,6 +45,7 @@ class FirestoreArticleRepository(FirestoreBaseRepository):
                 else stored.get("generation_duration_ms")
             ),
             "guest_public": bool(kwargs.get("guest_public", stored.get("guest_public", False))),
+            "owner_user_id": kwargs.get("owner_user_id", stored.get("owner_user_id")),
         }
         doc_ref.set(payload, merge=True)
         if related_word_packs is not None:
@@ -117,11 +118,18 @@ class FirestoreArticleRepository(FirestoreBaseRepository):
         )
 
     def list_articles(
-        self, limit: int = 50, offset: int = 0, *, public_only: bool = False
+        self,
+        limit: int = 50,
+        offset: int = 0,
+        *,
+        public_only: bool = False,
+        owner_user_id: str | None = None,
     ) -> list[tuple[str, str, str, str, bool]]:
         query = self._articles
         if public_only:
             query = query.where("guest_public", "==", True)
+        elif owner_user_id is not None:
+            query = query.where("owner_user_id", "==", owner_user_id)
         docs = list(query.stream())
         docs.sort(key=lambda d: str((d.to_dict() or {}).get("created_at") or ""), reverse=True)
         sliced = docs[offset : offset + limit]
@@ -136,10 +144,14 @@ class FirestoreArticleRepository(FirestoreBaseRepository):
             for doc in sliced
         ]
 
-    def count_articles(self, *, public_only: bool = False) -> int:
+    def count_articles(
+        self, *, public_only: bool = False, owner_user_id: str | None = None
+    ) -> int:
         query = self._articles
         if public_only:
             query = query.where("guest_public", "==", True)
+        elif owner_user_id is not None:
+            query = query.where("owner_user_id", "==", owner_user_id)
         return sum(1 for _ in query.stream())
 
     def update_article_guest_public(self, article_id: str, guest_public: bool) -> bool | None:
@@ -162,6 +174,17 @@ class FirestoreArticleRepository(FirestoreBaseRepository):
             if data.get("article_id") == article_id:
                 link.reference.delete()
         return True
+
+    def get_article_visibility(self, article_id: str) -> dict[str, Any] | None:
+        doc = self._articles.document(article_id).get()
+        if not doc.exists:
+            return None
+        data = doc.to_dict() or {}
+        owner_raw = data.get("owner_user_id")
+        return {
+            "guest_public": bool(data.get("guest_public", False)),
+            "owner_user_id": str(owner_raw).strip() if owner_raw else None,
+        }
 
 
 FirestoreArticleStore = FirestoreArticleRepository

@@ -8,7 +8,7 @@
 - frontend は React + Vite の build artifact を Firebase Hosting API で配置します。
 - Firestore の複合インデックスと single-field override は `firestore.indexes.json` を同期します。既定の `gcloud` 経路は gcloud の認証情報で Firestore Admin API を直接呼び、Firebase CLI と `gcloud alpha` component には依存しません。
 - GitHub Actions の本番デプロイは `main` への push と `workflow_dispatch` をトリガーにします。
-- PR では本番デプロイ job を作らず、Cloud Run config guard の dry-run で設定ミスを検知します。
+- PR では本番デプロイ job を作らず、production deploy preflight で Cloud Run dry-run、Firebase Hosting API plan、認証済み read-only probe を非破壊で確認します。
 
 ## 事前準備
 
@@ -47,6 +47,7 @@ cp env.deploy.example .env.deploy
 - `SESSION_SECRET_KEY`
 - `ADMIN_EMAIL_ALLOWLIST`
 - `CORS_ALLOWED_ORIGINS`
+- `CSRF_PROTECTION_ENABLED=true`
 - `TRUSTED_PROXY_IPS`
 - `ALLOWED_HOSTS`
 - `GOOGLE_CLIENT_ID`
@@ -67,7 +68,7 @@ cp env.deploy.example .env.deploy
   --service wordpack-backend
 ```
 
-この段階で Pydantic 設定、必須環境変数、Cloud Run 向け env 変換を確認します。`ENVIRONMENT=production` で `ADMIN_EMAIL_ALLOWLIST`、`TRUSTED_PROXY_IPS`、`ALLOWED_HOSTS` などが不足している場合は、gcloud 実行前に失敗します。
+この段階で Pydantic 設定、必須環境変数、Cloud Run 向け env 変換を確認します。`ENVIRONMENT=production` で `ADMIN_EMAIL_ALLOWLIST`、`TRUSTED_PROXY_IPS`、`ALLOWED_HOSTS` などが不足している場合、または `DISABLE_SESSION_AUTH=true` / `CSRF_PROTECTION_ENABLED=false` が指定されている場合は、gcloud 実行前に失敗します。
 
 ## Cloud Run デプロイ
 
@@ -110,6 +111,18 @@ make release-cloud-run \
   ENV_FILE=.env.deploy \
   RUN_TIMEOUT=360s
 ```
+
+紹介用の本番 URL で cold start による初回待ち時間を避けたい場合は、Cloud Run の minimum instances を `1` にします。後で費用優先へ戻す場合は `0` を指定します。
+
+```bash
+make release-cloud-run \
+  PROJECT_ID=<project-id> \
+  REGION=asia-northeast1 \
+  ENV_FILE=.env.deploy \
+  MIN_INSTANCES=1
+```
+
+`MIN_INSTANCES=0` は Cloud Run service の minimum instances を 0 に戻します。`MIN_INSTANCES=default` を指定すると gcloud の `--min default` に渡し、Cloud Run 側の既定値へ戻します。
 
 既に Firestore インデックスを同期済みの CI/CD 環境では、次のように同期を省略できます。
 
@@ -156,6 +169,7 @@ firebase deploy --only hosting --project <firebase-project-id>
 - 手動実行用に `workflow_dispatch` もあります。
 - PR では本番 deploy job を作りません。
 - CI 成功を必須にする場合は、GitHub の branch protection で必要な check を指定します。
+- Cloud Run の minimum instances は repository variable `CLOUD_RUN_MIN_INSTANCES` で上書きできます。未設定時は紹介用 URL の初回体験を優先して `1` を使います。費用優先へ戻す場合は `0` を設定します。
 
 必要な repository secrets:
 
@@ -166,6 +180,17 @@ firebase deploy --only hosting --project <firebase-project-id>
 | `CLOUD_RUN_ENV_FILE_BASE64` | `.env.deploy` を base64 化した値 |
 
 Firestore index 同期は `gcloud` 認証の Firestore Admin API 経由で行い、Firebase Hosting 更新は `gcloud` 認証の Firebase Hosting API 経由で行います。どちらも Firebase CLI 認証や `gcloud alpha` component に依存させません。長期保存する `FIREBASE_TOKEN` secret や、`gcloud auth print-access-token` で発行した access token の `FIREBASE_TOKEN` 代入は使いません。
+
+### Production deploy preflight
+
+`.github/workflows/production-deploy-preflight.yml` は、PR 時点で本番デプロイの主要な前提を非破壊で確認します。
+
+- `pull_request` では PR コードを checkout し、secrets なしで frontend build、Cloud Run dry-run、Firebase Hosting API の `--plan-only`、production deploy contract guard を実行します。
+- `pull_request_target` では secrets を使うため、PR コードは checkout せず、base branch の信頼済みコードだけで read-only probe を実行します。
+- read-only probe は `gcloud auth print-access-token`、Firestore Admin API の index list、Firebase Hosting API の releases list を確認します。
+- `workflow_dispatch` では選択した ref に対して同じ静的 preflight と read-only probe を手動実行できます。
+
+この preflight は Hosting version 作成、file upload、version finalize、release 作成、Firestore index 作成/更新、Cloud Run 実デプロイを実行しません。そのため write 権限、quota、release 作成時の最終検証までは完全保証できません。実デプロイを伴わない範囲で、API path、認証前提、build artifact、dry-run 可能な設定、禁止 CLI 依存を先に検知するための check です。
 
 サービスアカウントに必要な代表ロール:
 

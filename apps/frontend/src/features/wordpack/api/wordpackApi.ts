@@ -1,4 +1,4 @@
-import { fetchJson } from '../../../lib/fetcher';
+import { fetchJson } from '../../../shared/api/fetchJson';
 import {
   composeModelRequestFields,
   regenerateWordPackRequest,
@@ -36,6 +36,18 @@ export const createEmptyWordPackRequest = (
   fetchJson<{ id: string }>(`${apiBase}/word/packs`, {
     method: 'POST',
     body: { lemma },
+    signal: options?.signal,
+    timeoutMs: options?.timeoutMs,
+  })
+);
+
+export const deleteWordPackRequest = (
+  apiBase: string,
+  wordPackId: string,
+  options?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<unknown> => (
+  fetchJson(`${apiBase}/word/packs/${wordPackId}`, {
+    method: 'DELETE',
     signal: options?.signal,
     timeoutMs: options?.timeoutMs,
   })

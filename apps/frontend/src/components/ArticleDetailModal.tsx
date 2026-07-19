@@ -4,7 +4,9 @@ import { calculateDurationMs, formatDateJst, formatDurationMs } from '../lib/dat
 import { TTSButton } from './TTSButton';
 import { useAuth } from '../AuthContext';
 import { GuestLock } from './GuestLock';
+import { SentencePairParagraphs, useSentencePairHighlight } from './SentencePairHighlighter';
 import { WordPackPanel, type WordPackPreviewMeta } from './WordPackPanel';
+import { buildSentenceAlignment, countSentencePairs } from '../lib/sentenceAlignment';
 
 export interface ArticleWordPackLink {
   word_pack_id: string;
@@ -59,6 +61,15 @@ export const ArticleDetailModal: React.FC<Props> = ({
 }) => {
   const { isGuest } = useAuth();
   const wordPackPreviewFocusRef = useRef<HTMLElement>(null);
+  const articleAlignment = useMemo(
+    () => buildSentenceAlignment(article?.body_en ?? '', article?.body_ja ?? ''),
+    [article?.body_en, article?.body_ja],
+  );
+  const articleHighlightKey = article ? `${article.id}:${article.body_en}:${article.body_ja}` : null;
+  const articleSentenceHighlight = useSentencePairHighlight(
+    Boolean(article?.body_ja?.trim()) && countSentencePairs(articleAlignment) > 1,
+    articleHighlightKey,
+  );
   const formatDateWithFallback = (value?: string | null) => {
     if (!value) return null;
     const formatted = formatDateJst(value);
@@ -186,10 +197,16 @@ export const ArticleDetailModal: React.FC<Props> = ({
               font-size: 0.95rem;
               color: var(--color-subtle);
             }
-            .article-text-block p {
+            .article-text-body {
+              display: grid;
+              gap: 0.65rem;
+            }
+            .article-text-block p,
+            .article-text-paragraph {
               margin: 0;
               white-space: pre-wrap;
               line-height: 1.65;
+              overflow-wrap: anywhere;
             }
             .article-notes {
               border-left: 3px solid var(--color-border);
@@ -289,11 +306,27 @@ export const ArticleDetailModal: React.FC<Props> = ({
             </div>
             <div className="article-text-block">
               <h4>英文</h4>
-              <p>{article.body_en}</p>
+              <div className="article-text-body" aria-label="英文本文">
+                <SentencePairParagraphs
+                  paragraphs={articleAlignment.englishParagraphs}
+                  language="en"
+                  highlight={articleSentenceHighlight}
+                  paragraphClassName="article-text-paragraph"
+                  preserveWhitespaceFrom={article.body_en}
+                />
+              </div>
             </div>
             <div className="article-text-block">
               <h4>日本語訳</h4>
-              <p>{article.body_ja}</p>
+              <div className="article-text-body" aria-label="日本語訳本文">
+                <SentencePairParagraphs
+                  paragraphs={articleAlignment.japaneseParagraphs}
+                  language="ja"
+                  highlight={articleSentenceHighlight}
+                  paragraphClassName="article-text-paragraph"
+                  preserveWhitespaceFrom={article.body_ja}
+                />
+              </div>
             </div>
             {article.notes_ja ? (
               <div className="article-text-block article-notes">

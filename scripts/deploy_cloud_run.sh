@@ -41,6 +41,7 @@ Options:
   --build-arg KEY=VALUE      Additional docker build arg (repeatable)
   --env-file <path>          Explicit env file (default: .env.deploy or .env)
   --run-timeout <duration>   Cloud Run request timeout, e.g. 360s, 10m (default: use existing service setting)
+  --min-instances <count>    Cloud Run minimum instances, e.g. 0, 1, default (default: keep current)
   --no-cpu-throttling        Disable CPU throttling to allow background work after responses (default: keep current)
   --generate-secret          Generate SESSION_SECRET_KEY via openssl if missing
   --secret-length <bytes>    Byte size for openssl rand -base64 (default: 48)
@@ -120,13 +121,42 @@ DRY_RUN=false
 MACHINE_TYPE="e2-medium"
 BUILD_TIMEOUT="30m"
 RUN_TIMEOUT_ARG=""
+MIN_INSTANCES_ARG=""
 NO_CPU_THROTTLING=false
 declare -a EXTRA_BUILD_ARGS=()
+declare -a CONFIG_PYTHON_CMD=()
 
 declare -A DEPLOY_ENV_KEYS=()
-declare -a IGNORE_DEPLOY_KEYS=(PROJECT_ID REGION CLOUD_RUN_SERVICE ARTIFACT_REPOSITORY IMAGE_TAG MACHINE_TYPE BUILD_TIMEOUT)
+declare -a IGNORE_DEPLOY_KEYS=(PROJECT_ID REGION CLOUD_RUN_SERVICE ARTIFACT_REPOSITORY IMAGE_TAG MACHINE_TYPE BUILD_TIMEOUT CLOUD_RUN_MIN_INSTANCES)
 declare -a REQUIRED_DEPLOY_KEYS=(ADMIN_EMAIL_ALLOWLIST SESSION_SECRET_KEY CORS_ALLOWED_ORIGINS TRUSTED_PROXY_IPS ALLOWED_HOSTS)
 GCLOUD_CMD_CHECKED=false
+
+validate_min_instances() {
+  local value="$1"
+  [[ -z "$value" || "$value" == "default" ]] && return 0
+  if [[ "$value" =~ ^[0-9]+$ ]]; then
+    return 0
+  fi
+  err "Cloud Run minimum instances must be a non-negative integer or 'default'"
+  exit 1
+}
+
+select_config_python_cmd() {
+  CONFIG_PYTHON_CMD=(python)
+
+  local is_apple_silicon current_arch
+  is_apple_silicon="$(sysctl -n hw.optional.arm64 2>/dev/null || true)"
+  [[ "$is_apple_silicon" == "1" ]] || return 0
+
+  current_arch="$(python -c 'import platform; print(platform.machine())' 2>/dev/null || true)"
+  [[ "$current_arch" == "x86_64" ]] || return 0
+
+  if command -v arch >/dev/null 2>&1 \
+    && arch -arm64 python -c 'import platform; raise SystemExit(0 if platform.machine() == "arm64" else 1)' >/dev/null 2>&1; then
+    CONFIG_PYTHON_CMD=(arch -arm64 python)
+    log "Detected x86_64 python on Apple Silicon; validating backend settings with native arm64 python"
+  fi
+}
 
 # コマンドライン引数のパース。
 # たとえば `--project-id` や `--region` などを受け取って、内部変数へ格納します。
@@ -158,6 +188,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --run-timeout)
       RUN_TIMEOUT_ARG="$2"
+      shift 2
+      ;;
+    --min-instances)
+      MIN_INSTANCES_ARG="$2"
       shift 2
       ;;
     --no-cpu-throttling)
@@ -289,9 +323,12 @@ add_env_key "TRUSTED_PROXY_IPS"
 add_env_key "ALLOWED_HOSTS"
 # Cloud Run へ適用する実行パラメータ（任意）
 # - CLOUD_RUN_TIMEOUT: 例 360s, 10m
+# - CLOUD_RUN_MIN_INSTANCES: 例 0, 1, default
 # - CLOUD_RUN_NO_CPU_THROTTLING: true/false
 
 RUN_TIMEOUT="${RUN_TIMEOUT_ARG:-${CLOUD_RUN_TIMEOUT:-}}"
+MIN_INSTANCES="${MIN_INSTANCES_ARG:-${CLOUD_RUN_MIN_INSTANCES:-}}"
+validate_min_instances "$MIN_INSTANCES"
 NO_CPU_THROTTLING="${NO_CPU_THROTTLING:-${CLOUD_RUN_NO_CPU_THROTTLING:-false}}"
 
 while IFS= read -r line || [[ -n "$line" ]]; do
@@ -333,8 +370,9 @@ IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}:${IMAGE
 # Python 側の設定（Pydantic モデル）を一度ロードして、値が正しいかチェックします。
 # ここで失敗すれば Cloud Build へ進まないため、「壊れた設定で本番デプロイ」は防げます。
 require_cmd python
-log "Validating backend settings via python -m apps.backend.backend.config"
-PYTHONPATH="$REPO_ROOT" python -m apps.backend.backend.config >/dev/null
+select_config_python_cmd
+log "Validating backend settings via ${CONFIG_PYTHON_CMD[*]} -m apps.backend.backend.config"
+PYTHONPATH="$REPO_ROOT" "${CONFIG_PYTHON_CMD[@]}" -m apps.backend.backend.config >/dev/null
 log "Backend configuration validated successfully"
 
 # dry-run モードでは Cloud Build / Cloud Run には触らず、
@@ -342,6 +380,9 @@ log "Backend configuration validated successfully"
 if [[ "$DRY_RUN" == true ]]; then
   log "Dry run mode: skipping gcloud build/deploy"
   log "Prepared image URI: $IMAGE_URI"
+  if [[ -n "$MIN_INSTANCES" ]]; then
+    log "Prepared Cloud Run minimum instances: $MIN_INSTANCES"
+  fi
   exit 0
 fi
 
@@ -376,15 +417,6 @@ cleanup_generated_buildconfig() {
 trap cleanup_generated_buildconfig EXIT
 
 SUBSTITUTIONS=("_IMAGE_URI=${IMAGE_URI}")
-# GitHub Checks API に Cloud Build の結果を可視化したい場合は、
-# GitHub Actions から渡されたトークン/メタ情報を Cloud Build へ伝搬する。
-# cloudbuild.backend.yaml はこれらの substitution を参照するため、token がない場合も
-# 空値を渡して Cloud Build の missing substitution error を避ける。Cloud Build 側の
-# Checks API step は token/repo/sha が欠けていれば安全に skip する。
-SUBSTITUTIONS+=("_GITHUB_CHECKS_TOKEN=${GITHUB_CHECKS_TOKEN:-}")
-SUBSTITUTIONS+=("_GITHUB_REPOSITORY=${GITHUB_REPOSITORY:-}")
-SUBSTITUTIONS+=("_GITHUB_SHA=${GITHUB_SHA:-}")
-SUBSTITUTIONS+=("_GITHUB_RUN_URL=${GITHUB_RUN_URL:-}")
 CONFIG_TO_USE="$BUILDCONFIG_PATH"
 
 if [[ ${#EXTRA_BUILD_ARGS[@]} -gt 0 ]]; then
@@ -451,6 +483,9 @@ log "Deploying service ${SERVICE_NAME} to region ${REGION} with env file ${ENV_V
 RUN_ARGS=()
 if [[ -n "${RUN_TIMEOUT:-}" ]]; then
   RUN_ARGS+=(--timeout "$RUN_TIMEOUT")
+fi
+if [[ -n "${MIN_INSTANCES:-}" ]]; then
+  RUN_ARGS+=(--min "$MIN_INSTANCES")
 fi
 if [[ "${NO_CPU_THROTTLING}" == "true" ]]; then
   RUN_ARGS+=(--no-cpu-throttling)

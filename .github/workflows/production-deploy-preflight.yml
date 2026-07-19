@@ -1,0 +1,253 @@
+name: Production deploy preflight
+
+on:
+  pull_request:
+    branches: [ main ]
+  pull_request_target:
+    branches: [ main ]
+    types: [ opened, synchronize, reopened, ready_for_review ]
+  workflow_dispatch:
+
+concurrency:
+  group: production-deploy-preflight-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  static_preflight:
+    name: Static deploy preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js for frontend artifact
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: apps/frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        env:
+          NPM_CONFIG_PRODUCTION: "false"
+        run: npm ci --prefix ./apps/frontend
+
+      - name: Build frontend artifact
+        run: npm --prefix ./apps/frontend run build
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Install backend dependencies for Cloud Run dry-run
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Cloud Run dry-run preflight
+        run: |
+          ./scripts/deploy_cloud_run.sh \
+            --dry-run \
+            --env-file configs/cloud-run/ci.env \
+            --project-id ci-placeholder-project \
+            --region asia-northeast1 \
+            --service wordpack-backend
+
+      - name: Plan Firebase Hosting API deploy without writes
+        run: |
+          python scripts/deploy_firebase_hosting.py \
+            --project ci-placeholder-project \
+            --site ci-placeholder-project \
+            --public apps/frontend/dist \
+            --plan-only
+
+      - name: Guard production deploy contract
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import sys
+
+          forbidden = {
+              "gcloud " + "alpha": "Production deploy preflight forbids alpha gcloud commands because CI images may prompt for components.",
+              "firebase deploy --only " + "hosting": "Production Hosting deploy must use scripts/deploy_firebase_hosting.py, not Firebase CLI Hosting deploy.",
+              "FIREBASE" + "_TOKEN": "Production deploy must not depend on Firebase CLI token credentials.",
+          }
+          files = [
+              Path(".github/workflows/deploy-production.yml"),
+              Path("scripts/deploy_cloud_run.sh"),
+              Path("scripts/deploy_firestore_indexes.sh"),
+              Path("scripts/deploy_firebase_hosting.py"),
+              Path("Makefile"),
+          ]
+
+          failed = False
+          for path in files:
+              for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
+                  stripped = line.strip()
+                  if not stripped or stripped.startswith("#"):
+                      continue
+                  for needle, message in forbidden.items():
+                      if needle in line:
+                          print(f"::error file={path},line={number}::{message}")
+                          failed = True
+
+          if failed:
+              sys.exit(1)
+          PY
+
+  authenticated_read_only_probe:
+    name: Authenticated deploy read-only probe
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch'
+    env:
+      CLOUD_RUN_PROJECT_ID: ${{ secrets.GCP_SA_PROJECT_ID }}
+      FIREBASE_PROJECT_ID: ${{ secrets.GCP_SA_PROJECT_ID }}
+      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+      FIRESTORE_DATABASE_ID: "(default)"
+    steps:
+      - name: Checkout trusted base code
+        if: github.event_name == 'pull_request_target'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Checkout selected ref
+        if: github.event_name != 'pull_request_target'
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate probe secrets
+        run: |
+          set -euo pipefail
+          missing=0
+          if [ -z "${CLOUD_RUN_PROJECT_ID}" ]; then
+            echo "::error::GCP_SA_PROJECT_ID secret is not set; production deploy would not know the target project."
+            missing=1
+          fi
+          if [ -z "${GCP_SA_KEY}" ]; then
+            echo "::error::GCP_SA_KEY secret is not set; production deploy cannot authenticate."
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          echo "::add-mask::${CLOUD_RUN_PROJECT_ID}"
+          echo "::add-mask::${FIREBASE_PROJECT_ID}"
+
+      - name: Authenticate to Google Cloud with service account key
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up gcloud SDK
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          project_id: ${{ env.CLOUD_RUN_PROJECT_ID }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Verify gcloud can mint an access token
+        run: |
+          set -euo pipefail
+          gcloud auth print-access-token --quiet >/dev/null
+
+      - name: Probe Firestore Admin API read access
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          import sys
+          import urllib.error
+          import urllib.parse
+          import urllib.request
+
+          with open("firestore.indexes.json", encoding="utf-8") as fh:
+              payload = json.load(fh)
+
+          collection_group = next(
+              (
+                  index.get("collectionGroup")
+                  for index in payload.get("indexes", [])
+                  if index.get("collectionGroup")
+              ),
+              None,
+          )
+          if not collection_group:
+              print("[preflight] No composite indexes to probe; skipping Firestore Admin API list check.")
+              sys.exit(0)
+
+          token = subprocess.check_output(
+              ["gcloud", "auth", "print-access-token", "--quiet"],
+              text=True,
+          ).strip()
+          if not token:
+              print("::error::gcloud did not return an access token for Firestore probe.", file=sys.stderr)
+              sys.exit(1)
+
+          def quote(value: str) -> str:
+              return urllib.parse.quote(value, safe="")
+
+          project_id = os.environ["CLOUD_RUN_PROJECT_ID"]
+          database_id = os.environ.get("FIRESTORE_DATABASE_ID", "(default)")
+          path = (
+              f"projects/{quote(project_id)}"
+              f"/databases/{quote(database_id)}"
+              f"/collectionGroups/{quote(collection_group)}"
+              "/indexes"
+          )
+          url = f"https://firestore.googleapis.com/v1/{path}?pageSize=0"
+          request = urllib.request.Request(
+              url,
+              headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+          )
+          try:
+              with urllib.request.urlopen(request, timeout=60) as response:
+                  response.read()
+          except urllib.error.HTTPError as exc:
+              text = exc.read().decode("utf-8", errors="replace")
+              try:
+                  error = json.loads(text).get("error", {})
+              except json.JSONDecodeError:
+                  error = {}
+              message = error.get("message") or error.get("status") or f"HTTP {exc.code}"
+              print(
+                  "::error::Firestore Admin API read-only probe failed "
+                  f"for collectionGroup '{collection_group}': {message}",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          except urllib.error.URLError as exc:
+              print(f"::error::Firestore Admin API read-only probe failed: {exc}", file=sys.stderr)
+              sys.exit(1)
+
+          print(f"[preflight] Firestore Admin API read-only probe passed for collectionGroup '{collection_group}'.")
+          PY
+
+      - name: Probe Firebase Hosting API read access
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/hosting-preflight"
+          printf '<!doctype html><title>preflight</title>\n' > "${RUNNER_TEMP}/hosting-preflight/index.html"
+          python scripts/deploy_firebase_hosting.py \
+            --project "${FIREBASE_PROJECT_ID}" \
+            --site "${FIREBASE_PROJECT_ID}" \
+            --public "${RUNNER_TEMP}/hosting-preflight" \
+            --probe-only

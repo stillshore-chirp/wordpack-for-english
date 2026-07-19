@@ -4,14 +4,28 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from ...auth import principal_from_request
+from ...authorization.dependencies import require_user_permission
+from ...authorization.permissions import Permission
+from ...authorization.policies import (
+    ResourceVisibility,
+    ensure_read_allowed,
+    ensure_user_write_allowed,
+)
+from ...authorization.principal import Principal
+from ...config import settings
 from ...application.wordpack.create_empty_wordpack import build_empty_wordpack
+from ...infrastructure.llm.empty_wordpack_title import (
+    EmptyWordPackTitleGenerationError,
+    generate_sense_title_for_empty_wordpack,
+)
 from ...models.word import (
     WordPack,
     WordPackCreateRequest,
     WordPackListItem,
     WordPackListResponse,
 )
-from .dependencies import get_store, next_word_pack_id, require_authenticated_user
+from .dependencies import get_store, get_word_pack_visibility, next_word_pack_id
 
 router = APIRouter()
 
@@ -24,7 +38,7 @@ router = APIRouter()
 )
 async def create_empty_word_pack(
     req: WordPackCreateRequest,
-    _user: dict[str, str] = Depends(require_authenticated_user),
+    principal: Principal = Depends(require_user_permission(Permission.WORDPACK_CREATE)),
 ) -> dict:
     """空のWordPackを作成・保存する（sense_title は短い日本語をLLMで生成）。"""
 
@@ -32,9 +46,25 @@ async def create_empty_word_pack(
     if not lemma:
         raise HTTPException(status_code=400, detail="lemma is required")
 
-    empty_word_pack = build_empty_wordpack(lemma)
+    try:
+        generated_title = generate_sense_title_for_empty_wordpack(lemma)
+    except EmptyWordPackTitleGenerationError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "message": "LLM failed to generate sense_title (strict mode)",
+                "reason_code": "LLM_FAILURE",
+                "diagnostics": {"lemma": lemma, "error": str(exc)[:200]},
+            },
+        ) from exc
+    empty_word_pack = build_empty_wordpack(lemma, generated_title=generated_title)
     word_pack_id = next_word_pack_id()
-    get_store().save_word_pack(word_pack_id, lemma, empty_word_pack.model_dump_json())
+    get_store().save_word_pack(
+        word_pack_id,
+        lemma,
+        empty_word_pack.model_dump_json(),
+        metadata={"owner_user_id": principal.user_id},
+    )
 
     return {"id": word_pack_id}
 
@@ -53,12 +83,19 @@ async def list_word_packs(
     """保存済みWordPackの一覧を取得する。"""
 
     repository = get_store()
-    is_guest = bool(getattr(request.state, "guest", False))
-    if is_guest:
+    principal = principal_from_request(request)
+    if principal.is_guest:
         items_with_flags = repository.list_public_word_packs_with_flags(
             limit=limit, offset=offset
         )
         total = repository.count_public_word_packs()
+    elif principal.is_user and getattr(settings, "enforce_owner_scoping", False):
+        items_with_flags = repository.list_owned_word_packs_with_flags(
+            principal.user_id or "",
+            limit=limit,
+            offset=offset,
+        )
+        total = repository.count_owned_word_packs(principal.user_id or "")
     else:
         items_with_flags = repository.list_word_packs_with_flags(
             limit=limit, offset=offset
@@ -116,9 +153,17 @@ async def get_word_pack(request: Request, word_pack_id: str) -> WordPack:
         raise HTTPException(status_code=404, detail="WordPack not found")
 
     _lemma, data, _created_at, _updated_at = result
-    guest_public = repository.is_word_pack_guest_public(word_pack_id)
-    if bool(getattr(request.state, "guest", False)) and not guest_public:
-        raise HTTPException(status_code=404, detail="WordPack not found")
+    visibility = get_word_pack_visibility(repository, word_pack_id) or {}
+    guest_public = bool(visibility.get("guest_public", False))
+    ensure_read_allowed(
+        principal_from_request(request),
+        ResourceVisibility(
+            exists=True,
+            guest_public=guest_public,
+            owner_user_id=visibility.get("owner_user_id"),
+            not_found_detail="WordPack not found",
+        ),
+    )
     try:
         word_pack_dict = json.loads(data)
         word_pack_dict["guest_public"] = guest_public
@@ -132,10 +177,22 @@ async def get_word_pack(request: Request, word_pack_id: str) -> WordPack:
     summary="WordPackを削除",
     response_description="指定されたIDのWordPackを削除します",
 )
-async def delete_word_pack(word_pack_id: str) -> dict[str, str]:
+async def delete_word_pack(
+    word_pack_id: str,
+    principal: Principal = Depends(require_user_permission(Permission.WORDPACK_DELETE)),
+) -> dict[str, str]:
     """保存済みWordPackを削除する。"""
 
-    success = get_store().delete_word_pack(word_pack_id)
+    repository = get_store()
+    visibility = get_word_pack_visibility(repository, word_pack_id)
+    if visibility is None:
+        raise HTTPException(status_code=404, detail="WordPack not found")
+    ensure_user_write_allowed(
+        principal,
+        owner_user_id=visibility.get("owner_user_id"),
+        not_found_detail="WordPack not found",
+    )
+    success = repository.delete_word_pack(word_pack_id)
     if not success:
         raise HTTPException(status_code=404, detail="WordPack not found")
 
