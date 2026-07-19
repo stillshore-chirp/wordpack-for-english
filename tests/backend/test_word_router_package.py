@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from fastapi import FastAPI
+
 from backend.routers import word
 
 
@@ -14,7 +16,9 @@ def test_word_router_keeps_legacy_exports() -> None:
 
 
 def test_word_router_paths_are_registered_in_split_package() -> None:
-    paths = {getattr(route, "path", None) for route in word.router.routes}
+    app = FastAPI()
+    app.include_router(word.router)
+    paths = set(app.openapi()["paths"])
 
     assert "/" in paths
     assert "/pack" in paths
