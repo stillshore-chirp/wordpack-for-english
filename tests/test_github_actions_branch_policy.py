@@ -170,6 +170,9 @@ def test_deploy_production_promotes_a_health_checked_no_traffic_candidate() -> N
             '--canary-percent "${CLOUD_RUN_CANARY_PERCENT}"',
             '--attempts "${CLOUD_RUN_CANARY_ATTEMPTS}"',
             '--delay-seconds "${CLOUD_RUN_CANARY_DELAY_SECONDS}"',
+            '--requests-per-attempt "${CLOUD_RUN_CANARY_REQUESTS_PER_ATTEMPT}"',
+            '--health-url "https://${FIREBASE_PROJECT_ID}.web.app/api/config"',
+            '--expected-version "${EXPECTED_VERSION}"',
         ],
     )
     assert yml.index("Promote staged Cloud Run revision") < yml.index("Deploy Firebase Hosting")

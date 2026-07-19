@@ -30,10 +30,12 @@ def _run_promotion(tmp_path: Path, *, fail_after_canary: bool = False) -> tuple[
         "count=$((count + 1))\n"
         "printf '%s' \"${count}\" > \"${CURL_COUNT}\"\n"
         "printf '%s\\n' \"$*\" >> \"${CURL_LOG}\"\n"
-        "if [ \"${FAIL_AFTER_CANARY:-false}\" = true ] && [ \"${count}\" -ge 2 ]; then\n"
-        "  printf '503'\n"
+        "if [ \"${FAIL_AFTER_CANARY:-false}\" = true ]; then\n"
+        "  exit 22\n"
+        "elif [ \"${count}\" -eq 1 ]; then\n"
+        "  printf '%s' '{\"request_timeout_ms\":120000}'\n"
         "else\n"
-        "  printf '200'\n"
+        "  printf '%s' '{\"request_timeout_ms\":120000,\"deployment_version\":\"abc1234\"}'\n"
         "fi\n",
         encoding="utf-8",
     )
@@ -80,6 +82,12 @@ def _run_promotion(tmp_path: Path, *, fail_after_canary: bool = False) -> tuple[
             "2",
             "--delay-seconds",
             "0",
+            "--requests-per-attempt",
+            "2",
+            "--health-url",
+            "https://production.example.test/api/config",
+            "--expected-version",
+            "abc1234",
         ],
         check=False,
         capture_output=True,
@@ -100,7 +108,8 @@ def test_promotes_healthy_candidate_after_canary_window(tmp_path: Path) -> None:
     assert "--to-tags candidate=10" in gcloud_log
     assert "--to-tags candidate=100" in gcloud_log
     assert "--to-revisions" not in gcloud_log
-    assert curl_log.count("https://candidate.example.test/healthz") == 3
+    assert curl_log.count("https://production.example.test/api/config?deployment_probe=") == 5
+    assert "Cache-Control: no-cache" in curl_log
 
 
 def test_restores_previous_traffic_when_canary_health_fails(tmp_path: Path) -> None:

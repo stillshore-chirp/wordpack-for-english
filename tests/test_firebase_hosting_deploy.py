@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -143,7 +144,7 @@ def test_deploy_firebase_hosting_uses_hosting_api_and_gcloud_token(tmp_path: Pat
     try:
         proc = subprocess.run(
             [
-                "python",
+                sys.executable,
                 "scripts/deploy_firebase_hosting.py",
                 "--project",
                 "demo-project",
@@ -195,7 +196,7 @@ def test_deploy_firebase_hosting_plan_only_does_not_call_gcloud_or_api(tmp_path:
 
     proc = subprocess.run(
         [
-            "python",
+            sys.executable,
             "scripts/deploy_firebase_hosting.py",
             "--project",
             "demo-project",
@@ -235,7 +236,7 @@ def test_deploy_firebase_hosting_probe_only_uses_read_only_releases_list(tmp_pat
     try:
         proc = subprocess.run(
             [
-                "python",
+                sys.executable,
                 "scripts/deploy_firebase_hosting.py",
                 "--project",
                 "demo-project",

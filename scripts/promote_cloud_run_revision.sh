@@ -24,7 +24,9 @@ Options:
   --canary-percent <percent> Canary traffic percentage from 1 to 99 (default: 10)
   --attempts <count>         Health checks during the canary window (default: 7)
   --delay-seconds <seconds>  Delay between canary checks (default: 10)
-  --health-path <path>       Candidate health path (default: /healthz)
+  --requests-per-attempt <n> Production health requests per attempt (default: 10)
+  --health-url <url>         Production health URL routed to this Cloud Run service
+  --expected-version <value> Candidate DEPLOYMENT_VERSION expected in health JSON
   -h, --help                 Show this help
 USAGE
 }
@@ -43,7 +45,9 @@ TRAFFIC_TAG=""
 CANARY_PERCENT=10
 HEALTH_ATTEMPTS=7
 HEALTH_DELAY_SECONDS=10
-HEALTH_PATH="/healthz"
+HEALTH_REQUESTS_PER_ATTEMPT=10
+HEALTH_URL=""
+EXPECTED_VERSION=""
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -75,8 +79,16 @@ while [[ $# -gt 0 ]]; do
       HEALTH_DELAY_SECONDS="$2"
       shift 2
       ;;
-    --health-path)
-      HEALTH_PATH="$2"
+    --requests-per-attempt)
+      HEALTH_REQUESTS_PER_ATTEMPT="$2"
+      shift 2
+      ;;
+    --health-url)
+      HEALTH_URL="$2"
+      shift 2
+      ;;
+    --expected-version)
+      EXPECTED_VERSION="$2"
       shift 2
       ;;
     -h|--help)
@@ -91,7 +103,7 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-for required_name in PROJECT_ID REGION SERVICE_NAME TRAFFIC_TAG; do
+for required_name in PROJECT_ID REGION SERVICE_NAME TRAFFIC_TAG HEALTH_URL EXPECTED_VERSION; do
   if [[ -z "${!required_name}" ]]; then
     err "${required_name} is required"
     exit 1
@@ -114,8 +126,12 @@ if [[ ! "$HEALTH_DELAY_SECONDS" =~ ^[0-9]+$ ]]; then
   err "--delay-seconds must be a non-negative integer"
   exit 1
 fi
-if [[ ! "$HEALTH_PATH" =~ ^/ ]]; then
-  err "--health-path must start with /"
+if [[ ! "$HEALTH_REQUESTS_PER_ATTEMPT" =~ ^[0-9]+$ ]] || (( HEALTH_REQUESTS_PER_ATTEMPT < 1 )); then
+  err "--requests-per-attempt must be a positive integer"
+  exit 1
+fi
+if [[ ! "$HEALTH_URL" =~ ^https:// ]]; then
+  err "--health-url must use https://"
   exit 1
 fi
 
@@ -140,11 +156,10 @@ candidate = next((entry for entry in traffic if entry.get("tag") == tag), None)
 if not candidate:
     raise SystemExit(f"Candidate tag {tag!r} was not found in Cloud Run traffic status")
 
-candidate_url = candidate.get("url")
 candidate_revision = candidate.get("revisionName")
 candidate_percent = int(candidate.get("percent") or 0)
-if not candidate_url or not candidate_revision:
-    raise SystemExit("Candidate tag is missing its URL or revision name")
+if not candidate_revision:
+    raise SystemExit("Candidate tag is missing its revision name")
 if candidate_percent != 0:
     raise SystemExit("Candidate revision already receives traffic; refusing to overwrite the baseline")
 
@@ -161,30 +176,48 @@ for entry in traffic:
 if sum(previous.values()) != 100:
     raise SystemExit("Active Cloud Run traffic does not add up to 100 percent")
 
-print(candidate_url)
 print(",".join(f"{revision}={percent}" for revision, percent in previous.items()))
 PY
 )"
 
-mapfile -t STATE_LINES <<< "$PARSED_STATE"
-CANDIDATE_URL="${STATE_LINES[0]:-}"
-ROLLBACK_TARGETS="${STATE_LINES[1]:-}"
-if [[ -z "$CANDIDATE_URL" || -z "$ROLLBACK_TARGETS" ]]; then
+ROLLBACK_TARGETS="$PARSED_STATE"
+if [[ -z "$ROLLBACK_TARGETS" ]]; then
   err "Cloud Run traffic status could not be converted into a safe promotion plan"
   exit 1
 fi
 
-check_candidate_health() {
-  local http_status
-  http_status="$(curl --silent \
-    --output /dev/null \
-    --write-out '%{http_code}' \
+HEALTH_REQUEST_SEQUENCE=0
+check_production_health() {
+  local response observation probe_url
+  HEALTH_REQUEST_SEQUENCE=$((HEALTH_REQUEST_SEQUENCE + 1))
+  probe_url="${HEALTH_URL}?deployment_probe=${EXPECTED_VERSION}-${HEALTH_REQUEST_SEQUENCE}"
+  if ! response="$(curl --fail --silent \
+    --header 'Cache-Control: no-cache' \
     --connect-timeout 10 \
     --max-time 20 \
-    "${CANDIDATE_URL}${HEALTH_PATH}")"
-  if [[ ! "$http_status" =~ ^2[0-9][0-9]$ ]]; then
-    err "Candidate health check failed with a non-success response"
+    "$probe_url")"; then
+    err "Production health request failed"
     return 1
+  fi
+  if ! observation="$(HEALTH_RESPONSE="$response" python - "$EXPECTED_VERSION" <<'PY'
+import json
+import os
+import sys
+
+payload = json.loads(os.environ["HEALTH_RESPONSE"])
+is_health = payload.get("status") == "ok"
+is_runtime_config = isinstance(payload.get("request_timeout_ms"), int)
+if not (is_health or is_runtime_config):
+    raise SystemExit("Production probe response did not match a supported health contract")
+version = payload.get("deployment_version") or payload.get("version")
+print("candidate" if version == sys.argv[1] else "other")
+PY
+  )"; then
+    err "Production health response was invalid"
+    return 1
+  fi
+  if [[ "$observation" == "candidate" ]]; then
+    CANDIDATE_OBSERVED=true
   fi
 }
 
@@ -208,8 +241,7 @@ rollback_on_error() {
   exit "$status"
 }
 
-log "Checking the tagged candidate before assigning production traffic"
-check_candidate_health
+log "Tagged candidate is ready with 0% production traffic"
 
 trap 'rollback_on_error $?' ERR
 trap 'rollback_on_error 130' INT
@@ -223,13 +255,20 @@ gcloud run services update-traffic "$SERVICE_NAME" \
   --format=none \
   --quiet
 
+CANDIDATE_OBSERVED=false
 for ((attempt = 1; attempt <= HEALTH_ATTEMPTS; attempt += 1)); do
   if (( attempt > 1 )); then
     sleep "$HEALTH_DELAY_SECONDS"
   fi
-  log "Canary health check ${attempt}/${HEALTH_ATTEMPTS}"
-  check_candidate_health
+  log "Canary production health check ${attempt}/${HEALTH_ATTEMPTS}"
+  for ((request = 1; request <= HEALTH_REQUESTS_PER_ATTEMPT; request += 1)); do
+    check_production_health
+  done
 done
+if [[ "$CANDIDATE_OBSERVED" != true ]]; then
+  err "Canary traffic did not return the expected deployment version"
+  false
+fi
 
 log "Canary remained healthy; assigning 100% traffic to the candidate"
 gcloud run services update-traffic "$SERVICE_NAME" \
@@ -238,6 +277,17 @@ gcloud run services update-traffic "$SERVICE_NAME" \
   --to-tags "${TRAFFIC_TAG}=100" \
   --format=none \
   --quiet
+
+CANDIDATE_OBSERVED=false
+for ((request = 1; request <= HEALTH_REQUESTS_PER_ATTEMPT; request += 1)); do
+  check_production_health
+  [[ "$CANDIDATE_OBSERVED" == true ]] && break
+  sleep 1
+done
+if [[ "$CANDIDATE_OBSERVED" != true ]]; then
+  err "Promoted traffic did not return the expected deployment version"
+  false
+fi
 
 TRAFFIC_CHANGED=false
 trap - ERR INT TERM

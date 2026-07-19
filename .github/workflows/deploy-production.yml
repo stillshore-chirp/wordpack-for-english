@@ -30,6 +30,7 @@ jobs:
       CLOUD_RUN_CANARY_PERCENT: "10"
       CLOUD_RUN_CANARY_ATTEMPTS: "7"
       CLOUD_RUN_CANARY_DELAY_SECONDS: "10"
+      CLOUD_RUN_CANARY_REQUESTS_PER_ATTEMPT: "10"
       SKIP_FIRESTORE_INDEX_SYNC: "false"
       FIREBASE_PROJECT_ID: ${{ secrets.GCP_SA_PROJECT_ID }}
       TRIGGER_BRANCH: ${{ github.ref_name }}
@@ -154,7 +155,7 @@ jobs:
             TOOL=gcloud
 
       - name: Promote staged Cloud Run revision
-        # タグ URL を直接検証してから 10% canary を 60 秒観測し、失敗時は直前の traffic 配分へ自動復旧する。
+        # 本番 Hosting rewrite で候補 version を観測しながら 10% canary を 60 秒確認し、失敗時は直前の traffic 配分へ自動復旧する。
         env:
           CLOUD_RUN_PROJECT_ID: ${{ env.CLOUD_RUN_PROJECT_ID }}
           CLOUD_RUN_REGION: ${{ env.CLOUD_RUN_REGION }}
@@ -163,7 +164,11 @@ jobs:
           CLOUD_RUN_CANARY_PERCENT: ${{ env.CLOUD_RUN_CANARY_PERCENT }}
           CLOUD_RUN_CANARY_ATTEMPTS: ${{ env.CLOUD_RUN_CANARY_ATTEMPTS }}
           CLOUD_RUN_CANARY_DELAY_SECONDS: ${{ env.CLOUD_RUN_CANARY_DELAY_SECONDS }}
+          CLOUD_RUN_CANARY_REQUESTS_PER_ATTEMPT: ${{ env.CLOUD_RUN_CANARY_REQUESTS_PER_ATTEMPT }}
+          FIREBASE_PROJECT_ID: ${{ env.FIREBASE_PROJECT_ID }}
+          TRIGGER_SHA: ${{ env.TRIGGER_SHA }}
         run: |
+          EXPECTED_VERSION="$(git rev-parse --short "${TRIGGER_SHA}")"
           scripts/promote_cloud_run_revision.sh \
             --project-id "${CLOUD_RUN_PROJECT_ID}" \
             --region "${CLOUD_RUN_REGION}" \
@@ -171,7 +176,10 @@ jobs:
             --tag "${CLOUD_RUN_TRAFFIC_TAG}" \
             --canary-percent "${CLOUD_RUN_CANARY_PERCENT}" \
             --attempts "${CLOUD_RUN_CANARY_ATTEMPTS}" \
-            --delay-seconds "${CLOUD_RUN_CANARY_DELAY_SECONDS}"
+            --delay-seconds "${CLOUD_RUN_CANARY_DELAY_SECONDS}" \
+            --requests-per-attempt "${CLOUD_RUN_CANARY_REQUESTS_PER_ATTEMPT}" \
+            --health-url "https://${FIREBASE_PROJECT_ID}.web.app/api/config" \
+            --expected-version "${EXPECTED_VERSION}"
 
       - name: Deploy Firebase Hosting
         # Cloud Run デプロイ後に Firebase Hosting を更新し、フロントエンドを同じリリースで揃える。

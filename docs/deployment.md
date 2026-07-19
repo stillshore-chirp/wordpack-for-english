@@ -135,7 +135,7 @@ SKIP_FIRESTORE_INDEX_SYNC=true make release-cloud-run \
 
 ### Cloud Run の段階リリース
 
-GitHub Actions の本番デプロイは、Cloud Run の新 revision をすぐに全面公開しません。`candidate` tag を付けて traffic 0% でデプロイし、tag URL の `/healthz` を確認した後、10% canary を 60 秒間観測します。すべて成功した場合だけ 100% へ昇格し、その後に Firebase Hosting を更新します。
+GitHub Actions の本番デプロイは、Cloud Run の新 revision をすぐに全面公開しません。`candidate` tag を付けて traffic 0% でデプロイし、Cloud Run が候補を ready と判定してから 10% canary を開始します。canary 中は、実際の本番経路である Firebase Hosting の `/api/config` rewrite を 60 秒間繰り返し確認します。候補 revision に設定した `DEPLOYMENT_VERSION` が応答で観測でき、全 probe request が成功した場合だけ 100% へ昇格し、その後に Firebase Hosting artifact を更新します。
 
 canary 中の health check または traffic 更新に失敗した場合、`scripts/promote_cloud_run_revision.sh` はデプロイ前に記録した revision ごとの traffic 配分へ自動で戻します。traffic を割り当てる前の候補確認で失敗した場合は、本番 traffic に変更はありません。自動復旧自体が失敗した場合は、[OPERATIONS.md](../OPERATIONS.md) の手動 rollback を実施してください。
 
@@ -157,11 +157,14 @@ scripts/promote_cloud_run_revision.sh \
   --tag candidate \
   --canary-percent 10 \
   --attempts 7 \
-  --delay-seconds 10
+  --delay-seconds 10 \
+  --requests-per-attempt 10 \
+  --health-url https://<firebase-project-id>.web.app/api/config \
+  --expected-version <image-tag>
 ```
 
-`--no-traffic` は、候補を直接検証できるよう `--traffic-tag` と組み合わせた場合だけ受け付けます。
-デプロイスクリプトは既存 Cloud Run service の既定 URL から、その tag 専用 Host を導出し、当該 Host だけを候補 revision の `ALLOWED_HOSTS` に追加します。Cloud Run 全体を許可する wildcard は追加しません。
+`--no-traffic` は、候補を一意に識別できるよう `--traffic-tag` と組み合わせた場合だけ受け付けます。
+デプロイスクリプトは image tag と同じ値を `DEPLOYMENT_VERSION` として候補 revision に設定します。`/api/config` は既存フィールドを維持し、`DEPLOYMENT_VERSION` が設定された revision だけ `deployment_version` も返します。これにより、初回導入時の旧 revision も同じ probe に 200 を返しつつ、revision 名や非公開 URL を workflow log に出さず、本番 traffic が候補まで到達したことを確認できます。各 probe は cache 回避用の query を付けます。
 
 ## Firebase Hosting
 
