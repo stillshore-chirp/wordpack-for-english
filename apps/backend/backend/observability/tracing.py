@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from typing import Any, ContextManager
 
 from ..config import settings
@@ -12,10 +12,10 @@ try:  # pragma: no cover - optional dependency in tests
 except Exception:  # pragma: no cover
     Langfuse = None  # type: ignore
 
-try:  # optional async client (not required for sync tracing)
-    from langfuse.client import AsyncLangfuse
+try:  # optional in tests; required for v4 trace attributes
+    from langfuse import propagate_attributes
 except Exception:  # pragma: no cover
-    AsyncLangfuse = None  # type: ignore
+    propagate_attributes = None  # type: ignore
 
 
 _langfuse_client: Any | None = None
@@ -96,6 +96,60 @@ def request_trace(
 
     lf = get_langfuse()
     start = time.time()
+    # --- v4: observation API と OpenTelemetry context propagation ---
+    if lf is not None and hasattr(lf, "start_as_current_observation"):
+        try:
+            attributes_cm = (
+                propagate_attributes(
+                    user_id=user_id,
+                    metadata=metadata or None,
+                    trace_name=name,
+                )
+                if propagate_attributes is not None
+                else nullcontext()
+            )
+        except Exception as exc:
+            logger.warning("langfuse_trace_attributes_failed", error=repr(exc))
+            if settings.strict_mode:
+                raise
+            attributes_cm = nullcontext()
+        try:
+            observation_cm = lf.start_as_current_observation(
+                name=name,
+                as_type="span",
+                metadata=metadata or None,
+            )
+        except Exception as exc:
+            logger.warning("langfuse_trace_create_failed", error=repr(exc))
+            if settings.strict_mode:
+                raise
+            observation_cm = None
+        if observation_cm is not None:
+            with attributes_cm:
+                with observation_cm as parent_span:
+                    ctx = {"trace": parent_span}
+                    final_metadata = dict(metadata or {})
+                    try:
+                        yield ctx
+                    except Exception as exc:
+                        final_metadata["error"] = str(exc)[:500]
+                        try:
+                            parent_span.update(
+                                level="ERROR",
+                                status_message=str(exc)[:500],
+                            )
+                        except Exception:
+                            pass
+                        raise
+                    finally:
+                        final_metadata["duration_ms"] = (
+                            time.time() - start
+                        ) * 1000.0
+                        try:
+                            parent_span.update(metadata=final_metadata)
+                        except Exception:
+                            pass
+            return
     # --- v3: context manager でスパンを開始し、その内側で処理を実行する ---
     if lf is not None and (
         hasattr(lf, "start_as_current_span") or hasattr(lf, "start_span")
@@ -192,6 +246,47 @@ def span(
 ) -> ContextManager[Any | None]:
     lf = get_langfuse()
     start = time.time()
+    # v4: current observation の内側に子 observation を開始
+    if lf is not None and hasattr(lf, "start_as_current_observation"):
+        try:
+            cm = lf.start_as_current_observation(
+                name=name,
+                as_type="span",
+                input=str(input)[:40000] if input is not None else None,
+                metadata=metadata or None,
+            )
+        except Exception as exc:  # pragma: no cover
+            logger.warning("langfuse_span_create_failed", error=repr(exc))
+            cm = None
+        if cm is None:
+            yield None
+            return
+        try:
+            with cm as s:
+                final_metadata = dict(metadata or {})
+                try:
+                    yield s
+                except Exception as exc:
+                    final_metadata["error"] = str(exc)[:500]
+                    try:
+                        s.update(
+                            level="ERROR",
+                            status_message=str(exc)[:500],
+                        )
+                    except Exception:
+                        pass
+                    raise
+                finally:
+                    final_metadata["duration_ms"] = (
+                        time.time() - start
+                    ) * 1000.0
+                    try:
+                        s.update(metadata=final_metadata)
+                    except Exception:
+                        pass
+        finally:
+            pass
+        return
     # v3: 親スパン（request_trace 内）直下に current span を開始
     if lf is not None and (
         hasattr(lf, "start_as_current_span") or hasattr(lf, "start_span")

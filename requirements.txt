@@ -15,6 +15,5 @@ cmudict
 g2p_en
 openai>=2.46.0
 sentry-sdk
-# 短期復旧: 既存の観測コードは v2 系 API（trace/span）に合わせているため固定
-# v3 対応へ移行
+# v4 observation API（start_as_current_observation）へ移行済み
 langfuse>=4.12.0,<5
