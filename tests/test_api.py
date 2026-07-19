@@ -133,6 +133,24 @@ def test_health(client):
     assert resp.json() == {"status": "ok"}
 
 
+def test_runtime_config_exposes_deployment_version_when_configured(client, monkeypatch):
+    monkeypatch.setenv("DEPLOYMENT_VERSION", "abc1234")
+
+    resp = client.get("/api/config")
+
+    assert resp.status_code == 200
+    assert resp.json()["deployment_version"] == "abc1234"
+
+
+def test_runtime_config_omits_deployment_version_when_unconfigured(client, monkeypatch):
+    monkeypatch.delenv("DEPLOYMENT_VERSION", raising=False)
+
+    resp = client.get("/api/config")
+
+    assert resp.status_code == 200
+    assert "deployment_version" not in resp.json()
+
+
 def test_word_pack(client):
     resp = client.post("/api/word/pack", json={"lemma": "converge"})
     assert resp.status_code == 200

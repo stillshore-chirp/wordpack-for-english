@@ -18,7 +18,7 @@
 - `firebase-tools`
 - Docker
 - Node.js 20.19.0+
-- Python 3.13
+- Python 3.14
 
 初回は次を済ませます。
 
@@ -96,6 +96,9 @@ make deploy-cloud-run PROJECT_ID=<project-id> REGION=asia-northeast1
 本番リリースでは `make release-cloud-run` を使うと、Firestore インデックス同期、Cloud Run dry-run、本番デプロイの順序を固定できます。
 
 ```bash
+DEPLOYMENT_VERSION="$(openssl rand -hex 16)"
+export DEPLOYMENT_VERSION
+
 make release-cloud-run \
   PROJECT_ID=<project-id> \
   REGION=asia-northeast1 \
@@ -133,6 +136,39 @@ SKIP_FIRESTORE_INDEX_SYNC=true make release-cloud-run \
   ENV_FILE=configs/cloud-run/ci.env
 ```
 
+### Cloud Run の段階リリース
+
+GitHub Actions の本番デプロイは、Cloud Run の新 revision をすぐに全面公開しません。`candidate` tag を付けて traffic 0% でデプロイし、Cloud Run が候補を ready と判定してから 10% canary を開始します。canary 中は、実際の本番経路である Firebase Hosting の `/api/config` rewrite を 60 秒間繰り返し確認します。候補 revision に設定した `DEPLOYMENT_VERSION` が応答で観測でき、全 probe request が成功した場合だけ 100% へ昇格し、その後に Firebase Hosting artifact を更新します。
+
+canary 中の health check または traffic 更新に失敗した場合、`scripts/promote_cloud_run_revision.sh` はデプロイ前に記録した revision ごとの traffic 配分へ自動で戻します。traffic を割り当てる前の候補確認で失敗した場合は、本番 traffic に変更はありません。自動復旧自体が失敗した場合は、[OPERATIONS.md](../OPERATIONS.md) の手動 rollback を実施してください。
+
+同じ手順を手動で実行する場合:
+
+```bash
+make release-cloud-run \
+  PROJECT_ID=<project-id> \
+  REGION=asia-northeast1 \
+  SERVICE=wordpack-backend \
+  ENV_FILE=.env.deploy \
+  NO_TRAFFIC=true \
+  TRAFFIC_TAG=candidate
+
+scripts/promote_cloud_run_revision.sh \
+  --project-id <project-id> \
+  --region asia-northeast1 \
+  --service wordpack-backend \
+  --tag candidate \
+  --canary-percent 10 \
+  --attempts 7 \
+  --delay-seconds 10 \
+  --requests-per-attempt 10 \
+  --health-url https://<firebase-project-id>.web.app/api/config \
+  --expected-version "${DEPLOYMENT_VERSION}"
+```
+
+`--no-traffic` は、候補を一意に識別できるよう `--traffic-tag` と組み合わせた場合だけ受け付けます。
+GitHub Actions は実行ごとにランダムな `DEPLOYMENT_VERSION` を生成し、値を log で mask して候補 revision に設定します。手動実行でも、同じ commit や image tag を再デプロイしたときに旧 revision を候補と誤認しないよう、上の例のように毎回新しい値を指定してください。未指定時だけ image tag を fallback として使います。`/api/config` は既存フィールドを維持し、`DEPLOYMENT_VERSION` が設定された revision だけ `deployment_version` も返します。これにより、初回導入時の旧 revision も同じ probe に 200 を返しつつ、revision 名や非公開 URL を workflow log に出さず、本番 traffic が候補まで到達したことを確認できます。各 probe は cache 回避用の query を付けます。
+
 ## Firebase Hosting
 
 Firebase Hosting は frontend の静的ファイルと `/api/**` rewrite を担当します。`firebase.json` では `apps/frontend/dist` を public directory とし、API は Cloud Run へ rewrite します。
@@ -169,6 +205,7 @@ firebase deploy --only hosting --project <firebase-project-id>
 - 手動実行用に `workflow_dispatch` もあります。
 - PR では本番 deploy job を作りません。
 - CI 成功を必須にする場合は、GitHub の branch protection で必要な check を指定します。
+- Cloud Run は traffic 0% の候補作成、tag URL の health check、10% canary、60 秒の継続確認、100% 昇格の順に進みます。canary 失敗時は直前の traffic 配分へ自動復旧します。
 - Cloud Run の minimum instances は repository variable `CLOUD_RUN_MIN_INSTANCES` で上書きできます。未設定時は紹介用 URL の初回体験を優先して `1` を使います。費用優先へ戻す場合は `0` を設定します。
 
 必要な repository secrets:

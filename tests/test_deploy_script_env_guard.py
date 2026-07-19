@@ -68,6 +68,42 @@ def test_deploy_script_rejects_invalid_cloud_run_min_instances() -> None:
     assert "Validating backend settings" not in combined_output
 
 
+def test_deploy_script_supports_tagged_no_traffic_candidates() -> None:
+    deploy_script = Path("scripts/deploy_cloud_run.sh").read_text(encoding="utf-8")
+    makefile = Path("Makefile").read_text(encoding="utf-8")
+
+    assert "--no-traffic" in deploy_script
+    assert "--traffic-tag <tag>" in deploy_script
+    assert 'RUN_ARGS+=(--no-traffic)' in deploy_script
+    assert 'RUN_ARGS+=(--tag "$TRAFFIC_TAG")' in deploy_script
+    assert "$(if $(filter true,$(NO_TRAFFIC)),--no-traffic,)" in makefile
+    assert "$(if $(TRAFFIC_TAG),--traffic-tag $(TRAFFIC_TAG),)" in makefile
+    assert 'DEPLOYMENT_VERSION="${DEPLOYMENT_VERSION:-$IMAGE_TAG}"' in deploy_script
+    assert 'add_env_key "DEPLOYMENT_VERSION"' in deploy_script
+
+
+def test_deploy_script_requires_a_tag_for_no_traffic_mode() -> None:
+    proc = subprocess.run(
+        [
+            "scripts/deploy_cloud_run.sh",
+            "--dry-run",
+            "--env-file",
+            "configs/cloud-run/ci.env",
+            "--project-id",
+            "ci-placeholder-project",
+            "--region",
+            "asia-northeast1",
+            "--no-traffic",
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert proc.returncode != 0
+    assert "--no-traffic requires --traffic-tag" in proc.stdout + proc.stderr
+
+
 def test_release_cloud_run_stops_when_index_sync_fails(tmp_path: Path) -> None:
     fake_cloud_run = tmp_path / "fake_cloud_run.sh"
     fake_cloud_run.write_text(
