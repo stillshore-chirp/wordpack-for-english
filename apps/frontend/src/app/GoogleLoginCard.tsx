@@ -82,7 +82,6 @@ export const GoogleLoginCard: React.FC<GoogleLoginCardProps> = ({
           text="signin_with"
           shape="pill"
           width="320"
-          locale="ja"
           context="signin"
         />
       </div>
