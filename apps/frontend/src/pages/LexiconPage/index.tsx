@@ -45,11 +45,17 @@ export const LexiconPage: React.FC<LexiconPageProps> = ({
   React.useEffect(() => {
     const handleCreateFocus = () => focusCreateInput();
     const handleSearchCleared = () => setTopSearch('');
+    const handleSearchSynced = (event: Event) => {
+      const detail = (event as CustomEvent<{ value?: string }>).detail;
+      setTopSearch(detail?.value ?? '');
+    };
     window.addEventListener('wordpack:create-focus', handleCreateFocus);
     window.addEventListener('wordpack:list-search-cleared', handleSearchCleared);
+    window.addEventListener('wordpack:list-search-synced', handleSearchSynced);
     return () => {
       window.removeEventListener('wordpack:create-focus', handleCreateFocus);
       window.removeEventListener('wordpack:list-search-cleared', handleSearchCleared);
+      window.removeEventListener('wordpack:list-search-synced', handleSearchSynced);
     };
   }, [focusCreateInput]);
 
