@@ -23,6 +23,7 @@ import { useAuth } from '../AuthContext';
 import { GuestLock } from './GuestLock';
 import { APP_EVENTS, dispatchAppEvent } from '../shared/events/appEvents';
 import type { WordPackListItem } from '../features/wordpack/types';
+import { Button } from '../shared/ui';
 
 type MiniIconName = 'book' | 'calendar' | 'check' | 'globe' | 'lock' | 'open' | 'speaker' | 'trash' | 'tag' | 'more';
 
@@ -90,6 +91,19 @@ type PersistedState = {
 
 const STORAGE_KEY = 'wp.list.ui_state.v1';
 const PAGE_LIMIT = 200;
+const SEARCH_MODE_LABELS: Record<SearchMode, string> = {
+  prefix: '前方一致',
+  suffix: '後方一致',
+  contains: '部分一致',
+};
+const GENERATION_FILTER_LABELS: Record<Exclude<GenerationFilter, 'all'>, string> = {
+  generated: '生成済み',
+  not_generated: '未生成',
+};
+const VISIBILITY_FILTER_LABELS: Record<Exclude<VisibilityFilter, 'all'>, string> = {
+  public: '公開中',
+  private: '非公開',
+};
 
 const DEFAULT_PERSISTED_STATE: PersistedState = {
   sortKey: 'updated_at',
@@ -116,6 +130,52 @@ const matchString = (text: string, query: string, mode: SearchMode): boolean => 
   return text.includes(query);
 };
 
+interface WordPackListStateProps {
+  id: string;
+  title: string;
+  description: string;
+  symbol: string;
+  tone: 'empty' | 'no-results' | 'error';
+  detail?: string;
+  conditions?: string[];
+  actions?: React.ReactNode;
+}
+
+const WordPackListState: React.FC<WordPackListStateProps> = ({
+  id,
+  title,
+  description,
+  symbol,
+  tone,
+  detail,
+  conditions = [],
+  actions,
+}) => (
+  <section className={`wp-list-state is-${tone}`} aria-labelledby={`${id}-title`}>
+    <div
+      className="wp-list-state__message"
+      role={tone === 'error' ? 'alert' : 'status'}
+      aria-live={tone === 'error' ? 'assertive' : 'polite'}
+    >
+      <span className="wp-list-state__symbol" aria-hidden="true">{symbol}</span>
+      <div>
+        <h3 id={`${id}-title`}>{title}</h3>
+        <p>{description}</p>
+        {detail ? <p className="wp-list-state__detail">{detail}</p> : null}
+      </div>
+    </div>
+    {conditions.length > 0 ? (
+      <div className="wp-list-state__conditions">
+        <span>現在の条件</span>
+        <ul aria-label="現在適用中の条件">
+          {conditions.map((condition) => <li key={condition}>{condition}</li>)}
+        </ul>
+      </div>
+    ) : null}
+    {actions ? <div className="wp-list-state__actions">{actions}</div> : null}
+  </section>
+);
+
 export const WordPackListPanel: React.FC = () => {
   const { isGuest } = useAuth();
   const { settings } = useSettings();
@@ -133,6 +193,8 @@ export const WordPackListPanel: React.FC = () => {
   const { add: addNotification, update: updateNotification } = useNotifications();
   const [wordPacks, setWordPacks] = useState<WordPackListItem[]>([]);
   const [loading, setLoading] = useState(false);
+  const [listLoading, setListLoading] = useState(true);
+  const [listError, setListError] = useState<string | null>(null);
   const [msg, setMsg] = useState<{ kind: 'status' | 'alert'; text: string } | null>(null);
   const [total, setTotal] = useState(0);
   const persistedState = useMemo(() => loadSessionState<PersistedState>(STORAGE_KEY, DEFAULT_PERSISTED_STATE), []);
@@ -155,6 +217,7 @@ export const WordPackListPanel: React.FC = () => {
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(() => new Set());
   const [guestPublicUpdatingIds, setGuestPublicUpdatingIds] = useState<Set<string>>(() => new Set());
   const { run: runAbortable } = useAbortableAsync();
+  const listRequestIdRef = useRef(0);
   const previewMeta = useMemo<WordPackPreviewMeta | null>(() => {
     if (!previewWordPackId) return null;
     const meta = wordPacks.find((w) => w.id === previewWordPackId);
@@ -204,7 +267,11 @@ export const WordPackListPanel: React.FC = () => {
   // 一覧の取得は他のフィルタ操作と競合するため、AbortController を共通化して最新の結果のみを反映させる。
   const loadWordPacks = useCallback(
     async (newOffset: number = 0) => {
+      const requestId = listRequestIdRef.current + 1;
+      listRequestIdRef.current = requestId;
       setLoading(true);
+      setListLoading(true);
+      setListError(null);
       setMsg(null);
 
       try {
@@ -215,6 +282,7 @@ export const WordPackListPanel: React.FC = () => {
             signal,
           }),
         );
+        if (requestId !== listRequestIdRef.current) return;
         setWordPacks(
           res.items.map((item) => ({
             ...item,
@@ -227,10 +295,14 @@ export const WordPackListPanel: React.FC = () => {
         setOffset((prev) => (prev === newOffset ? prev : newOffset));
       } catch (e) {
         if (e instanceof AbortError) return;
+        if (requestId !== listRequestIdRef.current) return;
         const m = e instanceof ApiError ? e.message : 'WordPack一覧の読み込みに失敗しました';
-        setMsg({ kind: 'alert', text: m });
+        setListError(m);
       } finally {
-        setLoading(false);
+        if (requestId === listRequestIdRef.current) {
+          setListLoading(false);
+          setLoading(false);
+        }
       }
     },
     [apiBase, runAbortable],
@@ -564,6 +636,21 @@ export const WordPackListPanel: React.FC = () => {
     setAppliedSearch({ mode: searchMode, value: searchInput.trim() });
   }, [searchMode, searchInput]);
 
+  const clearAppliedSearch = useCallback(() => {
+    setSearchInput('');
+    setAppliedSearch(null);
+    try { window.dispatchEvent(new Event('wordpack:list-search-cleared')); } catch {}
+  }, []);
+
+  const clearFilters = useCallback(() => {
+    setVisibilityFilter('all');
+    setGenerationFilter('all');
+  }, []);
+
+  const requestCreateWordPackFocus = useCallback(() => {
+    try { window.dispatchEvent(new Event('wordpack:create-focus')); } catch {}
+  }, []);
+
   const handleSortChange = useCallback(
     (newSortKey: SortKey) => {
       if (sortKey === newSortKey) {
@@ -656,6 +743,42 @@ export const WordPackListPanel: React.FC = () => {
         .slice(0, 3),
     [normalizedWordPacks],
   );
+  const hasAppliedSearch = normalizedSearch !== null;
+  const hasActiveFilters = generationFilter !== 'all' || visibilityFilter !== 'all';
+  const activeConditionLabels = useMemo(() => {
+    const conditions: string[] = [];
+    if (appliedSearch?.value.trim()) {
+      conditions.push(`検索: ${appliedSearch.value.trim()}（${SEARCH_MODE_LABELS[appliedSearch.mode]}）`);
+    }
+    if (visibilityFilter !== 'all') {
+      conditions.push(`公開状態: ${VISIBILITY_FILTER_LABELS[visibilityFilter]}`);
+    }
+    if (generationFilter !== 'all') {
+      conditions.push(`生成状態: ${GENERATION_FILTER_LABELS[generationFilter]}`);
+    }
+    return conditions;
+  }, [appliedSearch, generationFilter, visibilityFilter]);
+  const isInitialListLoading = listLoading && wordPacks.length === 0;
+  const hasUnavailableInitialList = Boolean(listError) && wordPacks.length === 0;
+  const showInitialEmpty = !listLoading && !listError && wordPacks.length === 0;
+  const showNoResults = wordPacks.length > 0 && sortedWordPacks.length === 0;
+  const showListControls = wordPacks.length > 0;
+  const noResultsTitle =
+    hasAppliedSearch && hasActiveFilters
+      ? '検索・絞り込み条件に一致するWordPackがありません'
+      : hasAppliedSearch
+        ? '検索条件に一致するWordPackがありません'
+        : '絞り込み条件に一致するWordPackがありません';
+  const noResultsResetLabel =
+    hasAppliedSearch && hasActiveFilters
+      ? 'すべての条件を解除'
+      : hasAppliedSearch
+        ? '検索を解除'
+        : '絞り込みを解除';
+  const resetNoResultsConditions = useCallback(() => {
+    if (hasAppliedSearch) clearAppliedSearch();
+    if (hasActiveFilters) clearFilters();
+  }, [clearAppliedSearch, clearFilters, hasActiveFilters, hasAppliedSearch]);
   const openPreview = useCallback((wordPackId: string) => {
     setActionMenuOpenId(null);
     setPreviewWordPackId(wordPackId);
@@ -875,9 +998,6 @@ export const WordPackListPanel: React.FC = () => {
         .wp-badge { display: inline-block; padding: 0.1rem 0.4rem; border-radius: 999px; font-size: 0.75em; margin-left: 0.5rem; }
         .wp-badge.empty { background: #fff3cd; color: #7a5b00; border: 1px solid #ffe08a; }
         .wp-pagination { display: flex; justify-content: center; gap: 0.5rem; margin-top: 1rem; }
-        .wp-empty { text-align: center; color: #666; padding: 2rem; }
-        /* ダークテーマの空状態テキストはWCAG AAの可読性を確保する */
-        body.theme-dark .wp-empty { color: #9aa4b2; }
         .wp-view-toggle { display: flex; gap: 0.3rem; align-items: center; margin-bottom: 0.5rem; }
         .wp-toggle-btn { padding: 0.25rem 0.75rem; border: 1px solid #ccc; border-radius: 4px; background: white; color: #0f172a; cursor: pointer; }
         .wp-toggle-btn[aria-pressed="true"] { background: #e3f2fd; border-color: #2196f3; color: #0f4d73; }
@@ -902,7 +1022,7 @@ export const WordPackListPanel: React.FC = () => {
       `}</style>
 
       <div className="wp-list-container">
-        {recentWordPacks.length > 0 ? (
+        {recentWordPacks.length > 0 && !hasAppliedSearch && !hasActiveFilters ? (
           <section className="wp-recent-panel" aria-labelledby="wp-recent-heading">
             <div className="wp-recent-panel-header">
               <div>
@@ -933,52 +1053,75 @@ export const WordPackListPanel: React.FC = () => {
         <div className="wp-list-header">
           <h2 id="wp-saved-list-heading">
             <span>保存済みWordPack</span>
-            <span className="wp-count-pill">{total}件</span>
+            <span
+              className="wp-count-pill"
+              aria-label={
+                isInitialListLoading
+                  ? '件数を確認中'
+                  : hasUnavailableInitialList
+                    ? '件数を取得できませんでした'
+                    : `${total}件`
+              }
+            >
+              {isInitialListLoading ? '確認中' : hasUnavailableInitialList ? '未取得' : `${total}件`}
+            </span>
           </h2>
           <p className="wp-list-summary">
-            {total}件中 {sortedWordPacks.length}件を表示
-            <span>生成済み {generatedCount}件</span>
-            <span>未生成 {emptyCount}件</span>
+            {isInitialListLoading
+              ? '保存済みWordPackを確認しています'
+              : hasUnavailableInitialList
+                ? '件数と一覧を取得できませんでした'
+                : (
+                  <>
+                    {total}件中 {sortedWordPacks.length}件を表示
+                    <span>生成済み {generatedCount}件</span>
+                    <span>未生成 {emptyCount}件</span>
+                  </>
+                )}
           </p>
-          <div className="wp-view-toggle" role="group" aria-label="表示モード">
-            <button
-              type="button"
-              className="wp-toggle-btn"
-              aria-pressed={viewMode === 'card'}
-              onClick={() => setViewMode('card')}
-              title="カード表示"
-            ><MiniIcon name="book" />カード</button>
-            <button
-              type="button"
-              className="wp-toggle-btn"
-              aria-pressed={viewMode === 'list'}
-              onClick={() => setViewMode('list')}
-              title="リスト表示（索引）"
-            ><MiniIcon name="more" />リスト</button>
-          </div>
+          {showListControls ? (
+            <div className="wp-view-toggle" role="group" aria-label="表示モード">
+              <button
+                type="button"
+                className="wp-toggle-btn"
+                aria-pressed={viewMode === 'card'}
+                onClick={() => setViewMode('card')}
+                title="カード表示"
+              ><MiniIcon name="book" />カード</button>
+              <button
+                type="button"
+                className="wp-toggle-btn"
+                aria-pressed={viewMode === 'list'}
+                onClick={() => setViewMode('list')}
+                title="リスト表示（索引）"
+              ><MiniIcon name="more" />リスト</button>
+            </div>
+          ) : null}
           <button className="wp-refresh-button" onClick={() => loadWordPacks(offset)} disabled={loading}>
             更新
           </button>
         </div>
 
-        <div className="wp-filter-chip-row" role="group" aria-label="WordPackの絞り込み">
-          <button type="button" aria-pressed={visibilityFilter === 'all' && generationFilter === 'all'} onClick={() => { setVisibilityFilter('all'); setGenerationFilter('all'); }}>
-            すべて
-          </button>
-          <button type="button" aria-pressed={visibilityFilter === 'public'} onClick={() => setVisibilityFilter('public')}>
-            公開中 <span>{publicCount}</span>
-          </button>
-          <button type="button" aria-pressed={visibilityFilter === 'private'} onClick={() => setVisibilityFilter('private')}>
-            非公開 <span>{privateCount}</span>
-          </button>
-          <button type="button" aria-pressed={generationFilter === 'generated'} onClick={() => setGenerationFilter('generated')}>
-            生成済み <span>{generatedCount}</span>
-          </button>
-          <button type="button" aria-pressed={generationFilter === 'not_generated'} onClick={() => setGenerationFilter('not_generated')}>
-            未生成 <span>{emptyCount}</span>
-          </button>
-          <span className="wp-filter-chip-more"><span aria-hidden="true">＋</span> フィルター</span>
-        </div>
+        {showListControls ? (
+          <div className="wp-filter-chip-row" role="group" aria-label="WordPackの絞り込み">
+            <button type="button" aria-pressed={visibilityFilter === 'all' && generationFilter === 'all'} onClick={clearFilters}>
+              すべて
+            </button>
+            <button type="button" aria-pressed={visibilityFilter === 'public'} onClick={() => setVisibilityFilter('public')}>
+              公開中 <span>{publicCount}</span>
+            </button>
+            <button type="button" aria-pressed={visibilityFilter === 'private'} onClick={() => setVisibilityFilter('private')}>
+              非公開 <span>{privateCount}</span>
+            </button>
+            <button type="button" aria-pressed={generationFilter === 'generated'} onClick={() => setGenerationFilter('generated')}>
+              生成済み <span>{generatedCount}</span>
+            </button>
+            <button type="button" aria-pressed={generationFilter === 'not_generated'} onClick={() => setGenerationFilter('not_generated')}>
+              未生成 <span>{emptyCount}</span>
+            </button>
+            <span className="wp-filter-chip-more"><span aria-hidden="true">＋</span> フィルター</span>
+          </div>
+        ) : null}
 
         {selectedCount > 0 ? (
           <div className="wp-selection-bar" role="group" aria-label="WordPack選択操作">
@@ -1012,51 +1155,123 @@ export const WordPackListPanel: React.FC = () => {
           </div>
         ) : null}
 
-        <ListControls<SortKey>
-          sortKey={sortKey}
-          sortOptions={[
-            { value: 'updated_at', label: '更新日時' },
-            { value: 'created_at', label: '作成日時' },
-            { value: 'lemma', label: '単語名' },
-            { value: 'total_examples', label: '例文数' },
-          ]}
-          onChangeSortKey={(key) => handleSortChange(key)}
-          sortOrder={sortOrder}
-          onChangeSortOrder={setSortOrder}
-          searchMode={searchMode}
-          onChangeSearchMode={setSearchMode as any}
-          searchInput={searchInput}
-          onChangeSearchInput={setSearchInput}
-          onApplySearch={handleApplySearch}
-          showSearch={false}
-          filtersLeft={(
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', marginLeft: '0.5rem' }}>
-              <input
-                type="checkbox"
-                role="switch"
-                aria-label="語義一括表示"
-                checked={showAllSense}
-                onChange={toggleAllSense}
-              />
-              語義一括表示
-            </label>
-          )}
-        />
-
-        {loading && (
-          <LoadingIndicator
-            label="一覧を取得中"
-            subtext="保存済みのWordPackメタデータを取得しています…"
+        {showListControls ? (
+          <ListControls<SortKey>
+            sortKey={sortKey}
+            sortOptions={[
+              { value: 'updated_at', label: '更新日時' },
+              { value: 'created_at', label: '作成日時' },
+              { value: 'lemma', label: '単語名' },
+              { value: 'total_examples', label: '例文数' },
+            ]}
+            onChangeSortKey={(key) => handleSortChange(key)}
+            sortOrder={sortOrder}
+            onChangeSortOrder={setSortOrder}
+            searchMode={searchMode}
+            onChangeSearchMode={setSearchMode as any}
+            searchInput={searchInput}
+            onChangeSearchInput={setSearchInput}
+            onApplySearch={handleApplySearch}
+            showSearch={false}
+            filtersLeft={(
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '0.25rem', marginLeft: '0.5rem' }}>
+                <input
+                  type="checkbox"
+                  role="switch"
+                  aria-label="語義一括表示"
+                  checked={showAllSense}
+                  onChange={toggleAllSense}
+                />
+                語義一括表示
+              </label>
+            )}
           />
-        )}
+        ) : null}
+
+        {isInitialListLoading ? (
+          <div className="wp-list-loading">
+            <LoadingIndicator
+              label="WordPack一覧を読み込み中"
+              subtext="保存済みデータの件数と一覧を確認しています。"
+            />
+          </div>
+        ) : null}
+        {listLoading && wordPacks.length > 0 ? (
+          <div className="wp-list-refreshing">
+            <LoadingIndicator
+              label="WordPack一覧を更新中"
+              subtext="前回取得した一覧を表示したまま、最新状態を確認しています。"
+            />
+          </div>
+        ) : null}
+        {listError ? (
+          <WordPackListState
+            id="wp-list-error"
+            tone="error"
+            symbol="!"
+            title={wordPacks.length > 0 ? '最新の一覧に更新できませんでした' : 'WordPack一覧を読み込めませんでした'}
+            description={
+              wordPacks.length > 0
+                ? '前回取得したWordPackを表示しています。画面上の内容は最新でない可能性があります。'
+                : '保存済みデータが削除されたわけではありません。通信状態を確認して、もう一度お試しください。'
+            }
+            detail={`詳細: ${listError}`}
+            actions={(
+              <Button
+                variant="primary"
+                className="wp-list-state__action"
+                onClick={() => loadWordPacks(wordPacks.length > 0 ? offset : 0)}
+                disabled={listLoading}
+              >
+                {wordPacks.length > 0 ? '更新を再試行' : 'もう一度読み込む'}
+              </Button>
+            )}
+          />
+        ) : null}
         {msg && <div role={msg.kind}>{msg.text}</div>}
 
-        {wordPacks.length === 0 && !loading ? (
-          <div className="wp-empty">
-            <p>保存済みのWordPackがありません。</p>
-            <p>新しいWordPackを作成してください。</p>
-          </div>
-        ) : (
+        {showInitialEmpty ? (
+          <WordPackListState
+            id="wp-list-empty"
+            tone="empty"
+            symbol="+"
+            title={isGuest ? '公開中のWordPackはまだありません' : '保存済みWordPackはまだありません'}
+            description={
+              isGuest
+                ? '公開されたWordPackが追加されると、ここで閲覧できます。'
+                : '見出し語を登録すると、ここから内容を確認・管理できます。'
+            }
+            actions={
+              isGuest ? null : (
+                <Button
+                  variant="primary"
+                  className="wp-list-state__action"
+                  onClick={requestCreateWordPackFocus}
+                >
+                  新しいWordPackを作成
+                </Button>
+              )
+            }
+          />
+        ) : showNoResults ? (
+          <WordPackListState
+            id="wp-list-no-results"
+            tone="no-results"
+            symbol="⌕"
+            title={noResultsTitle}
+            description="保存済みのWordPackは残っています。条件を解除すると、現在読み込んでいる一覧へ戻れます。"
+            conditions={activeConditionLabels}
+            actions={(
+              <Button
+                variant="primary"
+                className="wp-list-state__action"
+                onClick={resetNoResultsConditions}
+              >
+                {noResultsResetLabel}
+              </Button>
+            )}
+          />
+        ) : wordPacks.length > 0 ? (
           <>
             {viewMode === 'card' ? (
               <div className="wp-list-grid">
@@ -1272,7 +1487,7 @@ export const WordPackListPanel: React.FC = () => {
               </div>
             )}
           </>
-        )}
+        ) : null}
       </div>
       <Modal
         isOpen={previewOpen} 
