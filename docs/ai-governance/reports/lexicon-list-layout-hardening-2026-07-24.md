@@ -114,7 +114,7 @@
 
 ## 12. 証跡
 
-- スクリーンショット: 固定モックによる変更前 `/private/tmp/wordpack-list-ui-before.png`、変更後 `/private/tmp/wordpack-list-ui-after.png`。PR本文へ添付する
+- スクリーンショット: 固定モックによる変更前 `docs/ai-governance/evidence/issue-544/lexicon-list-before.png`、変更後 `tests/e2e/visual.spec.ts-snapshots/wordpack-list-compact-darwin.png`。PR本文へ埋め込む
 - トレース: 失敗時 trace は発生なし
 - テスト結果: frontend unit 189件成功（1件skip）、TypeScript、Playwright smoke 9件、長文・右レール・狭幅のvisual/layout回帰1件、axe違反0件
 - 手動確認: 変更前は CSS viewport 1636×912 で主領域約963pxに対し一覧が約1234pxへはみ出し、見出し語領域 0px。変更後は主領域の `scrollWidth <= clientWidth + 1`、全項目同一 x 座標・同一幅、見出し語領域 240px 以上、直接操作高 44px 以下を自動検証
