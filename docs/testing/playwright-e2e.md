@@ -32,7 +32,7 @@ npm run e2e
 - 失敗時の trace / screenshot / video: `test-results/`
 
 ## CI 実行
-- PR 向けのスモーク（`pull_request`）: `auth.spec.ts` / `guest.spec.ts` / `wordpack.spec.ts` の主要導線のみを実行します。
+- PR 向けのスモーク（`pull_request`）: `auth.spec.ts` / `guest.spec.ts` / `wordpack-list-states.spec.ts` / `wordpack.spec.ts` の主要導線と、一覧の空・該当なし・失敗・再読み込み状態を実行します。
 - 手動回帰（`workflow_dispatch`）: Chromium で全シナリオを実行します。
 - いずれの実行でも、画面表示後の axe a11y チェックを含めて品質を担保します。
 - CI の成果物は GitHub Actions の該当ワークフロー実行ページ → Artifacts から取得できます。

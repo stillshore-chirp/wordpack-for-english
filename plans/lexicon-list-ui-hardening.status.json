@@ -1,8 +1,8 @@
 {
   "task": "lexicon-list-ui-hardening",
-  "branch": "codex/list-ui-hardening",
+  "branch": "codex/list-state-recovery",
   "base_branch": "main",
-  "status": "issue_544_ready_for_merge",
+  "status": "issue_545_local_ready_waiting_for_issue_544_merge",
   "completed": [
     "repo_start_gate",
     "uiux_governance_read",
@@ -15,11 +15,16 @@
     "issue_544_review_feedback_implementation",
     "issue_544_review_feedback_local_verification",
     "issue_544_latest_head_ci",
-    "issue_544_review_threads_resolved"
+    "issue_544_review_threads_resolved",
+    "issue_545_implementation",
+    "issue_545_local_verification"
   ],
-  "in_progress": ["issue_544_merge_gate"],
+  "in_progress": [
+    "issue_544_merge_gate",
+    "issue_545_publication_gate"
+  ],
   "pending": [
-    "issue_545",
+    "issue_545_pr_ci_review",
     "issue_164",
     "issue_115",
     "completion_review"
@@ -28,11 +33,12 @@
     "pre_change_attachment": "available",
     "production_dom_snapshot": "confirmed",
     "production_layout_metrics": "confirmed: title width 0px and grid overflow",
-    "issue_544": "review-feedback head 9155921 passed all PR checks plus 189 frontend tests, 12 targeted tests, typecheck, architecture boundaries, 9 smoke E2E tests, axe, desktop and 390px layout assertions, and Darwin/Linux visual evidence; both Codex review threads resolved"
+    "issue_544": "final head 365e1ef passed all PR checks plus local frontend tests, typecheck, architecture boundaries, smoke E2E, axe, desktop and 390px layout assertions, and Darwin/Linux visual evidence; both Codex review threads resolved",
+    "issue_545": "dependent branch passed 195 frontend tests with 1 skip, 6 targeted state tests, typecheck, architecture boundaries, 14 smoke E2E tests, 5 dedicated state E2E tests, axe, 390px overflow and target-size assertions, and fixed-mock before/after visual review"
   },
   "risks": [
-    "Current initial-load failure can be shown together with the true-empty message.",
     "Client-side filtering only covers the fetched page.",
-    "PR #546 remains open; Issue #545 should start from main after #546 is merged."
+    "Applied conditions are only shown in the no-results state until Issue #164.",
+    "PR #546 remains open; Issue #545 must be rebased onto main after #546 is merged before its PR is published."
   ]
 }
