@@ -102,6 +102,7 @@ describe('WordPackListPanel card actions layout', () => {
     const target = cards.find((el) => /delta/.test(el.textContent || ''))!;
 
     expect(within(target).getByRole('button', { name: '開く' })).toBeInTheDocument();
+    expect(within(target).getByRole('button', { name: 'delta のその他の操作' })).toHaveTextContent('その他');
     expect(within(target).getByRole('button', { name: 'deltaの音声' })).toBeInTheDocument();
     expect(within(target).getByRole('button', { name: '生成' })).toBeInTheDocument();
     expect(within(target).getByRole('button', { name: '語義' })).toBeInTheDocument();
@@ -154,8 +155,9 @@ describe('WordPackListPanel card actions layout', () => {
     expect(within(menu).getByRole('menuitem', { name: '例文を生成' })).toBeInTheDocument();
     expect(within(menu).getByRole('menuitem', { name: 'deltaの音声を再生' })).toBeInTheDocument();
     expect(within(menu).getByRole('menuitemcheckbox', { name: '語義を表示' })).toBeInTheDocument();
-    expect(within(menu).getByRole('menuitem', { name: '公開にする' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'ゲスト公開にする' })).toBeInTheDocument();
     expect(within(menu).getByRole('menuitem', { name: '削除' })).toBeInTheDocument();
+    expect(trigger).toHaveTextContent('その他');
 
     await waitFor(() => {
       expect(within(menu).getByRole('menuitem', { name: '例文を生成' })).toHaveFocus();

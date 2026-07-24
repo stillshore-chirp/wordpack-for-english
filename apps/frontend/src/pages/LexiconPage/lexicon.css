@@ -1070,16 +1070,19 @@
 }
 
 .lexicon-list-section .wp-card-more {
-  width: 2rem;
-  height: 2rem;
-  display: inline-grid;
-  place-items: center;
+  min-width: 5rem;
+  min-height: 2.5rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
   border: 0;
   border-radius: 7px;
   background: transparent;
   color: var(--lexicon-muted);
   font-weight: 900;
   cursor: pointer;
+  padding: 0 0.6rem;
 }
 
 .lexicon-list-section .wp-card-more svg {
@@ -1504,13 +1507,15 @@
 }
 
 .lexicon-list-section .wp-index-more {
-  width: 2.5rem;
-  display: inline-grid;
-  place-items: center;
+  min-width: 5.25rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
   border: 1px solid var(--lexicon-line);
   background: rgba(130, 151, 186, 0.12);
   color: var(--dict-text);
-  padding: 0;
+  padding: 0 0.65rem;
 }
 
 .lexicon-list-section .wp-index-open-button:hover,

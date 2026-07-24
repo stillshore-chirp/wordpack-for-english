@@ -773,10 +773,10 @@ export const WordPackListPanel: React.FC = () => {
           disabled={loading || guestPublicUpdatingIds.has(wordPack.id)}
         >
           {guestPublicUpdatingIds.has(wordPack.id)
-            ? '公開設定を更新中'
+            ? 'ゲスト公開設定を更新中'
             : wordPack.guest_public
-              ? '非公開にする'
-              : '公開にする'}
+              ? 'ゲスト公開を解除'
+              : 'ゲスト公開にする'}
         </button>
       </GuestLock>
       <GuestLock isGuest={isGuest}>
@@ -1099,6 +1099,7 @@ export const WordPackListPanel: React.FC = () => {
                         }}
                       >
                         <MiniIcon name="more" />
+                        <span>その他</span>
                       </button>
                       {actionMenuOpenId === wp.id ? renderWordPackActionMenu(wp, 'card') : null}
                     </div>
@@ -1242,6 +1243,7 @@ export const WordPackListPanel: React.FC = () => {
                         }}
                       >
                         <MiniIcon name="more" />
+                        <span>その他</span>
                       </button>
                       {actionMenuOpenId === wp.id ? renderWordPackActionMenu(wp, 'list') : null}
                     </div>
