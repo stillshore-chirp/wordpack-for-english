@@ -32,13 +32,16 @@ const wordPacks = [
   },
 ];
 
-const listResponse = (items = wordPacks) =>
+const listResponse = (
+  items = wordPacks,
+  pagination: { total?: number; offset?: number } = {},
+) =>
   new Response(
     JSON.stringify({
       items,
-      total: items.length,
+      total: pagination.total ?? items.length,
       limit: 200,
-      offset: 0,
+      offset: pagination.offset ?? 0,
     }),
     { status: 200, headers: { 'Content-Type': 'application/json' } },
   );
@@ -222,5 +225,39 @@ describe('WordPackListPanel list states', () => {
       '前回取得したWordPackを表示しています。画面上の内容は最新でない可能性があります。',
     );
     expect(screen.getAllByTestId('wp-card')).toHaveLength(2);
+  });
+
+  it('ページ移動に失敗した後は失敗したページを再試行する', async () => {
+    const nextPageItems = [
+      {
+        ...wordPacks[0],
+        id: 'wp:state:charlie',
+        lemma: 'charlie',
+      },
+    ];
+    const fetchSpy = setupFetch((requestIndex) => {
+      if (requestIndex === 1) return listResponse(wordPacks, { total: 201, offset: 0 });
+      if (requestIndex === 2) return errorResponse();
+      return listResponse(nextPageItems, { total: 201, offset: 200 });
+    });
+    renderWithAuth();
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(screen.getAllByTestId('wp-card')).toHaveLength(2));
+    await user.click(screen.getByRole('button', { name: '次へ' }));
+
+    const heading = await screen.findByRole('heading', { name: '最新の一覧に更新できませんでした' });
+    const state = heading.closest('section');
+    expect(screen.getAllByTestId('wp-card')).toHaveLength(2);
+
+    await user.click(within(state!).getByRole('button', { name: '更新を再試行' }));
+
+    await screen.findByRole('heading', { name: 'charlie' });
+    expect(fetchSpy.mock.calls.filter(([input]) => String(input).includes('/api/word/packs?')).map(([input]) => String(input)))
+      .toEqual([
+        expect.stringContaining('offset=0'),
+        expect.stringContaining('offset=200'),
+        expect.stringContaining('offset=200'),
+      ]);
   });
 });

@@ -195,6 +195,7 @@ export const WordPackListPanel: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
+  const [failedListOffset, setFailedListOffset] = useState<number | null>(null);
   const [msg, setMsg] = useState<{ kind: 'status' | 'alert'; text: string } | null>(null);
   const [total, setTotal] = useState(0);
   const persistedState = useMemo(() => loadSessionState<PersistedState>(STORAGE_KEY, DEFAULT_PERSISTED_STATE), []);
@@ -293,10 +294,12 @@ export const WordPackListPanel: React.FC = () => {
         );
         setTotal(res.total);
         setOffset((prev) => (prev === newOffset ? prev : newOffset));
+        setFailedListOffset(null);
       } catch (e) {
         if (e instanceof AbortError) return;
         if (requestId !== listRequestIdRef.current) return;
         const m = e instanceof ApiError ? e.message : 'WordPack一覧の読み込みに失敗しました';
+        setFailedListOffset(newOffset);
         setListError(m);
       } finally {
         if (requestId === listRequestIdRef.current) {
@@ -1220,7 +1223,7 @@ export const WordPackListPanel: React.FC = () => {
               <Button
                 variant="primary"
                 className="wp-list-state__action"
-                onClick={() => loadWordPacks(wordPacks.length > 0 ? offset : 0)}
+                onClick={() => loadWordPacks(failedListOffset ?? (wordPacks.length > 0 ? offset : 0))}
                 disabled={listLoading}
               >
                 {wordPacks.length > 0 ? '更新を再試行' : 'もう一度読み込む'}

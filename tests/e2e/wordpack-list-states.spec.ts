@@ -36,12 +36,13 @@ const prepareAuthenticatedPage = async (context: BrowserContext, page: Page) => 
 const fulfillWordPacks = (
   route: Route,
   items = wordPacks,
+  pagination: { total?: number; offset?: number } = {},
 ) => route.fulfill(
   json({
     items,
-    total: items.length,
+    total: pagination.total ?? items.length,
     limit: 200,
-    offset: 0,
+    offset: pagination.offset ?? 0,
   }),
 );
 
@@ -148,6 +149,41 @@ test.describe('Lexicon WordPack一覧の状態と回復導線', () => {
     );
     await expect(page.getByTestId('wp-card')).toHaveCount(2);
     await runA11yCheck(page);
+  });
+
+  test('ページ移動の失敗後に同じページを再試行する', async ({ context, page }) => {
+    await prepareAuthenticatedPage(context, page);
+    const nextPageItems = [
+      {
+        ...wordPacks[0],
+        id: 'wp:e2e:state-charlie',
+        lemma: 'charlie',
+      },
+    ];
+    let nextPageAttempts = 0;
+    await page.route('**/api/word/packs?**', (route) => {
+      const requestOffset = Number(new URL(route.request().url()).searchParams.get('offset') ?? '0');
+      if (requestOffset === 200) {
+        nextPageAttempts += 1;
+        if (nextPageAttempts === 1) {
+          return route.fulfill(
+            json({ detail: '次のページを一時的に取得できません。' }, 503),
+          );
+        }
+        return fulfillWordPacks(route, nextPageItems, { total: 201, offset: 200 });
+      }
+      return fulfillWordPacks(route, wordPacks, { total: 201, offset: 0 });
+    });
+    await page.goto('/');
+
+    await expect(page.getByTestId('wp-card')).toHaveCount(2);
+    await page.getByRole('button', { name: '次へ' }).click();
+    await expect(page.getByRole('heading', { name: '最新の一覧に更新できませんでした' })).toBeVisible();
+    await expect(page.getByTestId('wp-card')).toHaveCount(2);
+
+    await page.getByRole('button', { name: '更新を再試行' }).click();
+    await expect(page.getByRole('heading', { name: 'charlie' })).toBeVisible();
+    expect(nextPageAttempts).toBe(2);
   });
 
   test('狭幅でも状態説明と回復操作が横にはみ出さない', async ({ context, page }) => {
