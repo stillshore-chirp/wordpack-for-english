@@ -222,6 +222,14 @@ class FirestoreWordPackRepository(FirestoreBaseRepository):
         docs = self._fetch_word_pack_snapshots(limit, offset)
         return [self._word_pack_list_item_with_flags(doc) for doc in docs]
 
+    def list_all_word_packs_with_flags(
+        self,
+    ) -> list[tuple[str, str, str, str, str, bool, Mapping[str, int], int, int, bool]]:
+        return [
+            self._word_pack_list_item_with_flags(doc)
+            for doc in self._ordered_word_pack_query().stream()
+        ]
+
     def list_owned_word_packs_with_flags(
         self, owner_user_id: str, limit: int = 50, offset: int = 0
     ) -> list[tuple[str, str, str, str, str, bool, Mapping[str, int], int, int, bool]]:
@@ -229,6 +237,14 @@ class FirestoreWordPackRepository(FirestoreBaseRepository):
         if offset:
             query = query.offset(max(0, int(offset)))
         query = query.limit(max(0, int(limit)))
+        return [self._word_pack_list_item_with_flags(doc) for doc in query.stream()]
+
+    def list_all_owned_word_packs_with_flags(
+        self, owner_user_id: str
+    ) -> list[tuple[str, str, str, str, str, bool, Mapping[str, int], int, int, bool]]:
+        query = self._ordered_word_pack_query().where(
+            "metadata.owner_user_id", "==", owner_user_id
+        )
         return [self._word_pack_list_item_with_flags(doc) for doc in query.stream()]
 
     def _word_pack_list_item_with_flags(
@@ -262,6 +278,14 @@ class FirestoreWordPackRepository(FirestoreBaseRepository):
         if offset:
             query = query.offset(max(0, int(offset)))
         query = query.limit(max(0, int(limit)))
+        return [self._word_pack_list_item_with_flags(doc) for doc in query.stream()]
+
+    def list_all_public_word_packs_with_flags(
+        self,
+    ) -> list[tuple[str, str, str, str, str, bool, Mapping[str, int], int, int, bool]]:
+        query = self._ordered_word_pack_query().where(
+            "metadata.guest_public", "==", True
+        )
         return [self._word_pack_list_item_with_flags(doc) for doc in query.stream()]
 
     def is_word_pack_guest_public(self, word_pack_id: str) -> bool:

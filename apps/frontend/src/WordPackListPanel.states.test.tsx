@@ -181,6 +181,55 @@ describe('WordPackListPanel list states', () => {
     await waitFor(() => expect(screen.getAllByTestId('wp-card')).toHaveLength(2));
   });
 
+  it('全ページ条件を切り替えている間は以前の件数を確定値として表示しない', async () => {
+    const publicAlpha = { ...wordPacks[0], guest_public: true };
+    const serverResponse = (
+      items: typeof wordPacks,
+      filteredTotal: number,
+    ) => new Response(
+      JSON.stringify({
+        items,
+        total: 2,
+        filtered_total: filteredTotal,
+        facet_counts: {
+          public: 1,
+          private: 1,
+          generated: filteredTotal,
+          not_generated: 0,
+        },
+        limit: 200,
+        offset: 0,
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+    let resolveFilteredLoad: ((response: Response) => void) | null = null;
+    const pendingFilteredLoad = new Promise<Response>((resolve) => {
+      resolveFilteredLoad = resolve;
+    });
+    setupFetch((requestIndex) => (
+      requestIndex === 1
+        ? serverResponse([publicAlpha, wordPacks[1]], 2)
+        : pendingFilteredLoad
+    ));
+    renderWithAuth();
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(screen.getAllByTestId('wp-card')).toHaveLength(2));
+    await user.click(screen.getByRole('button', { name: '公開中 1' }));
+
+    expect(await screen.findByText('条件一致（全ページ） 確認中')).toBeInTheDocument();
+    expect(screen.getByText(/全ページの一致件数を確認中/)).toBeInTheDocument();
+    expect(screen.getByText('全ページを絞り込み（数字を確認中）')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '公開中 …' })).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFilteredLoad?.(serverResponse([publicAlpha], 1));
+      await pendingFilteredLoad;
+    });
+    await waitFor(() => expect(screen.getByText('条件一致（全ページ） 1件')).toBeInTheDocument());
+    expect(screen.getByText('全ページを絞り込み（数字は切替後の件数）')).toBeInTheDocument();
+  });
+
   it('初回読み込み失敗を空状態と混同せず再試行できる', async () => {
     setupFetch((requestIndex) => requestIndex === 1 ? errorResponse() : listResponse());
     renderWithAuth();
@@ -279,7 +328,7 @@ describe('WordPackListPanel list states', () => {
     expect(conditions).toHaveTextContent('生成状態: 生成済み');
     expect(screen.getByLabelText('全体件数 2件')).toHaveTextContent('全体 2件');
     expect(screen.getByText('このページ 2件')).toBeInTheDocument();
-    expect(screen.getByText('条件一致 1件')).toBeInTheDocument();
+    expect(screen.getByText('条件一致（全ページ） 1件')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '検索: alpha（部分一致）を解除' }));
     await waitFor(() => expect(searchInput).toHaveValue(''));

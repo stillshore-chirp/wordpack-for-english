@@ -846,9 +846,15 @@
   margin-top: -0.25rem;
 }
 
+.lexicon-list-section .wp-filter-chip-scope {
+  flex-basis: 100%;
+  color: var(--lexicon-faint);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
 .lexicon-list-section .wp-filter-chip-row button,
 .lexicon-list-section .wp-filter-chip-more {
-  min-height: 2.25rem;
   display: inline-flex;
   align-items: center;
   gap: 0.4rem;
@@ -861,9 +867,17 @@
   cursor: pointer;
 }
 
+.lexicon-list-section .wp-filter-chip-more {
+  min-height: 2.25rem;
+}
+
 .lexicon-list-section .wp-filter-chip-row button span {
   color: var(--lexicon-faint);
   font-weight: 800;
+}
+
+.lexicon-list-section .wp-filter-chip-row button {
+  min-height: 2.25rem;
 }
 
 .lexicon-list-section .wp-filter-chip-row button[aria-pressed="true"] {
@@ -1778,6 +1792,10 @@
 }
 
 @media (max-width: 760px) {
+  .lexicon-list-section .wp-filter-chip-row button {
+    min-height: 2.75rem;
+  }
+
   .lexicon-list-section .wp-recent-panel {
     gap: 0.55rem;
     padding: 0.7rem;

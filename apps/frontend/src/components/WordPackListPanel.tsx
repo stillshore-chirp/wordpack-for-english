@@ -22,7 +22,7 @@ import { formatDateJst } from '../lib/date';
 import { useAuth } from '../AuthContext';
 import { GuestLock } from './GuestLock';
 import { APP_EVENTS, dispatchAppEvent } from '../shared/events/appEvents';
-import type { WordPackListItem } from '../features/wordpack/types';
+import type { WordPackListFacetCounts, WordPackListItem } from '../features/wordpack/types';
 import { Button } from '../shared/ui';
 
 type MiniIconName = 'book' | 'calendar' | 'check' | 'globe' | 'lock' | 'open' | 'speaker' | 'trash' | 'tag' | 'more';
@@ -196,6 +196,9 @@ export const WordPackListPanel: React.FC = () => {
   const [failedListOffset, setFailedListOffset] = useState<number | null>(null);
   const [msg, setMsg] = useState<{ kind: 'status' | 'alert'; text: string } | null>(null);
   const [total, setTotal] = useState(0);
+  const [serverFilteredTotal, setServerFilteredTotal] = useState<number | null>(null);
+  const [serverFacetCounts, setServerFacetCounts] = useState<WordPackListFacetCounts | null>(null);
+  const [loadedListQueryKey, setLoadedListQueryKey] = useState<string | null>(null);
   const persistedState = useMemo(() => loadSessionState<PersistedState>(STORAGE_KEY, DEFAULT_PERSISTED_STATE), []);
   const [offset, setOffset] = useState(() => persistedState.offset);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -217,6 +220,16 @@ export const WordPackListPanel: React.FC = () => {
   const [guestPublicUpdatingIds, setGuestPublicUpdatingIds] = useState<Set<string>>(() => new Set());
   const { run: runAbortable } = useAbortableAsync();
   const listRequestIdRef = useRef(0);
+  const appliedSearchValue = appliedSearch?.value.trim() ?? '';
+  const appliedSearchMode = appliedSearch?.mode ?? 'contains';
+  const listQueryKey = JSON.stringify([
+    appliedSearchMode,
+    appliedSearchValue.toLowerCase(),
+    visibilityFilter,
+    generationFilter,
+    sortKey,
+    sortOrder,
+  ]);
   const previewMeta = useMemo<WordPackPreviewMeta | null>(() => {
     if (!previewWordPackId) return null;
     const meta = wordPacks.find((w) => w.id === previewWordPackId);
@@ -284,14 +297,33 @@ export const WordPackListPanel: React.FC = () => {
       setListError(null);
       setMsg(null);
 
+      let resolvedOffset = newOffset;
       try {
-        const res = await runAbortable((signal) =>
-          fetchWordPackList(apiBase, {
+        const res = await runAbortable(async (signal) => {
+          const fetchPage = (targetOffset: number) => fetchWordPackList(apiBase, {
             limit: PAGE_LIMIT,
-            offset: newOffset,
+            offset: targetOffset,
+            search: appliedSearchValue,
+            searchMode: appliedSearchMode,
+            visibility: visibilityFilter,
+            generation: generationFilter,
+            sortKey,
+            sortOrder,
             signal,
-          }),
-        );
+          });
+          let response = await fetchPage(resolvedOffset);
+          const filteredTotal = response.filtered_total ?? response.total;
+          if (
+            resolvedOffset > 0
+            && response.items.length === 0
+            && filteredTotal > 0
+            && resolvedOffset >= filteredTotal
+          ) {
+            resolvedOffset = Math.floor((filteredTotal - 1) / PAGE_LIMIT) * PAGE_LIMIT;
+            response = await fetchPage(resolvedOffset);
+          }
+          return response;
+        });
         if (requestId !== listRequestIdRef.current) return;
         setWordPacks(
           res.items.map((item) => ({
@@ -302,13 +334,18 @@ export const WordPackListPanel: React.FC = () => {
           })),
         );
         setTotal(res.total);
-        setOffset((prev) => (prev === newOffset ? prev : newOffset));
+        setServerFilteredTotal(
+          typeof res.filtered_total === 'number' ? res.filtered_total : null,
+        );
+        setServerFacetCounts(res.facet_counts ?? null);
+        setLoadedListQueryKey(listQueryKey);
+        setOffset((prev) => (prev === resolvedOffset ? prev : resolvedOffset));
         setFailedListOffset(null);
       } catch (e) {
         if (e instanceof AbortError) return;
         if (requestId !== listRequestIdRef.current) return;
         const m = e instanceof ApiError ? e.message : 'WordPack一覧の読み込みに失敗しました';
-        setFailedListOffset(newOffset);
+        setFailedListOffset(resolvedOffset);
         setListError(m);
       } finally {
         if (requestId === listRequestIdRef.current) {
@@ -317,7 +354,17 @@ export const WordPackListPanel: React.FC = () => {
         }
       }
     },
-    [apiBase, runAbortable],
+    [
+      apiBase,
+      appliedSearchMode,
+      appliedSearchValue,
+      generationFilter,
+      listQueryKey,
+      runAbortable,
+      sortKey,
+      sortOrder,
+      visibilityFilter,
+    ],
   );
 
   const applyStudyProgress = useCallback(
@@ -743,12 +790,17 @@ export const WordPackListPanel: React.FC = () => {
     return trimmed || '語義タイトル未設定';
   }, []);
 
-  const hasNext = offset + PAGE_LIMIT < total;
+  const paginationTotal = serverFilteredTotal ?? total;
+  const hasNext = offset + PAGE_LIMIT < paginationTotal;
   const hasPrev = offset > 0;
-  const generatedCount = normalizedWordPacks.filter((wp) => wp.totalExamples > 0).length;
-  const emptyCount = normalizedWordPacks.length - generatedCount;
-  const publicCount = normalizedWordPacks.filter((wp) => wp.guest_public).length;
-  const privateCount = normalizedWordPacks.length - publicCount;
+  const pageGeneratedCount = normalizedWordPacks.filter((wp) => wp.totalExamples > 0).length;
+  const pageEmptyCount = normalizedWordPacks.length - pageGeneratedCount;
+  const pagePublicCount = normalizedWordPacks.filter((wp) => wp.guest_public).length;
+  const pagePrivateCount = normalizedWordPacks.length - pagePublicCount;
+  const generatedCount = serverFacetCounts?.generated ?? pageGeneratedCount;
+  const emptyCount = serverFacetCounts?.not_generated ?? pageEmptyCount;
+  const publicCount = serverFacetCounts?.public ?? pagePublicCount;
+  const privateCount = serverFacetCounts?.private ?? pagePrivateCount;
   const recentWordPacks = useMemo(
     () =>
       [...normalizedWordPacks]
@@ -786,6 +838,8 @@ export const WordPackListPanel: React.FC = () => {
     }
     return conditions;
   }, [appliedSearch, generationFilter, visibilityFilter]);
+  const isQueryTransition = loadedListQueryKey !== null && loadedListQueryKey !== listQueryKey;
+  const conditionMatchCount = serverFilteredTotal ?? sortedWordPacks.length;
   const focusConditionContext = useCallback((hasRemainingConditions: boolean) => {
     window.setTimeout(() => {
       const targetId = hasRemainingConditions
@@ -805,11 +859,23 @@ export const WordPackListPanel: React.FC = () => {
     clearFilters();
     focusConditionContext(false);
   }, [clearAppliedSearch, clearFilters, focusConditionContext]);
-  const isInitialListLoading = listLoading && wordPacks.length === 0;
-  const hasUnavailableInitialList = Boolean(listError) && wordPacks.length === 0;
-  const showInitialEmpty = !listLoading && !listError && wordPacks.length === 0;
-  const showNoResults = wordPacks.length > 0 && sortedWordPacks.length === 0;
-  const showListControls = wordPacks.length > 0;
+  const isInitialListLoading = listLoading && total === 0 && wordPacks.length === 0;
+  const hasUnavailableInitialList = Boolean(listError) && total === 0 && wordPacks.length === 0;
+  const showInitialEmpty = !listLoading && !listError && total === 0;
+  const showNoResults = (
+    !listLoading
+    && !isQueryTransition
+    && !listError
+    && total > 0
+    && activeConditions.length > 0
+    && conditionMatchCount === 0
+  );
+  const showListControls = total > 0 || wordPacks.length > 0;
+  const showQueryLoading = (
+    (listLoading || isQueryTransition)
+    && total > 0
+    && wordPacks.length === 0
+  );
   const noResultsTitle =
     hasAppliedSearch && hasActiveFilters
       ? '検索・絞り込み条件に一致するWordPackがありません'
@@ -1112,9 +1178,11 @@ export const WordPackListPanel: React.FC = () => {
                   <>
                     <span>このページ {wordPacks.length}件</span>
                     {activeConditions.length > 0 ? (
-                      <span>条件一致 {sortedWordPacks.length}件</span>
+                      <span>
+                        条件一致（全ページ） {isQueryTransition ? '確認中' : `${conditionMatchCount}件`}
+                      </span>
                     ) : null}
-                    <span>このページ内: 生成済み {generatedCount}件 / 未生成 {emptyCount}件</span>
+                    <span>このページ内: 生成済み {pageGeneratedCount}件 / 未生成 {pageEmptyCount}件</span>
                   </>
                 )}
           </p>
@@ -1150,7 +1218,9 @@ export const WordPackListPanel: React.FC = () => {
               <div>
                 <h3 id="wp-active-conditions-heading" tabIndex={-1}>適用中の条件</h3>
                 <p aria-live="polite">
-                  {activeConditions.length}件の条件を適用中。このページで{sortedWordPacks.length}件一致
+                  {isQueryTransition
+                    ? `${activeConditions.length}件の条件を適用中。全ページの一致件数を確認中`
+                    : `${activeConditions.length}件の条件を適用中。全ページで${conditionMatchCount}件一致`}
                 </p>
               </div>
               <button
@@ -1180,21 +1250,26 @@ export const WordPackListPanel: React.FC = () => {
         ) : null}
 
         {showListControls ? (
-          <div className="wp-filter-chip-row" role="group" aria-label="WordPackの絞り込み">
+          <div className="wp-filter-chip-row" role="group" aria-label="WordPackの全ページ絞り込み">
+            {activeConditions.length > 0 ? (
+              <span className="wp-filter-chip-scope">
+                全ページを絞り込み（{isQueryTransition ? '数字を確認中' : '数字は切替後の件数'}）
+              </span>
+            ) : null}
             <button type="button" aria-pressed={visibilityFilter === 'all' && generationFilter === 'all'} onClick={clearFilters}>
               すべて
             </button>
             <button type="button" aria-pressed={visibilityFilter === 'public'} onClick={() => setVisibilityFilter('public')}>
-              公開中 <span>{publicCount}</span>
+              公開中 <span>{isQueryTransition ? '…' : publicCount}</span>
             </button>
             <button type="button" aria-pressed={visibilityFilter === 'private'} onClick={() => setVisibilityFilter('private')}>
-              非公開 <span>{privateCount}</span>
+              非公開 <span>{isQueryTransition ? '…' : privateCount}</span>
             </button>
             <button type="button" aria-pressed={generationFilter === 'generated'} onClick={() => setGenerationFilter('generated')}>
-              生成済み <span>{generatedCount}</span>
+              生成済み <span>{isQueryTransition ? '…' : generatedCount}</span>
             </button>
             <button type="button" aria-pressed={generationFilter === 'not_generated'} onClick={() => setGenerationFilter('not_generated')}>
-              未生成 <span>{emptyCount}</span>
+              未生成 <span>{isQueryTransition ? '…' : emptyCount}</span>
             </button>
             <span className="wp-filter-chip-more"><span aria-hidden="true">＋</span> フィルター</span>
           </div>
@@ -1273,6 +1348,14 @@ export const WordPackListPanel: React.FC = () => {
             />
           </div>
         ) : null}
+        {showQueryLoading ? (
+          <div className="wp-list-loading">
+            <LoadingIndicator
+              label="条件に合うWordPackを確認中"
+              subtext="保存済みWordPackの全ページへ現在の条件を適用しています。"
+            />
+          </div>
+        ) : null}
         {listLoading && wordPacks.length > 0 ? (
           <div className="wp-list-refreshing">
             <LoadingIndicator
@@ -1336,7 +1419,7 @@ export const WordPackListPanel: React.FC = () => {
             tone="no-results"
             symbol="⌕"
             title={noResultsTitle}
-            description="保存済みのWordPackは残っています。上の適用中条件を個別に解除するか、「すべて解除」で現在読み込んでいる一覧へ戻れます。"
+            description="保存済みのWordPackは残っています。全ページを確認しましたが、現在の条件には一致しません。上の適用中条件を個別に解除するか、「すべて解除」で一覧へ戻れます。"
           />
         ) : wordPacks.length > 0 ? (
           <>
@@ -1534,7 +1617,7 @@ export const WordPackListPanel: React.FC = () => {
               </ul>
             )}
 
-            {(hasPrev || hasNext) && (
+            {!isQueryTransition && (hasPrev || hasNext) && (
               <div className="wp-pagination">
                 <button
                   onClick={() => loadWordPacks(Math.max(0, offset - PAGE_LIMIT))}
@@ -1543,7 +1626,8 @@ export const WordPackListPanel: React.FC = () => {
                   前へ
                 </button>
                 <span>
-                  {offset + 1}-{Math.min(offset + PAGE_LIMIT, total)} / {total}件
+                  {offset + 1}-{offset + wordPacks.length} / {paginationTotal}件
+                  {activeConditions.length > 0 ? `（全体 ${total}件）` : ''}
                 </span>
                 <button
                   onClick={() => loadWordPacks(offset + PAGE_LIMIT)}
