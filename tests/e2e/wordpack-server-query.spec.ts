@@ -186,4 +186,53 @@ test.describe('Lexicon WordPack一覧の全ページ検索・ページング', (
     await expect(page.getByText('条件一致（全ページ） 0件')).toBeVisible();
     await runA11yCheck(page);
   });
+
+  test('条件取得の失敗中は前回成功した一覧を保持し、再試行後に新条件へ切り替える', async ({
+    context,
+    page,
+  }) => {
+    await prepareAuthenticatedPage(context, page);
+    let failedQueryAttempts = 0;
+    await page.route('**/api/word/packs?**', (route: Route) => {
+      const url = new URL(route.request().url());
+      if (url.searchParams.get('search') === 'no-match') {
+        failedQueryAttempts += 1;
+        if (failedQueryAttempts === 1) {
+          return route.fulfill(
+            json({ detail: '検索条件を一時的に適用できません。' }, 503),
+          );
+        }
+        return route.fulfill(
+          response([], {
+            filteredTotal: 0,
+            publicCount: 0,
+            privateCount: 0,
+          }),
+        );
+      }
+      return route.fulfill(response(firstPage, { filteredTotal: 201 }));
+    });
+    await page.goto('/');
+
+    await expect(page.getByTestId('wp-card')).toHaveCount(2);
+    const searchInput = page.getByRole('searchbox', { name: '保存済みWordPackを検索' });
+    await searchInput.fill('no-match');
+    await searchInput.press('Enter');
+
+    await expect(page.getByRole('heading', {
+      name: '一覧の表示条件を適用できませんでした',
+    })).toBeVisible();
+    await expect(page.getByTestId('wp-card')).toHaveCount(2);
+    await expect(page.getByRole('heading', { name: 'private-first-001' })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'private-first-002' })).toBeVisible();
+    await expect(page.getByText('条件一致（全ページ） 未取得')).toBeVisible();
+    await expect(page.getByText('1件の条件は未反映。前回成功した条件の一覧を表示中')).toBeVisible();
+    await runA11yCheck(page);
+
+    await page.getByRole('button', { name: '更新を再試行' }).click();
+
+    await expect(page.getByRole('heading', { name: '検索条件に一致するWordPackがありません' })).toBeVisible();
+    await expect(page.getByTestId('wp-card')).toHaveCount(0);
+    expect(failedQueryAttempts).toBe(2);
+  });
 });

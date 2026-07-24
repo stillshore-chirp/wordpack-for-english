@@ -230,6 +230,10 @@ export const WordPackListPanel: React.FC = () => {
     sortKey,
     sortOrder,
   ]);
+  const hasLoadedQueryMismatch = (
+    loadedListQueryKey !== null
+    && loadedListQueryKey !== listQueryKey
+  );
   const previewMeta = useMemo<WordPackPreviewMeta | null>(() => {
     if (!previewWordPackId) return null;
     const meta = wordPacks.find((w) => w.id === previewWordPackId);
@@ -555,6 +559,7 @@ export const WordPackListPanel: React.FC = () => {
   );
 
   const filteredWordPacks = useMemo(() => {
+    if (hasLoadedQueryMismatch) return normalizedWordPacks;
     return normalizedWordPacks.filter((wp) => {
       if (visibilityFilter === 'public' && !wp.guest_public) return false;
       if (visibilityFilter === 'private' && wp.guest_public) return false;
@@ -566,9 +571,16 @@ export const WordPackListPanel: React.FC = () => {
       }
       return true;
     });
-  }, [normalizedWordPacks, visibilityFilter, generationFilter, normalizedSearch]);
+  }, [
+    generationFilter,
+    hasLoadedQueryMismatch,
+    normalizedSearch,
+    normalizedWordPacks,
+    visibilityFilter,
+  ]);
 
   const sortedWordPacks = useMemo(() => {
+    if (hasLoadedQueryMismatch) return filteredWordPacks;
     return [...filteredWordPacks].sort((a, b) => {
       let aValue: string | number;
       let bValue: string | number;
@@ -595,7 +607,7 @@ export const WordPackListPanel: React.FC = () => {
       if (aValue > bValue) return sortOrder === 'asc' ? 1 : -1;
       return 0;
     });
-  }, [filteredWordPacks, sortKey, sortOrder]);
+  }, [filteredWordPacks, hasLoadedQueryMismatch, sortKey, sortOrder]);
 
   const previewNavigationIds = useMemo(() => sortedWordPacks.map((wp) => wp.id), [sortedWordPacks]);
   const visibleWordPackIds = useMemo(() => sortedWordPacks.map((wp) => wp.id), [sortedWordPacks]);
@@ -838,7 +850,9 @@ export const WordPackListPanel: React.FC = () => {
     }
     return conditions;
   }, [appliedSearch, generationFilter, visibilityFilter]);
-  const isQueryTransition = loadedListQueryKey !== null && loadedListQueryKey !== listQueryKey;
+  const isQueryTransition = hasLoadedQueryMismatch;
+  const isQueryFailed = isQueryTransition && Boolean(listError);
+  const isQueryPending = isQueryTransition && !listError;
   const conditionMatchCount = serverFilteredTotal ?? sortedWordPacks.length;
   const focusConditionContext = useCallback((hasRemainingConditions: boolean) => {
     window.setTimeout(() => {
@@ -1179,7 +1193,13 @@ export const WordPackListPanel: React.FC = () => {
                     <span>このページ {wordPacks.length}件</span>
                     {activeConditions.length > 0 ? (
                       <span>
-                        条件一致（全ページ） {isQueryTransition ? '確認中' : `${conditionMatchCount}件`}
+                        条件一致（全ページ） {
+                          isQueryPending
+                            ? '確認中'
+                            : isQueryFailed
+                              ? '未取得'
+                              : `${conditionMatchCount}件`
+                        }
                       </span>
                     ) : null}
                     <span>このページ内: 生成済み {pageGeneratedCount}件 / 未生成 {pageEmptyCount}件</span>
@@ -1218,9 +1238,11 @@ export const WordPackListPanel: React.FC = () => {
               <div>
                 <h3 id="wp-active-conditions-heading" tabIndex={-1}>適用中の条件</h3>
                 <p aria-live="polite">
-                  {isQueryTransition
+                  {isQueryPending
                     ? `${activeConditions.length}件の条件を適用中。全ページの一致件数を確認中`
-                    : `${activeConditions.length}件の条件を適用中。全ページで${conditionMatchCount}件一致`}
+                    : isQueryFailed
+                      ? `${activeConditions.length}件の条件は未反映。前回成功した条件の一覧を表示中`
+                      : `${activeConditions.length}件の条件を適用中。全ページで${conditionMatchCount}件一致`}
                 </p>
               </div>
               <button
@@ -1253,23 +1275,29 @@ export const WordPackListPanel: React.FC = () => {
           <div className="wp-filter-chip-row" role="group" aria-label="WordPackの全ページ絞り込み">
             {activeConditions.length > 0 ? (
               <span className="wp-filter-chip-scope">
-                全ページを絞り込み（{isQueryTransition ? '数字を確認中' : '数字は切替後の件数'}）
+                全ページを絞り込み（{
+                  isQueryPending
+                    ? '数字を確認中'
+                    : isQueryFailed
+                      ? '数字を取得できませんでした'
+                      : '数字は切替後の件数'
+                }）
               </span>
             ) : null}
             <button type="button" aria-pressed={visibilityFilter === 'all' && generationFilter === 'all'} onClick={clearFilters}>
               すべて
             </button>
             <button type="button" aria-pressed={visibilityFilter === 'public'} onClick={() => setVisibilityFilter('public')}>
-              公開中 <span>{isQueryTransition ? '…' : publicCount}</span>
+              公開中 <span>{isQueryPending ? '…' : isQueryFailed ? '—' : publicCount}</span>
             </button>
             <button type="button" aria-pressed={visibilityFilter === 'private'} onClick={() => setVisibilityFilter('private')}>
-              非公開 <span>{isQueryTransition ? '…' : privateCount}</span>
+              非公開 <span>{isQueryPending ? '…' : isQueryFailed ? '—' : privateCount}</span>
             </button>
             <button type="button" aria-pressed={generationFilter === 'generated'} onClick={() => setGenerationFilter('generated')}>
-              生成済み <span>{isQueryTransition ? '…' : generatedCount}</span>
+              生成済み <span>{isQueryPending ? '…' : isQueryFailed ? '—' : generatedCount}</span>
             </button>
             <button type="button" aria-pressed={generationFilter === 'not_generated'} onClick={() => setGenerationFilter('not_generated')}>
-              未生成 <span>{isQueryTransition ? '…' : emptyCount}</span>
+              未生成 <span>{isQueryPending ? '…' : isQueryFailed ? '—' : emptyCount}</span>
             </button>
             <span className="wp-filter-chip-more"><span aria-hidden="true">＋</span> フィルター</span>
           </div>
@@ -1369,9 +1397,17 @@ export const WordPackListPanel: React.FC = () => {
             id="wp-list-error"
             tone="error"
             symbol="!"
-            title={wordPacks.length > 0 ? '最新の一覧に更新できませんでした' : 'WordPack一覧を読み込めませんでした'}
+            title={
+              isQueryFailed
+                ? '一覧の表示条件を適用できませんでした'
+                : wordPacks.length > 0
+                  ? '最新の一覧に更新できませんでした'
+                  : 'WordPack一覧を読み込めませんでした'
+            }
             description={
-              wordPacks.length > 0
+              isQueryFailed
+                ? '新しい条件はまだ一覧へ反映されていません。前回成功した条件のWordPackを表示しています。条件を解除するか、もう一度お試しください。'
+                : wordPacks.length > 0
                 ? '前回取得したWordPackを表示しています。画面上の内容は最新でない可能性があります。'
                 : '保存済みデータが削除されたわけではありません。通信状態を確認して、もう一度お試しください。'
             }
@@ -1621,7 +1657,7 @@ export const WordPackListPanel: React.FC = () => {
               <div className="wp-pagination">
                 <button
                   onClick={() => loadWordPacks(Math.max(0, offset - PAGE_LIMIT))}
-                  disabled={!hasPrev || loading}
+                  disabled={!hasPrev || loading || isQueryTransition}
                 >
                   前へ
                 </button>
@@ -1631,7 +1667,7 @@ export const WordPackListPanel: React.FC = () => {
                 </span>
                 <button
                   onClick={() => loadWordPacks(offset + PAGE_LIMIT)}
-                  disabled={!hasNext || loading}
+                  disabled={!hasNext || loading || isQueryTransition}
                 >
                   次へ
                 </button>
