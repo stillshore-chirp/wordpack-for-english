@@ -1,5 +1,5 @@
 import { test, expect, type Page, type BrowserContext } from '@playwright/test';
-import { json, mockConfig, seedAuthenticatedSession } from './helpers';
+import { json, mockConfig, runA11yCheck, seedAuthenticatedSession } from './helpers';
 
 const STATIC_MASK_SELECTOR = '[aria-live="polite"]';
 
@@ -123,6 +123,60 @@ const mockWordPackList = async (page: Page): Promise<void> => {
             },
             checked_only_count: 2,
             learned_count: 1,
+          },
+        ],
+        total: 3,
+        limit: 200,
+        offset: 0,
+      }),
+    ),
+  );
+};
+
+const mockWordPackListContentStress = async (page: Page): Promise<void> => {
+  /**
+   * リスト表示の長文・操作密度ストレスを固定データで再現する。
+   * なぜ: 実データや個人情報をスクリーンショットへ含めず、見出し語の幅不足を検出するため。
+   */
+  await page.route('**/api/word/packs?**', (route) =>
+    route.fulfill(
+      json({
+        items: [
+          {
+            id: 'wp:e2e:layout-long',
+            lemma: 'an intentionally long multiword expression for layout verification',
+            sense_title: '長い見出し語でも、主要情報と操作が重ならずに読めることを確認します。',
+            created_at: '2024-01-10T09:15:00Z',
+            updated_at: '2024-01-12T12:00:00Z',
+            is_empty: true,
+            guest_public: false,
+            examples_count: { Dev: 0, CS: 0, LLM: 0, Business: 0, Common: 0 },
+            checked_only_count: 0,
+            learned_count: 0,
+          },
+          {
+            id: 'wp:e2e:layout-generated',
+            lemma: 'generated entry',
+            sense_title: '生成済み項目の表示確認',
+            created_at: '2024-01-08T08:30:00Z',
+            updated_at: '2024-01-11T18:05:00Z',
+            is_empty: false,
+            guest_public: true,
+            examples_count: { Dev: 3, CS: 1, LLM: 0, Business: 2, Common: 4 },
+            checked_only_count: 1,
+            learned_count: 2,
+          },
+          {
+            id: 'wp:e2e:layout-short',
+            lemma: 'short',
+            sense_title: '',
+            created_at: '2024-01-05T03:20:00Z',
+            updated_at: '2024-01-06T11:10:00Z',
+            is_empty: true,
+            guest_public: false,
+            examples_count: { Dev: 0, CS: 0, LLM: 0, Business: 0, Common: 0 },
+            checked_only_count: 0,
+            learned_count: 0,
           },
         ],
         total: 3,
@@ -312,6 +366,76 @@ test.describe('ビジュアル回帰: 主要画面', () => {
       threshold: 0.2,
       mask: [page.locator(STATIC_MASK_SELECTOR)],
     });
+  });
+
+  test('WordPackリスト表示（右レールと長文ストレス）', async ({ page, context }) => {
+    await page.setViewportSize({ width: 1636, height: 912 });
+    await prepareAuthenticatedPage(context, page);
+    await mockWordPackListContentStress(page);
+
+    await page.goto('/');
+    await disableAnimations(page);
+
+    await page.getByRole('button', { name: 'リスト', exact: true }).click();
+    await expect(page.getByTestId('wp-index-item')).toHaveCount(3);
+
+    const desktopLayout = await page.evaluate(() => {
+      const primary = document.querySelector<HTMLElement>('.lexicon-primary');
+      const grid = document.querySelector<HTMLElement>('.wp-index-grid');
+      const items = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="wp-index-item"]'));
+      const titleRows = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="wp-index-title-row"]'));
+      const actionButtons = Array.from(document.querySelectorAll<HTMLElement>('.wp-index-actions > button'));
+
+      if (!primary || !grid) {
+        throw new Error('Lexiconのリスト領域が見つかりません。');
+      }
+
+      const gridRect = grid.getBoundingClientRect();
+      return {
+        primaryClientWidth: primary.clientWidth,
+        primaryScrollWidth: primary.scrollWidth,
+        gridWidth: gridRect.width,
+        itemXs: items.map((item) => Math.round(item.getBoundingClientRect().x)),
+        itemWidths: items.map((item) => item.getBoundingClientRect().width),
+        titleWidths: titleRows.map((title) => title.getBoundingClientRect().width),
+        actionButtonHeights: actionButtons.map((button) => button.getBoundingClientRect().height),
+      };
+    });
+
+    expect(desktopLayout.primaryScrollWidth).toBeLessThanOrEqual(desktopLayout.primaryClientWidth + 1);
+    expect(desktopLayout.gridWidth).toBeLessThanOrEqual(desktopLayout.primaryClientWidth + 1);
+    expect(new Set(desktopLayout.itemXs).size).toBe(1);
+    expect(desktopLayout.itemWidths.every((width) => Math.abs(width - desktopLayout.gridWidth) <= 1)).toBe(true);
+    expect(desktopLayout.titleWidths.every((width) => width >= 240)).toBe(true);
+    expect(desktopLayout.actionButtonHeights.every((height) => height <= 44)).toBe(true);
+    await runA11yCheck(page);
+
+    await expect(page).toHaveScreenshot('wordpack-list-compact.png', {
+      maxDiffPixelRatio: 0.01,
+      threshold: 0.2,
+    });
+
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByTestId('wp-index-item')).toHaveCount(3);
+    const narrowLayout = await page.evaluate(() => {
+      const primary = document.querySelector<HTMLElement>('.lexicon-primary');
+      const grid = document.querySelector<HTMLElement>('.wp-index-grid');
+      const items = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="wp-index-item"]'));
+
+      if (!primary || !grid) {
+        throw new Error('狭幅時のLexiconリスト領域が見つかりません。');
+      }
+
+      return {
+        primaryClientWidth: primary.clientWidth,
+        primaryScrollWidth: primary.scrollWidth,
+        gridWidth: grid.getBoundingClientRect().width,
+        itemWidths: items.map((item) => item.getBoundingClientRect().width),
+      };
+    });
+    expect(narrowLayout.primaryScrollWidth).toBeLessThanOrEqual(narrowLayout.primaryClientWidth + 1);
+    expect(narrowLayout.gridWidth).toBeLessThanOrEqual(narrowLayout.primaryClientWidth + 1);
+    expect(narrowLayout.itemWidths.every((width) => Math.abs(width - narrowLayout.gridWidth) <= 1)).toBe(true);
   });
 
   test('WordPackプレビュー（例文表示エリア）', async ({ page, context }) => {

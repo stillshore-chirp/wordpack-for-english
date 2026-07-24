@@ -1,0 +1,33 @@
+{
+  "task": "lexicon-list-ui-hardening",
+  "branch": "codex/list-ui-hardening",
+  "base_branch": "main",
+  "status": "issue_544_local_verified",
+  "completed": [
+    "repo_start_gate",
+    "uiux_governance_read",
+    "attachment_review",
+    "production_layout_measurement",
+    "issue_inventory",
+    "issue_544_implementation",
+    "issue_544_local_verification"
+  ],
+  "in_progress": ["issue_544_publish_and_review"],
+  "pending": [
+    "issue_545",
+    "issue_164",
+    "issue_115",
+    "completion_review"
+  ],
+  "verification": {
+    "pre_change_attachment": "available",
+    "production_dom_snapshot": "confirmed",
+    "production_layout_metrics": "confirmed: title width 0px and grid overflow",
+    "issue_544": "unit, typecheck, desktop and 390px layout assertions, visual evidence passed"
+  },
+  "risks": [
+    "Current initial-load failure can be shown together with the true-empty message.",
+    "Client-side filtering only covers the fetched page.",
+    "Issue #544 still requires PR CI and unresolved review-thread confirmation."
+  ]
+}

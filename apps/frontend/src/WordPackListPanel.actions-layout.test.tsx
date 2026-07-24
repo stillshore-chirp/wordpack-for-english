@@ -121,4 +121,55 @@ describe('WordPackListPanel card actions layout', () => {
     await act(async () => { await user.click(senseBtn); });
     expect(screen.queryByRole('dialog', { name: 'WordPack プレビュー' })).not.toBeInTheDocument();
   });
+
+  it('リスト表示は単列の意味構造と段階的な操作メニューを持つ', async () => {
+    setupFetchMocks();
+    renderWithAuth();
+
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(screen.getByRole('heading', { name: /保存済みWordPack/ })).toBeInTheDocument());
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: /^リスト$/ }));
+    });
+
+    const list = screen.getByRole('list', { name: '保存済みWordPackのリスト' });
+    const items = within(list).getAllByRole('listitem');
+    expect(items).toHaveLength(2);
+
+    const target = items.find((item) => item.textContent?.includes('delta'));
+    expect(target).toBeDefined();
+    const targetItem = target!;
+    const trigger = within(targetItem).getByRole('button', { name: 'delta のその他の操作' });
+
+    expect(within(targetItem).getByRole('button', { name: '開く' })).toBeInTheDocument();
+    expect(within(targetItem).queryByRole('button', { name: '生成' })).not.toBeInTheDocument();
+    expect(within(targetItem).queryByText('公開対象のWordPackのみ、ゲスト一覧に表示されます。')).not.toBeInTheDocument();
+
+    await act(async () => {
+      await user.click(trigger);
+    });
+
+    const menu = within(targetItem).getByRole('menu', { name: 'delta の操作メニュー' });
+    expect(within(menu).getByRole('menuitem', { name: '例文を生成' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: 'deltaの音声を再生' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitemcheckbox', { name: '語義を表示' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: '公開にする' })).toBeInTheDocument();
+    expect(within(menu).getByRole('menuitem', { name: '削除' })).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(within(menu).getByRole('menuitem', { name: '例文を生成' })).toHaveFocus();
+      expect(within(menu).getByRole('menuitem', { name: '削除' })).toBeEnabled();
+    });
+    await user.keyboard('{End}');
+    expect(within(menu).getByRole('menuitem', { name: '削除' })).toHaveFocus();
+    await user.keyboard('{ArrowDown}');
+    expect(within(menu).getByRole('menuitem', { name: '例文を生成' })).toHaveFocus();
+
+    await act(async () => {
+      await user.keyboard('{Escape}');
+    });
+    expect(within(targetItem).queryByRole('menu')).not.toBeInTheDocument();
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
 });

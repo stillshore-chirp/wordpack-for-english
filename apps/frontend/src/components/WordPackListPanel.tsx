@@ -21,35 +21,8 @@ import { TTSButton } from './TTSButton';
 import { formatDateJst } from '../lib/date';
 import { useAuth } from '../AuthContext';
 import { GuestLock } from './GuestLock';
-import { GuestPublicToggle } from './GuestPublicToggle';
 import { APP_EVENTS, dispatchAppEvent } from '../shared/events/appEvents';
 import type { WordPackListItem } from '../features/wordpack/types';
-
-// 削除ボタンの共通コンポーネント
-interface DeleteButtonProps {
-  onClick: (e: React.MouseEvent) => void;
-  disabled?: boolean;
-  isGuest: boolean;
-}
-
-const DeleteButton: React.FC<DeleteButtonProps> = ({ onClick, disabled = false, isGuest }) => {
-  const resolvedDisabled = disabled || isGuest;
-  return (
-    <GuestLock isGuest={isGuest}>
-      <button
-        className="wp-danger-button"
-        onClick={onClick}
-        disabled={disabled}
-        aria-disabled={resolvedDisabled}
-      >
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <path d="M4 7h16M10 11v6M14 11v6M6 7l1 14h10l1-14M9 7V4h6v3" />
-        </svg>
-        削除
-      </button>
-    </GuestLock>
-  );
-};
 
 type MiniIconName = 'book' | 'calendar' | 'check' | 'globe' | 'lock' | 'open' | 'speaker' | 'trash' | 'tag' | 'more';
 
@@ -117,7 +90,6 @@ type PersistedState = {
 
 const STORAGE_KEY = 'wp.list.ui_state.v1';
 const PAGE_LIMIT = 200;
-const MIN_COLUMN_WIDTH = 320;
 
 const DEFAULT_PERSISTED_STATE: PersistedState = {
   sortKey: 'updated_at',
@@ -130,16 +102,6 @@ const DEFAULT_PERSISTED_STATE: PersistedState = {
   appliedSearch: null,
   offset: 0,
   showAllSense: false,
-};
-
-const getFallbackColumnCount = (width: number): number => {
-  if (width >= 900) return 2;
-  return 1;
-};
-
-const computeColumnCount = (width: number): number => {
-  const count = Math.floor(width / MIN_COLUMN_WIDTH);
-  return Math.min(2, Math.max(1, count));
 };
 
 const sumExamples = (counts?: WordPackListItem['examples_count']): number => {
@@ -208,41 +170,6 @@ export const WordPackListPanel: React.FC = () => {
   const clearSelection = useCallback(() => {
     setSelectedIds(new Set());
   }, []);
-  // グリッドの可視幅に基づき列数を算出（最大2列）
-  const gridRef = useRef<HTMLDivElement | null>(null);
-  const [columnCount, setColumnCount] = useState<number>(() =>
-    typeof window === 'undefined' ? 1 : getFallbackColumnCount(window.innerWidth)
-  );
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const el = gridRef.current;
-    const fallbackUpdate = () => setColumnCount(getFallbackColumnCount(window.innerWidth));
-    if (!el) {
-      requestAnimationFrame(() => {
-        const next = gridRef.current;
-        if (next) {
-          setColumnCount(computeColumnCount(next.clientWidth));
-        } else {
-          fallbackUpdate();
-        }
-      });
-      return;
-    }
-    const update = () => setColumnCount(computeColumnCount(el.clientWidth));
-    update();
-    let ro: ResizeObserver | null = null;
-    if ('ResizeObserver' in window) {
-      ro = new ResizeObserver(() => update());
-      ro.observe(el);
-    }
-    window.addEventListener('resize', update);
-    return () => {
-      if (ro) ro.disconnect();
-      window.removeEventListener('resize', update);
-    };
-  }, [viewMode]);
-
   useEffect(() => {
     const stateToPersist: PersistedState = {
       sortKey,
@@ -670,6 +597,42 @@ export const WordPackListPanel: React.FC = () => {
   }, []);
 
   useEffect(() => {
+    if (!actionMenuOpenId) return;
+    const openId = actionMenuOpenId;
+    const focusFrame = window.requestAnimationFrame(() => {
+      const menu = document.getElementById(`wp-action-menu-${openId}`);
+      menu?.querySelector<HTMLElement>('button[role]:not(:disabled)')?.focus();
+    });
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return;
+      event.preventDefault();
+      setActionMenuOpenId(null);
+      window.requestAnimationFrame(() => {
+        document.getElementById(`wp-action-trigger-${openId}`)?.focus();
+      });
+    };
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      const menu = document.getElementById(`wp-action-menu-${openId}`);
+      const trigger = document.getElementById(`wp-action-trigger-${openId}`);
+      if (menu?.contains(target) || trigger?.contains(target)) return;
+      setActionMenuOpenId(null);
+    };
+    document.addEventListener('keydown', closeOnEscape);
+    document.addEventListener('pointerdown', closeOnOutsidePointer);
+    return () => {
+      window.cancelAnimationFrame(focusFrame);
+      document.removeEventListener('keydown', closeOnEscape);
+      document.removeEventListener('pointerdown', closeOnOutsidePointer);
+    };
+  }, [actionMenuOpenId]);
+
+  useEffect(() => {
+    setActionMenuOpenId(null);
+  }, [viewMode]);
+
+  useEffect(() => {
     if (showAllSense) {
       setSenseOpenIds(new Set(wordPacks.map((wp) => wp.id)));
     }
@@ -715,6 +678,124 @@ export const WordPackListPanel: React.FC = () => {
       nextId: index < previewNavigationIds.length - 1 ? previewNavigationIds[index + 1] : null,
     };
   }, [previewNavigationIds, previewWordPackId]);
+
+  const handleActionMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const items = Array.from(
+      event.currentTarget.querySelectorAll<HTMLButtonElement>('button[role]:not(:disabled)'),
+    );
+    if (items.length === 0) return;
+
+    event.preventDefault();
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+    const nextIndex =
+      event.key === 'Home'
+        ? 0
+        : event.key === 'End'
+          ? items.length - 1
+          : event.key === 'ArrowUp'
+            ? (currentIndex <= 0 ? items.length - 1 : currentIndex - 1)
+            : (currentIndex + 1) % items.length;
+    items[nextIndex]?.focus();
+  };
+
+  const renderWordPackActionMenu = (wordPack: WordPackListItemWithTotal, placement: 'card' | 'list') => (
+    <div
+      id={`wp-action-menu-${wordPack.id}`}
+      className={`wp-card-menu${placement === 'list' ? ' wp-index-action-menu' : ''}`}
+      role="menu"
+      aria-label={`${wordPack.lemma} の操作メニュー`}
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={handleActionMenuKeyDown}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) {
+          setActionMenuOpenId(null);
+        }
+      }}
+    >
+      {placement === 'card' ? (
+        <button type="button" role="menuitem" onClick={() => openPreview(wordPack.id)}>
+          開く
+        </button>
+      ) : null}
+      {wordPack.is_empty ? (
+        <GuestLock isGuest={isGuest}>
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              setActionMenuOpenId(null);
+              generateWordPack(wordPack);
+            }}
+            disabled={loading || generatingIds.has(wordPack.id)}
+          >
+            {generatingIds.has(wordPack.id) ? '例文を生成中' : '例文を生成'}
+          </button>
+        </GuestLock>
+      ) : null}
+      {placement === 'list' ? (
+        <>
+          <TTSButton
+            text={wordPack.lemma}
+            ariaLabel={`${wordPack.lemma}の音声を再生`}
+            label="音声を再生"
+            className="wp-action-menu-tts"
+            role="menuitem"
+            icon={<MiniIcon name="speaker" />}
+          />
+          <button
+            type="button"
+            role="menuitemcheckbox"
+            aria-checked={showAllSense || senseOpenIds.has(wordPack.id)}
+            disabled={showAllSense}
+            title={showAllSense ? '語義一括表示が有効なため、個別の表示切替はできません' : undefined}
+            onClick={() => {
+              setActionMenuOpenId(null);
+              toggleSenseOpen(wordPack.id);
+            }}
+          >
+            {showAllSense
+              ? '語義は一括表示中'
+              : senseOpenIds.has(wordPack.id)
+                ? '語義を隠す'
+                : '語義を表示'}
+          </button>
+        </>
+      ) : null}
+      <GuestLock isGuest={isGuest}>
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => {
+            setActionMenuOpenId(null);
+            updateGuestPublic(wordPack.id, !wordPack.guest_public);
+          }}
+          disabled={loading || guestPublicUpdatingIds.has(wordPack.id)}
+        >
+          {guestPublicUpdatingIds.has(wordPack.id)
+            ? '公開設定を更新中'
+            : wordPack.guest_public
+              ? '非公開にする'
+              : '公開にする'}
+        </button>
+      </GuestLock>
+      <GuestLock isGuest={isGuest}>
+        <button
+          type="button"
+          role="menuitem"
+          className="wp-card-menu-danger"
+          onClick={(event) => {
+            setActionMenuOpenId(null);
+            deleteWordPack(wordPack);
+            event.stopPropagation();
+          }}
+          disabled={loading}
+        >
+          削除
+        </button>
+      </GuestLock>
+    </div>
+  );
 
   return (
     <section>
@@ -776,7 +857,6 @@ export const WordPackListPanel: React.FC = () => {
         .wp-progress-badge.learned { background: #e8f5e9; border-color: #81c784; color: #1b5e20; }
         .wp-progress-badge.checked { background: #fff3e0; border-color: #ffcc80; color: #ef6c00; }
         .wp-progress-badge.small { font-size: 0.75rem; padding: 0.1rem 0.35rem; }
-        .wp-index-progress { display: inline-flex; gap: 0.25rem; align-items: center; }
         .wp-card-header-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
         .wp-sense-btn { font-size: 0.82rem; padding: 0.15rem 0.45rem; border-radius: 4px; border: 1px solid #5c6bc0; background: #f5f7ff; color: #3f51b5; cursor: pointer; }
         .wp-sense-btn[aria-pressed="true"] { background: #e8eaf6; border-color: #3f51b5; color: #283593; }
@@ -801,24 +881,6 @@ export const WordPackListPanel: React.FC = () => {
         .wp-view-toggle { display: flex; gap: 0.3rem; align-items: center; margin-bottom: 0.5rem; }
         .wp-toggle-btn { padding: 0.25rem 0.75rem; border: 1px solid #ccc; border-radius: 4px; background: white; color: #0f172a; cursor: pointer; }
         .wp-toggle-btn[aria-pressed="true"] { background: #e3f2fd; border-color: #2196f3; color: #0f4d73; }
-        .wp-index-grid { display: grid; grid-template-columns: 1fr; gap: 0.55rem; padding: 0.5rem 0.0rem; }
-        @media (min-width: 900px) and (max-width: 1199px) {
-          .wp-index-grid { grid-template-columns: 1fr 1fr; }
-        }
-        @media (min-width: 1200px) and (max-width: 1599px) {
-          .wp-index-grid { grid-template-columns: 1fr 1fr 1fr; }
-        }
-        @media (min-width: 1600px) {
-          .wp-index-grid { grid-template-columns: 1fr 1fr 1fr 1fr; }
-        }
-        .wp-index-item { display: flex; align-items: center; gap: 0.5rem; padding: 0.2rem 0.3rem; border-bottom: 1px solid #eee; cursor: pointer; background: transparent; border-radius: 4px; }
-        .wp-index-title-row { display: flex; align-items: baseline; gap: 0.4rem; flex: 1; min-width: 0; }
-        .wp-index-actions { margin-left: auto; display: flex; gap: 0.25rem; align-items: center; }
-        .wp-index-tts-btn { font-size: 0.82rem; padding: 0.15rem 0.45rem; border: 1px solid #cbd5e1; border-radius: 4px; background: #ffffff; color: #0f172a; cursor: pointer; }
-        .wp-index-open-button { font-size: 0.82rem; padding: 0.15rem 0.45rem; border-radius: 4px; border: 1px solid #1565c0; background: #ffffff; color: #1565c0; cursor: pointer; }
-        .wp-index-title { font-size: 0.95rem; font-weight: bold; color:rgb(233, 233, 233); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .wp-index-sense { font-size: 0.82rem; color: #212121; background: rgba(255,255,255,0.85); padding: 0.05rem 0.35rem; border-radius: 4px; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-        .wp-index-meta { font-size: 0.8rem; color: #333; }
         .wp-preview-nav { display: flex; justify-content: space-between; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem; flex-wrap: wrap; }
         .wp-preview-nav__context { margin: 0; color: var(--color-subtle); }
         .wp-preview-nav__actions { display: inline-flex; align-items: center; gap: 0.5rem; margin-left: auto; }
@@ -1024,9 +1086,11 @@ export const WordPackListPanel: React.FC = () => {
                         </p>
                       </div>
                       <button
+                        id={`wp-action-trigger-${wp.id}`}
                         type="button"
                         className="wp-card-more"
                         aria-label={`${wp.lemma} のその他の操作`}
+                        aria-haspopup="menu"
                         aria-expanded={actionMenuOpenId === wp.id}
                         aria-controls={`wp-action-menu-${wp.id}`}
                         onClick={(e) => {
@@ -1036,62 +1100,7 @@ export const WordPackListPanel: React.FC = () => {
                       >
                         <MiniIcon name="more" />
                       </button>
-                      {actionMenuOpenId === wp.id ? (
-                        <div
-                          id={`wp-action-menu-${wp.id}`}
-                          className="wp-card-menu"
-                          role="menu"
-                          aria-label={`${wp.lemma} の操作メニュー`}
-                          onClick={(e) => e.stopPropagation()}
-                        >
-                          <button type="button" role="menuitem" onClick={() => openPreview(wp.id)}>
-                            開く
-                          </button>
-                          {wp.is_empty ? (
-                            <GuestLock isGuest={isGuest}>
-                              <button
-                                type="button"
-                                role="menuitem"
-                                onClick={() => {
-                                  setActionMenuOpenId(null);
-                                  generateWordPack(wp);
-                                }}
-                                disabled={loading || generatingIds.has(wp.id)}
-                              >
-                                例文を生成
-                              </button>
-                            </GuestLock>
-                          ) : null}
-                          <GuestLock isGuest={isGuest}>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              onClick={() => {
-                                setActionMenuOpenId(null);
-                                updateGuestPublic(wp.id, !wp.guest_public);
-                              }}
-                              disabled={loading || guestPublicUpdatingIds.has(wp.id)}
-                            >
-                              {wp.guest_public ? '非公開にする' : '公開にする'}
-                            </button>
-                          </GuestLock>
-                          <GuestLock isGuest={isGuest}>
-                            <button
-                              type="button"
-                              role="menuitem"
-                              className="wp-card-menu-danger"
-                              onClick={(e) => {
-                                setActionMenuOpenId(null);
-                                deleteWordPack(wp);
-                                e.stopPropagation();
-                              }}
-                              disabled={loading}
-                            >
-                              削除
-                            </button>
-                          </GuestLock>
-                        </div>
-                      ) : null}
+                      {actionMenuOpenId === wp.id ? renderWordPackActionMenu(wp, 'card') : null}
                     </div>
                     {(showAllSense || senseOpenIds.has(wp.id)) && (
                       <div className="wp-card-sense-title" data-testid="wp-card-sense-title">
@@ -1169,25 +1178,17 @@ export const WordPackListPanel: React.FC = () => {
                 ))}
               </div>
             ) : (
-              <div
-                ref={gridRef}
+              <ul
                 className="wp-index-grid"
-                style={{
-                  gridTemplateColumns: `repeat(${Math.max(1, columnCount)}, 1fr)`,
-                  ...(columnCount > 1 ? {
-                    gridAutoFlow: 'column',
-                    gridTemplateRows: `repeat(${Math.max(1, Math.ceil(sortedWordPacks.length / Math.max(1, columnCount)))}, auto)`,
-                  } : {}),
-                }}
+                aria-label="保存済みWordPackのリスト"
               >
                 {sortedWordPacks.map((wp) => (
-                  <div
+                  <li
                     key={wp.id}
-                    className="wp-index-item"
+                    className={`wp-index-item${selectedIds.has(wp.id) ? ' is-selected' : ''}`}
                     data-testid="wp-index-item"
-                    onClick={() => openPreview(wp.id)}
                   >
-                    <label className="wp-select-checkbox" onClick={(e) => e.stopPropagation()}>
+                    <label className="wp-select-checkbox">
                       <input
                         type="checkbox"
                         checked={selectedIds.has(wp.id)}
@@ -1195,18 +1196,32 @@ export const WordPackListPanel: React.FC = () => {
                         aria-label={`WordPack ${wp.lemma} を選択`}
                       />
                     </label>
-                    <div className="wp-index-title-row" data-testid="wp-index-title-row">
-                      <span className="wp-index-title">{wp.lemma}</span>
+                    <div className="wp-index-main">
+                      <div className="wp-index-title-row" data-testid="wp-index-title-row">
+                        <span className="wp-index-title">{wp.lemma}</span>
+                        <span className={`wp-index-meta${wp.is_empty ? ' is-empty' : ''}`}>
+                          {wp.is_empty ? '未生成' : `例文 ${wp.totalExamples}件`}
+                        </span>
+                      </div>
                       {(showAllSense || senseOpenIds.has(wp.id)) && (
-                        <span className="wp-index-sense">{resolveSenseTitle(wp.sense_title)}</span>
+                        <p className="wp-index-sense">{resolveSenseTitle(wp.sense_title)}</p>
                       )}
-                      <span className="wp-index-meta">{wp.is_empty ? ' / 未' : ` / 例文: ${wp.totalExamples}件`}</span>
-                      <span className="wp-index-progress" aria-label="学習状況">
-                        <span className="wp-progress-badge small learned">使える {wp.learned_count}</span>
-                        <span className="wp-progress-badge small checked">確認済み {wp.checked_only_count}</span>
-                      </span>
+                      <div className="wp-index-detail-row">
+                        <span className={`wp-visibility-pill ${wp.guest_public ? 'is-public' : 'is-private'}`}>
+                          <MiniIcon name={wp.guest_public ? 'globe' : 'lock'} />
+                          {wp.guest_public ? '公開中' : '非公開'}
+                        </span>
+                        <span className="wp-date-pill">
+                          <MiniIcon name="calendar" />
+                          {formatDate(wp.updated_at)}更新
+                        </span>
+                        <span className="wp-index-progress" aria-label="学習状況">
+                          <span className="wp-progress-badge small learned">使える {wp.learned_count}</span>
+                          <span className="wp-progress-badge small checked">確認済み {wp.checked_only_count}</span>
+                        </span>
+                      </div>
                     </div>
-                    <div className="wp-index-actions" onClick={(e) => e.stopPropagation()}>
+                    <div className="wp-index-actions">
                       <button
                         type="button"
                         className="wp-index-open-button"
@@ -1215,49 +1230,24 @@ export const WordPackListPanel: React.FC = () => {
                         <MiniIcon name="open" />開く
                       </button>
                       <button
+                        id={`wp-action-trigger-${wp.id}`}
                         type="button"
-                        className="wp-sense-btn"
-                        aria-pressed={showAllSense || senseOpenIds.has(wp.id)}
-                        disabled={showAllSense}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          toggleSenseOpen(wp.id);
+                        className="wp-index-more"
+                        aria-label={`${wp.lemma} のその他の操作`}
+                        aria-haspopup="menu"
+                        aria-expanded={actionMenuOpenId === wp.id}
+                        aria-controls={`wp-action-menu-${wp.id}`}
+                        onClick={() => {
+                          toggleActionMenu(wp.id);
                         }}
-                      ><MiniIcon name="book" />語義</button>
-                      {wp.is_empty && (
-                        <GuestLock isGuest={isGuest}>
-                          <button
-                            type="button"
-                            className="wp-generate-btn"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              generateWordPack(wp);
-                            }}
-                            disabled={loading || generatingIds.has(wp.id)}
-                          ><MiniIcon name="open" />生成</button>
-                        </GuestLock>
-                      )}
-                      <TTSButton text={wp.lemma} ariaLabel={`${wp.lemma}の音声`} className="wp-index-tts-btn" icon={<MiniIcon name="speaker" />} />
-                      <DeleteButton
-                        onClick={(e) => { e.stopPropagation(); deleteWordPack(wp); }}
-                        disabled={loading}
-                        isGuest={isGuest}
-                      />
+                      >
+                        <MiniIcon name="more" />
+                      </button>
+                      {actionMenuOpenId === wp.id ? renderWordPackActionMenu(wp, 'list') : null}
                     </div>
-                    <div style={{ marginTop: '0.35rem' }} onClick={(e) => e.stopPropagation()}>
-                      <GuestPublicToggle
-                        isGuest={isGuest}
-                        checked={Boolean(wp.guest_public)}
-                        disabled={loading || guestPublicUpdatingIds.has(wp.id)}
-                        onChange={(next) => updateGuestPublic(wp.id, next)}
-                        tooltip="ゲスト閲覧の一覧に表示するかどうかを切り替えます。"
-                        description="公開対象のWordPackのみ、ゲスト一覧に表示されます。"
-                        compact
-                      />
-                    </div>
-                  </div>
+                  </li>
                 ))}
-              </div>
+              </ul>
             )}
 
             {(hasPrev || hasNext) && (
