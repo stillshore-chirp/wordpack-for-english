@@ -27,7 +27,7 @@ Lexicon の一覧を、右レール、狭幅、文字拡大、長い見出し語
 ## Resume Command
 
 ```bash
-cd /private/tmp/wordpack-list-states-20260724
+cd /private/tmp/wordpack-list-active-conditions-20260724
 git status --short --branch
 sed -n '1,240p' plans/lexicon-list-ui-hardening.md
 cat plans/lexicon-list-ui-hardening.status.json
@@ -38,7 +38,7 @@ cat plans/lexicon-list-ui-hardening.status.json
 ```bash
 (cd apps/frontend && npx tsc -p tsconfig.json)
 (cd apps/frontend && npm test -- --run src/WordPackListPanel.states.test.tsx --silent)
-npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/wordpack-list-states.spec.ts
+npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/wordpack-active-conditions.spec.ts tests/e2e/wordpack-list-states.spec.ts
 ```
 
 ## Session Notes
@@ -49,3 +49,4 @@ npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/wordpack-list-st
 - 2026-07-24: Issue #544 の初回 CI は全 check 成功。Codex 自動レビューで補助操作の可視ラベルと公開先の曖昧さを検出したため、カード・リスト双方へ「その他」を表示し、「ゲスト公開にする / ゲスト公開を解除」へ具体化した。
 - 2026-07-24: レビュー反映 head `9155921` の全 CI が成功し、Codex review thread 2件へ回答して解決済みにした。PR #546 は非ドラフトのまま merge 待ち。
 - 2026-07-24: PR #546 の最終 head `365e1ef` から Issue #545 の依存ブランチを作成し、初回読み込み中、初回空、検索・絞り込み0件、初回失敗、更新中、更新失敗を分離した。前回一覧保持、回復操作、live region、狭幅を unit / Playwright / axe と固定モック証跡で検証済み。#546 merge 後に main へ載せ替えて PR / CI / review gate を進める。
+- 2026-07-24: Issue #164 の依存ブランチで、検索方式付きの適用中条件、個別・全解除、解除後フォーカス、セッション復元時の上部検索同期、全体/このページ/条件一致件数を追加した。frontend 197件、PR相当Playwright 16件、axe、390px、固定モック変更前後をローカル確認済み。先行PR群の merge 後に main へ順次載せ替えて PR / CI / review gate を進める。
