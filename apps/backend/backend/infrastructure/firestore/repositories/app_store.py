@@ -87,10 +87,20 @@ class AppFirestoreRepository:
     ) -> list[tuple[str, str, str, str, str, bool, Mapping[str, int], int, int, bool]]:
         return self.wordpacks.list_word_packs_with_flags(limit=limit, offset=offset)
 
+    def list_all_word_packs_with_flags(
+        self,
+    ) -> list[tuple[str, str, str, str, str, bool, Mapping[str, int], int, int, bool]]:
+        return self.wordpacks.list_all_word_packs_with_flags()
+
     def list_public_word_packs_with_flags(
         self, limit: int = 50, offset: int = 0
     ) -> list[tuple[str, str, str, str, str, bool, Mapping[str, int], int, int, bool]]:
         return self.wordpacks.list_public_word_packs_with_flags(limit=limit, offset=offset)
+
+    def list_all_public_word_packs_with_flags(
+        self,
+    ) -> list[tuple[str, str, str, str, str, bool, Mapping[str, int], int, int, bool]]:
+        return self.wordpacks.list_all_public_word_packs_with_flags()
 
     def list_owned_word_packs_with_flags(
         self, owner_user_id: str, limit: int = 50, offset: int = 0
@@ -98,6 +108,11 @@ class AppFirestoreRepository:
         return self.wordpacks.list_owned_word_packs_with_flags(
             owner_user_id, limit=limit, offset=offset
         )
+
+    def list_all_owned_word_packs_with_flags(
+        self, owner_user_id: str
+    ) -> list[tuple[str, str, str, str, str, bool, Mapping[str, int], int, int, bool]]:
+        return self.wordpacks.list_all_owned_word_packs_with_flags(owner_user_id)
 
     def delete_word_pack(self, word_pack_id: str) -> bool:
         return self.wordpacks.delete_word_pack(word_pack_id)

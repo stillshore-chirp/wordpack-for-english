@@ -63,7 +63,7 @@ test.describe('Lexicon WordPack一覧の適用中条件', () => {
     await expect(conditions).toContainText('生成状態: 生成済み');
     await expect(page.getByLabel('全体件数 2件')).toHaveText('全体 2件');
     await expect(page.getByText('このページ 2件')).toBeVisible();
-    await expect(page.getByText('条件一致 1件')).toBeVisible();
+    await expect(page.getByText('条件一致（全ページ） 1件')).toBeVisible();
     await runA11yCheck(page);
 
     await page.getByRole('button', { name: '検索: alpha（部分一致）を解除' }).click();
