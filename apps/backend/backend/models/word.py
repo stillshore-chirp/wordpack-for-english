@@ -428,11 +428,28 @@ class WordPackListItem(BaseModel):
     )
 
 
+class WordPackListFacetCounts(BaseModel):
+    """他の条件を保ったまま各絞り込みへ切り替えた場合の件数。"""
+
+    public: int = Field(ge=0)
+    private: int = Field(ge=0)
+    generated: int = Field(ge=0)
+    not_generated: int = Field(ge=0)
+
+
 class WordPackListResponse(BaseModel):
     """WordPack一覧レスポンス"""
 
     items: list[WordPackListItem]
-    total: int
+    total: int = Field(
+        ge=0,
+        description="現在の認可範囲にあるWordPackの総件数",
+    )
+    filtered_total: int = Field(
+        ge=0,
+        description="検索・絞り込み条件に一致する全ページ合計件数",
+    )
+    facet_counts: WordPackListFacetCounts
     limit: int
     offset: int
 

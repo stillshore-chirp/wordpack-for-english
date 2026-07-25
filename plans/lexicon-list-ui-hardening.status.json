@@ -1,8 +1,8 @@
 {
   "task": "lexicon-list-ui-hardening",
-  "branch": "codex/list-active-conditions",
+  "branch": "codex/list-server-query",
   "base_branch": "main",
-  "status": "issue_164_local_ready_waiting_for_prior_merge_chain",
+  "status": "issue_115_local_ready_waiting_for_prior_merge_chain",
   "completed": [
     "repo_start_gate",
     "uiux_governance_read",
@@ -19,17 +19,20 @@
     "issue_545_implementation",
     "issue_545_local_verification",
     "issue_164_implementation",
-    "issue_164_local_verification"
+    "issue_164_local_verification",
+    "issue_115_implementation",
+    "issue_115_local_verification"
   ],
   "in_progress": [
     "issue_544_merge_gate",
     "issue_545_publication_gate",
-    "issue_164_publication_gate"
+    "issue_164_publication_gate",
+    "issue_115_publication_gate"
   ],
   "pending": [
     "issue_545_pr_ci_review",
     "issue_164_pr_ci_review",
-    "issue_115",
+    "issue_115_pr_ci_review",
     "completion_review"
   ],
   "verification": {
@@ -38,11 +41,13 @@
     "production_layout_metrics": "confirmed: title width 0px and grid overflow",
     "issue_544": "final head 365e1ef passed all PR checks plus local frontend tests, typecheck, architecture boundaries, smoke E2E, axe, desktop and 390px layout assertions, and Darwin/Linux visual evidence; both Codex review threads resolved",
     "issue_545": "dependent branch passed 195 frontend tests with 1 skip, 6 targeted state tests, typecheck, architecture boundaries, 14 smoke E2E tests, 5 dedicated state E2E tests, axe, 390px overflow and target-size assertions, and fixed-mock before/after visual review",
-    "issue_164": "dependent branch passed 197 frontend tests with 1 skip, 8 list-state tests, typecheck, architecture boundaries, 16 smoke E2E tests, 2 dedicated active-condition E2E tests, 5 issue-545 state regressions, axe, 390px overflow and 44px target assertions, and fixed-mock before/after visual review"
+    "issue_164": "dependent branch passed 197 frontend tests with 1 skip, 8 list-state tests, typecheck, architecture boundaries, 16 smoke E2E tests, 2 dedicated active-condition E2E tests, 5 issue-545 state regressions, axe, 390px overflow and 44px target assertions, and fixed-mock before/after visual review",
+    "issue_115": "dependent branch passed 310 backend tests with 1 skip and 81.66% coverage, 198 frontend tests with 1 skip and 87.95% coverage, 9 list-state tests, 7 query tests, 7 API list tests, typecheck, backend and frontend architecture boundaries, 18 PR smoke E2E tests, 6 visual tests, 2 dedicated server-query E2E tests, axe, 390px overflow and 44px target assertions, and fixed-mock before/after visual review"
   },
   "risks": [
-    "Client-side filtering only covers the fetched page.",
     "PR #546 remains open; Issue #545 must be rebased onto main after #546 is merged before its PR is published.",
-    "Issue #164 depends on the unpublished Issue #545 branch and must be rebased sequentially before its PR is published."
+    "Issue #164 depends on the unpublished Issue #545 branch and must be rebased sequentially before its PR is published.",
+    "Issue #115 depends on the unpublished Issue #164 branch and must be rebased sequentially before its PR is published.",
+    "The correctness-first API scans lightweight WordPack list documents in the authorized scope for suffix/contains search; production-scale latency and read cost must be monitored."
   ]
 }

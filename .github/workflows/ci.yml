@@ -271,6 +271,7 @@ jobs:
             tests/e2e/guest.spec.ts \
             tests/e2e/wordpack-active-conditions.spec.ts \
             tests/e2e/wordpack-list-states.spec.ts \
+            tests/e2e/wordpack-server-query.spec.ts \
             tests/e2e/wordpack.spec.ts
 
       - name: Upload Playwright artifacts

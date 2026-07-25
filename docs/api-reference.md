@@ -111,7 +111,44 @@ Response:
 
 ### `GET /api/word/packs`
 
-保存済み WordPack の一覧を返します。ゲスト閲覧では `guest_public=true` の WordPack だけを返します。
+保存済み WordPack の一覧を返します。検索・絞り込み・並び順は、現在の認可範囲全体へ適用してから `offset` / `limit` でページ分割します。ゲスト閲覧では `guest_public=true` の WordPack だけ、`ENFORCE_OWNER_SCOPING=true` のログインユーザーには自分が所有する WordPack だけが認可範囲になります。
+
+Query:
+
+| 名前 | 値 | 既定値 | 意味 |
+|---|---|---|---|
+| `limit` | 1〜200 | 50 | 1ページの取得上限 |
+| `offset` | 0以上 | 0 | 条件適用後の先頭から飛ばす件数 |
+| `search` | 128文字以内 | 空 | 見出し語の検索文字列 |
+| `search_mode` | `prefix` / `suffix` / `contains` | `contains` | 前方・後方・部分一致 |
+| `visibility` | `all` / `public` / `private` | `all` | 公開状態 |
+| `generation` | `all` / `generated` / `not_generated` | `all` | 例文生成状態 |
+| `sort_key` | `created_at` / `updated_at` / `lemma` / `total_examples` | `created_at` | 並び順の基準 |
+| `sort_order` | `asc` / `desc` | `desc` | 昇順または降順 |
+
+Response:
+
+```json
+{
+  "items": [],
+  "total": 201,
+  "filtered_total": 1,
+  "facet_counts": {
+    "public": 1,
+    "private": 200,
+    "generated": 1,
+    "not_generated": 0
+  },
+  "limit": 200,
+  "offset": 0
+}
+```
+
+- `total` は認可範囲全体の件数です。
+- `filtered_total` は全検索・絞り込み条件に一致する全ページ件数です。
+- `facet_counts.public` / `private` は検索条件と生成状態を保ち、公開状態だけを各値へ切り替えた場合の件数です。
+- `facet_counts.generated` / `not_generated` は検索条件と公開状態を保ち、生成状態だけを各値へ切り替えた場合の件数です。
+- 同じ並び順の値を持つ項目は WordPack ID で安定化し、同一データに対するページ境界が揺れないようにします。
 
 ### `GET /api/word/packs/{id}`
 

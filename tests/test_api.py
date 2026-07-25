@@ -1028,6 +1028,90 @@ def test_word_pack_list_pagination(client):
     assert resp.status_code == 422  # validation error
 
 
+def test_word_pack_list_applies_conditions_before_201_item_page_boundary(
+    client,
+):
+    from backend.store import store
+
+    word_packs = store._client.collection("word_packs")
+    for index in range(201):
+        is_later_match = index == 200
+        word_packs.document(f"wp:server-query-{index:03d}").set(
+            {
+                "lemma_label": (
+                    "later-page-only"
+                    if is_later_match
+                    else f"private-first-page-{index:03d}"
+                ),
+                "sense_title": "サーバー一覧検索テスト",
+                "created_at": f"2026-07-24T00:{index % 60:02d}:00+00:00",
+                "updated_at": f"2026-07-24T01:{index % 60:02d}:00+00:00",
+                "examples_category_counts": {
+                    "Dev": 1,
+                    "CS": 0,
+                    "LLM": 0,
+                    "Business": 0,
+                    "Common": 0,
+                },
+                "checked_only_count": 0,
+                "learned_count": 0,
+                "metadata": {
+                    "guest_public": is_later_match,
+                    "owner_user_id": "test-user",
+                },
+            }
+        )
+
+    first_page = client.get(
+        "/api/word/packs?limit=200&offset=0&sort_key=lemma&sort_order=asc"
+    )
+    assert first_page.status_code == 200
+    assert first_page.json()["total"] == 201
+    assert first_page.json()["filtered_total"] == 201
+    assert len(first_page.json()["items"]) == 200
+
+    second_page = client.get(
+        "/api/word/packs?limit=200&offset=200&sort_key=lemma&sort_order=asc"
+    )
+    assert second_page.status_code == 200
+    assert len(second_page.json()["items"]) == 1
+
+    filtered = client.get(
+        "/api/word/packs"
+        "?limit=200&offset=0"
+        "&search=later-page&search_mode=prefix"
+        "&visibility=public&generation=generated"
+        "&sort_key=lemma&sort_order=asc"
+    )
+    assert filtered.status_code == 200
+    payload = filtered.json()
+    assert payload["total"] == 201
+    assert payload["filtered_total"] == 1
+    assert [item["lemma"] for item in payload["items"]] == ["later-page-only"]
+    assert payload["facet_counts"] == {
+        "public": 1,
+        "private": 0,
+        "generated": 1,
+        "not_generated": 0,
+    }
+
+
+@pytest.mark.parametrize(
+    "query",
+    [
+        "search_mode=invalid",
+        "visibility=invalid",
+        "generation=invalid",
+        "sort_key=invalid",
+        "sort_order=invalid",
+    ],
+)
+def test_word_pack_list_rejects_unknown_query_values(client, query: str):
+    response = client.get(f"/api/word/packs?{query}")
+
+    assert response.status_code == 422
+
+
 def test_word_pack_strict_empty_llm(monkeypatch: pytest.MonkeyPatch):
     """STRICT_MODE で LLM が空文字を返した場合、5xx となることを確認。
 

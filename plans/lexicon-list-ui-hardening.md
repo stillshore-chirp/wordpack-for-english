@@ -19,15 +19,15 @@ Lexicon の一覧を、右レール、狭幅、文字拡大、長い見出し語
 - [x] Audit: 添付画像、実画面、DOM、実寸レイアウト、現行コード、既存テストを確認する。
 - [x] Issue inventory: P0/P1 を独立 Issue に分け、既存 Issue と重複照合する。
 - [x] P0 #544: リスト表示を単列・安全な操作階層へ変更し、表示崩壊とフォーカス順を直す。
-- [ ] P0 #545: 初回空、該当なし、読み込み失敗を区別し、回復導線を追加する。
-- [ ] P1 #164: 適用中の検索・絞り込み条件を表示・解除できるようにする。
-- [ ] P1 #115: ページング全体へ検索・絞り込みと集計を適用する。
+- [x] P0 #545: 初回空、該当なし、読み込み失敗を区別し、回復導線を追加する。
+- [x] P1 #164: 適用中の検索・絞り込み条件を表示・解除できるようにする。
+- [x] P1 #115: ページング全体へ検索・絞り込みと集計を適用する。
 - [ ] Completion: 全 slice の CI、Codex 自動レビュー、review thread、残リスクを確認する。
 
 ## Resume Command
 
 ```bash
-cd /private/tmp/wordpack-list-active-conditions-20260724
+cd /private/tmp/wordpack-list-server-query-20260724
 git status --short --branch
 sed -n '1,240p' plans/lexicon-list-ui-hardening.md
 cat plans/lexicon-list-ui-hardening.status.json
@@ -37,8 +37,10 @@ cat plans/lexicon-list-ui-hardening.status.json
 
 ```bash
 (cd apps/frontend && npx tsc -p tsconfig.json)
-(cd apps/frontend && npm test -- --run src/WordPackListPanel.states.test.tsx --silent)
-npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/wordpack-active-conditions.spec.ts tests/e2e/wordpack-list-states.spec.ts
+(cd apps/frontend && npm test -- --silent src/WordPackListPanel.states.test.tsx)
+PYTHONPATH=apps/backend pytest -q --no-cov tests/backend/test_wordpack_list_query.py
+PYTHONPATH=apps/backend pytest -q --no-cov tests/test_api.py -k 'word_pack_list'
+npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/wordpack-active-conditions.spec.ts tests/e2e/wordpack-list-states.spec.ts tests/e2e/wordpack-server-query.spec.ts
 ```
 
 ## Session Notes
@@ -50,3 +52,4 @@ npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/wordpack-active-
 - 2026-07-24: レビュー反映 head `9155921` の全 CI が成功し、Codex review thread 2件へ回答して解決済みにした。PR #546 は非ドラフトのまま merge 待ち。
 - 2026-07-24: PR #546 の最終 head `365e1ef` から Issue #545 の依存ブランチを作成し、初回読み込み中、初回空、検索・絞り込み0件、初回失敗、更新中、更新失敗を分離した。前回一覧保持、回復操作、live region、狭幅を unit / Playwright / axe と固定モック証跡で検証済み。#546 merge 後に main へ載せ替えて PR / CI / review gate を進める。
 - 2026-07-24: Issue #164 の依存ブランチで、検索方式付きの適用中条件、個別・全解除、解除後フォーカス、セッション復元時の上部検索同期、全体/このページ/条件一致件数を追加した。frontend 197件、PR相当Playwright 16件、axe、390px、固定モック変更前後をローカル確認済み。先行PR群の merge 後に main へ順次載せ替えて PR / CI / review gate を進める。
+- 2026-07-24: Issue #115 の依存ブランチで、認可範囲全体への検索・公開/生成状態絞り込み・安定ソートをAPIへ移し、全体件数、全ページ一致件数、切替候補件数を分離した。条件切替中は旧件数を確定表示しない。backend 310件（1件skip）、frontend 198件（1件skip）、PR相当Playwright 18件、visual 6件、typecheck、architecture boundaries、axe、390px、固定モック変更前後を検証済み。先行PR群の merge 後に順次公開する。

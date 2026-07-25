@@ -65,9 +65,18 @@ export interface WordPackListItem {
   learned_count: number;
 }
 
+export interface WordPackListFacetCounts {
+  public: number;
+  private: number;
+  generated: number;
+  not_generated: number;
+}
+
 export interface WordPackListResponse {
   items: WordPackListItem[];
   total: number;
+  filtered_total?: number;
+  facet_counts?: WordPackListFacetCounts;
   limit: number;
   offset: number;
 }

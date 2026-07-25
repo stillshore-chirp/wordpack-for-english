@@ -181,6 +181,109 @@ describe('WordPackListPanel list states', () => {
     await waitFor(() => expect(screen.getAllByTestId('wp-card')).toHaveLength(2));
   });
 
+  it('全ページ条件を切り替えている間は以前の件数を確定値として表示しない', async () => {
+    const publicAlpha = { ...wordPacks[0], guest_public: true };
+    const serverResponse = (
+      items: typeof wordPacks,
+      filteredTotal: number,
+    ) => new Response(
+      JSON.stringify({
+        items,
+        total: 2,
+        filtered_total: filteredTotal,
+        facet_counts: {
+          public: 1,
+          private: 1,
+          generated: filteredTotal,
+          not_generated: 0,
+        },
+        limit: 200,
+        offset: 0,
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+    let resolveFilteredLoad: ((response: Response) => void) | null = null;
+    const pendingFilteredLoad = new Promise<Response>((resolve) => {
+      resolveFilteredLoad = resolve;
+    });
+    setupFetch((requestIndex) => (
+      requestIndex === 1
+        ? serverResponse([publicAlpha, wordPacks[1]], 2)
+        : pendingFilteredLoad
+    ));
+    renderWithAuth();
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(screen.getAllByTestId('wp-card')).toHaveLength(2));
+    await user.click(screen.getByRole('button', { name: '公開中 1' }));
+
+    expect(await screen.findByText('条件一致（全ページ） 確認中')).toBeInTheDocument();
+    expect(screen.getByText(/全ページの一致件数を確認中/)).toBeInTheDocument();
+    expect(screen.getByText('全ページを絞り込み（数字を確認中）')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '公開中 …' })).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFilteredLoad?.(serverResponse([publicAlpha], 1));
+      await pendingFilteredLoad;
+    });
+    await waitFor(() => expect(screen.getByText('条件一致（全ページ） 1件')).toBeInTheDocument());
+    expect(screen.getByText('全ページを絞り込み（数字は切替後の件数）')).toBeInTheDocument();
+  });
+
+  it('条件の取得に失敗した場合は前回成功した一覧を未絞り込みのまま保持する', async () => {
+    const serverResponse = (
+      items: typeof wordPacks,
+      filteredTotal: number,
+    ) => new Response(
+      JSON.stringify({
+        items,
+        total: 2,
+        filtered_total: filteredTotal,
+        facet_counts: {
+          public: 0,
+          private: filteredTotal,
+          generated: filteredTotal,
+          not_generated: 0,
+        },
+        limit: 200,
+        offset: 0,
+      }),
+      { status: 200, headers: { 'Content-Type': 'application/json' } },
+    );
+    setupFetch((requestIndex) => {
+      if (requestIndex === 1) return serverResponse(wordPacks, 2);
+      if (requestIndex === 2) return errorResponse();
+      return serverResponse([], 0);
+    });
+    renderWithAuth();
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(screen.getAllByTestId('wp-card')).toHaveLength(2));
+    const searchInput = screen.getByRole('searchbox', { name: '保存済みWordPackを検索' });
+    await user.type(searchInput, 'no-match{Enter}');
+
+    const heading = await screen.findByRole('heading', {
+      name: '一覧の表示条件を適用できませんでした',
+    });
+    const state = heading.closest('section');
+    expect(within(state!).getByRole('alert')).toHaveTextContent(
+      '前回成功した条件のWordPackを表示しています。',
+    );
+    expect(screen.getAllByTestId('wp-card')).toHaveLength(2);
+    expect(screen.getByRole('heading', { name: 'alpha' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'bravo' })).toBeInTheDocument();
+    expect(screen.getByText('条件一致（全ページ） 未取得')).toBeInTheDocument();
+    expect(screen.getByText('1件の条件は未反映。前回成功した条件の一覧を表示中')).toBeInTheDocument();
+    expect(screen.getByText('全ページを絞り込み（数字を取得できませんでした）')).toBeInTheDocument();
+    expect(screen.queryByText('条件一致（全ページ） 確認中')).not.toBeInTheDocument();
+
+    await user.click(within(state!).getByRole('button', { name: '更新を再試行' }));
+
+    await screen.findByRole('heading', { name: '検索条件に一致するWordPackがありません' });
+    expect(screen.queryAllByTestId('wp-card')).toHaveLength(0);
+    expect(screen.getByText('条件一致（全ページ） 0件')).toBeInTheDocument();
+  });
+
   it('初回読み込み失敗を空状態と混同せず再試行できる', async () => {
     setupFetch((requestIndex) => requestIndex === 1 ? errorResponse() : listResponse());
     renderWithAuth();
@@ -279,7 +382,7 @@ describe('WordPackListPanel list states', () => {
     expect(conditions).toHaveTextContent('生成状態: 生成済み');
     expect(screen.getByLabelText('全体件数 2件')).toHaveTextContent('全体 2件');
     expect(screen.getByText('このページ 2件')).toBeInTheDocument();
-    expect(screen.getByText('条件一致 1件')).toBeInTheDocument();
+    expect(screen.getByText('条件一致（全ページ） 1件')).toBeInTheDocument();
 
     await user.click(screen.getByRole('button', { name: '検索: alpha（部分一致）を解除' }));
     await waitFor(() => expect(searchInput).toHaveValue(''));
