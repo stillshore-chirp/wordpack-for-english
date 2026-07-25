@@ -9,11 +9,14 @@ export type WordPackListMessage = { kind: 'status' | 'alert'; text: string } | n
 
 interface UseWordPackListOptions {
   limit?: number;
+  loadAll?: boolean;
 }
 
 interface UseWordPackListResult {
+  hasLoaded: boolean;
   loading: boolean;
   message: WordPackListMessage;
+  partial: boolean;
   total: number;
   wordPacks: WordPackListItem[];
   reload: () => Promise<void>;
@@ -35,14 +38,19 @@ export const normalizeWordPackListItem = (item: WordPackListItem): WordPackListI
   is_empty: item.is_empty ?? false,
 });
 
-export const useWordPackList = ({ limit = DEFAULT_LIMIT }: UseWordPackListOptions = {}): UseWordPackListResult => {
+export const useWordPackList = ({
+  limit = DEFAULT_LIMIT,
+  loadAll = false,
+}: UseWordPackListOptions = {}): UseWordPackListResult => {
   const { settings } = useSettings();
   const { apiBase, requestTimeoutMs } = settings;
   const abortRef = useRef<AbortController | null>(null);
   const [wordPacks, setWordPacks] = useState<WordPackListItem[]>([]);
   const [total, setTotal] = useState(0);
-  const [loading, setLoading] = useState(false);
+  const [hasLoaded, setHasLoaded] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState<WordPackListMessage>(null);
+  const [partial, setPartial] = useState(false);
 
   const reload = useCallback(async () => {
     abortRef.current?.abort();
@@ -51,14 +59,69 @@ export const useWordPackList = ({ limit = DEFAULT_LIMIT }: UseWordPackListOption
     setLoading(true);
     setMessage(null);
     try {
-      const res = await fetchWordPackList(apiBase, {
+      const firstPage = await fetchWordPackList(apiBase, {
         limit,
         offset: 0,
         signal: controller.signal,
         timeoutMs: requestTimeoutMs,
       });
-      setWordPacks(res.items.map(normalizeWordPackListItem));
-      setTotal(res.total);
+      const itemsById = new Map(
+        firstPage.items.map((item) => [item.id, item] as const),
+      );
+      let offset = firstPage.items.length;
+      let expectedTotal = firstPage.total;
+      let collectionChangedDuringPagination =
+        itemsById.size !== firstPage.items.length;
+      let pageErrorText: string | null = null;
+
+      while (loadAll && offset < expectedTotal) {
+        try {
+          const page = await fetchWordPackList(apiBase, {
+            limit,
+            offset,
+            signal: controller.signal,
+            timeoutMs: requestTimeoutMs,
+          });
+          if (page.total !== expectedTotal) {
+            collectionChangedDuringPagination = true;
+          }
+          expectedTotal = page.total;
+          if (page.items.length === 0) break;
+          page.items.forEach((item) => {
+            if (itemsById.has(item.id)) {
+              collectionChangedDuringPagination = true;
+              return;
+            }
+            itemsById.set(item.id, item);
+          });
+          offset += page.items.length;
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
+          pageErrorText =
+            error instanceof ApiError
+              ? error.message
+              : 'WordPack一覧の続きを読み込めませんでした';
+          break;
+        }
+      }
+
+      const items = [...itemsById.values()];
+      const isPartial =
+        Boolean(pageErrorText) ||
+        collectionChangedDuringPagination ||
+        items.length < expectedTotal;
+      setWordPacks(items.map(normalizeWordPackListItem));
+      setTotal(expectedTotal);
+      setPartial(isPartial);
+      setHasLoaded(true);
+      if (pageErrorText) {
+        setMessage({ kind: 'alert', text: pageErrorText });
+      } else if (collectionChangedDuringPagination) {
+        setMessage({
+          kind: 'alert',
+          text: '読み込み中にWordPack一覧が更新されました',
+        });
+      }
     } catch (error) {
       if (controller.signal.aborted) return;
       const text = error instanceof ApiError ? error.message : 'WordPack一覧の読み込みに失敗しました';
@@ -68,7 +131,7 @@ export const useWordPackList = ({ limit = DEFAULT_LIMIT }: UseWordPackListOption
         setLoading(false);
       }
     }
-  }, [apiBase, limit, requestTimeoutMs]);
+  }, [apiBase, limit, loadAll, requestTimeoutMs]);
 
   const applyStudyProgress = useCallback(
     (payload: { wordPackId: string; checked_only_count: number; learned_count: number }) => {
@@ -101,5 +164,14 @@ export const useWordPackList = ({ limit = DEFAULT_LIMIT }: UseWordPackListOption
     return () => window.removeEventListener(APP_EVENTS.wordPackUpdated, onUpdated as EventListener);
   }, [reload]);
 
-  return { loading, message, total, wordPacks, reload, applyStudyProgress };
+  return {
+    hasLoaded,
+    loading,
+    message,
+    partial,
+    total,
+    wordPacks,
+    reload,
+    applyStudyProgress,
+  };
 };

@@ -1,0 +1,20 @@
+{
+  "goal": "Shelvesの棚選択・検索・状態表示・アクセシビリティを証跡付きで是正する",
+  "branch": "codex/shelves-uiux-audit",
+  "issues": [551, 552, 553, 554],
+  "tasks": {
+    "audit": "completed",
+    "before_evidence": "completed",
+    "open_action": "completed",
+    "search_consistency": "completed",
+    "state_design": "completed",
+    "accessibility_copy": "completed",
+    "tests": "completed",
+    "documentation": "completed",
+    "pull_request": "completed",
+    "ci": "in_progress",
+    "code_review": "in_progress"
+  },
+  "smoke_test": "cd apps/frontend && npm test -- --run src/pages/ShelvesPage/ShelvesPage.test.tsx",
+  "resume": "git switch codex/shelves-uiux-audit && git status --short --branch"
+}

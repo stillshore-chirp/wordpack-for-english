@@ -31,7 +31,12 @@ export const AppRightRail: React.FC<AppRightRailProps> = ({
   children,
   label = '生成と作業状況',
 }) => (
-  <div className="dictionary-rail" role="region" aria-label={label}>
+  <div
+    className="dictionary-rail"
+    role="region"
+    aria-label={label}
+    tabIndex={0}
+  >
     <GenerationQueuePanel />
     {children}
   </div>
