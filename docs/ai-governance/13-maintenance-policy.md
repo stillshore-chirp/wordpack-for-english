@@ -6,6 +6,7 @@
 
 - ルールの原点は `AGENTS.md`。
 - 詳細正本は `docs/ai-governance/`。
+- 公開物のセキュリティ確認と公開承認ゲートの詳細正本は `docs/security-publication-checklist.md`。
 - UI/UXレビューの実行手順は `.agents/skills/ui-ux-review/SKILL.md`。
 - `CLAUDE.md` は `@AGENTS.md` のみを原則とする。
 - Cursor専用ルールは作らない。
