@@ -67,23 +67,36 @@ export const useWordPackList = ({
       });
       const items = [...firstPage.items];
       let offset = firstPage.items.length;
+      let pageErrorText: string | null = null;
 
       while (loadAll && offset < firstPage.total) {
-        const page = await fetchWordPackList(apiBase, {
-          limit,
-          offset,
-          signal: controller.signal,
-          timeoutMs: requestTimeoutMs,
-        });
-        if (page.items.length === 0) break;
-        items.push(...page.items);
-        offset += page.items.length;
+        try {
+          const page = await fetchWordPackList(apiBase, {
+            limit,
+            offset,
+            signal: controller.signal,
+            timeoutMs: requestTimeoutMs,
+          });
+          if (page.items.length === 0) break;
+          items.push(...page.items);
+          offset += page.items.length;
+        } catch (error) {
+          if (controller.signal.aborted) throw error;
+          pageErrorText =
+            error instanceof ApiError
+              ? error.message
+              : 'WordPack一覧の続きを読み込めませんでした';
+          break;
+        }
       }
 
       setWordPacks(items.map(normalizeWordPackListItem));
       setTotal(firstPage.total);
       setPartial(items.length < firstPage.total);
       setHasLoaded(true);
+      if (pageErrorText) {
+        setMessage({ kind: 'alert', text: pageErrorText });
+      }
     } catch (error) {
       if (controller.signal.aborted) return;
       const text = error instanceof ApiError ? error.message : 'WordPack一覧の読み込みに失敗しました';

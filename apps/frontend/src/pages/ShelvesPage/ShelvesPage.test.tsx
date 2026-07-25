@@ -251,6 +251,7 @@ describe('ShelvesPage', () => {
     ).toHaveAttribute('role', 'status');
     expect(screen.getByText('読み込み中')).toBeInTheDocument();
     expect(screen.queryByText('最近更新', { selector: '.dictionary-badge' })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('棚の集計')).not.toBeInTheDocument();
     expect(screen.queryByRole('list', { name: '自動分類の棚一覧' })).not.toBeInTheDocument();
 
     await act(async () => {
@@ -289,6 +290,7 @@ describe('ShelvesPage', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('棚を表示できません');
     expect(screen.getByText('取得失敗')).toBeInTheDocument();
+    expect(screen.queryByLabelText('棚の集計')).not.toBeInTheDocument();
     expect(screen.queryByRole('list', { name: '自動分類の棚一覧' })).not.toBeInTheDocument();
 
     await act(async () => {
@@ -378,5 +380,33 @@ describe('ShelvesPage', () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '全件を再読み込み' })).toBeInTheDocument();
+  });
+
+  it('keeps completed pages visible when a later page fails', async () => {
+    const firstPage = Array.from({ length: 200 }, (_, index): WordPackListItem => ({
+      ...wordPacks[0],
+      id: `wp:page-error:${index}`,
+      lemma: `page-error-${index}`,
+    }));
+    setupFetch((offset) =>
+      offset === 0
+        ? jsonResponse({
+          items: firstPage,
+          total: 201,
+          limit: 200,
+          offset,
+        })
+        : jsonResponse({ detail: '続きを取得できません' }, 503),
+    );
+    await renderPage();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(
+      '続きを取得できません。全201件のうち200件を取得し、表示中の件数だけで棚を分類しています。',
+    );
+    expect(screen.getByRole('heading', { name: 'page-error-0' })).toBeInTheDocument();
+    expect(screen.getByLabelText('棚の集計')).toHaveTextContent('201保存済み');
+    expect(screen.getByRole('button', { name: '全件を再読み込み' })).toBeInTheDocument();
+    expect(screen.queryByText(/棚を表示できません/)).not.toBeInTheDocument();
   });
 });

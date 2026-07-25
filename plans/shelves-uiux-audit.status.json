@@ -11,9 +11,9 @@
     "accessibility_copy": "completed",
     "tests": "completed",
     "documentation": "completed",
-    "pull_request": "in_progress",
-    "ci": "pending",
-    "code_review": "pending"
+    "pull_request": "completed",
+    "ci": "in_progress",
+    "code_review": "in_progress"
   },
   "smoke_test": "cd apps/frontend && npm test -- --run src/pages/ShelvesPage/ShelvesPage.test.tsx",
   "resume": "git switch codex/shelves-uiux-audit && git status --short --branch"

@@ -137,6 +137,8 @@
 | P0 | 棚を一度開いた後の検索で結果見出しへフォーカスを奪い得る | 操作回数が残ったまま件数変化で effect が再実行される | 各 open request を一度だけ処理し、検索欄の連続入力を回帰テスト化 |
 | P1 | 検索該当なしでも棚セクションの「3件」を結果件数と誤読できる | 件数の対象ラベルがない | 「保存済み3件」と総数の範囲を明示 |
 | P1 | 右レールがスクロール可能でもキーボードフォーカスを受け取れない | 200% の axe `scrollable-region-focusable` | 右レールをフォーカス可能にし、可視アウトラインを追加 |
+| P1 | 2ページ目以降の取得失敗で取得済みページも捨てる | PR #557 Codex review | 取得済みページを partial data として表示し、失敗理由と全件再読み込みを提示 |
+| P2 | 初回 loading / error で未取得件数を0件と表示する | PR #557 Codex review | `hasLoaded` になるまで右レールの集計を表示しない |
 | P1 | full-page の狭幅画像は固定ナビゲーションの合成で状態を誤読しやすい | 証跡画像の目視 | 390×844 の実ビューポート画像を採用 |
 
 - ユーザー価値: 棚選択から復習対象確認へ進む価値が明確
@@ -169,7 +171,7 @@
   - [棚選択後の一覧](../evidence/issues-551-554/after-shelves-open-result.png)
   - [検索該当なし](../evidence/issues-551-554/after-shelves-no-results.png)
   - [狭幅](../evidence/issues-551-554/after-shelves-narrow.png)
-- テスト結果: Shelves component 8件、Shelves E2E 4件（axe、390px、200%、error retry を含む）、フロントエンド全体197件、標準 Playwright smoke 9件
+- テスト結果: Shelves component 9件、Shelves E2E 4件（axe、390px、200%、error retry を含む）、フロントエンド全体198件、標準 Playwright smoke 9件
 - 手動確認: 棚選択後の可視フォーカス、一覧の画面内移動、検索整合、狭幅の横スクロールなし
 - 取得できなかった証跡: 実ユーザーの操作観察は未実施
 

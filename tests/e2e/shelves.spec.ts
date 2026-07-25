@@ -225,6 +225,7 @@ test.describe('Shelves', () => {
 
     const alert = page.getByRole('alert');
     await expect(alert).toContainText('棚を表示できません');
+    await expect(page.getByLabel('棚の集計')).toHaveCount(0);
     await expect(
       page.getByRole('list', { name: '自動分類の棚一覧' }),
     ).toHaveCount(0);

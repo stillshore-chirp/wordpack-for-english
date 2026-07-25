@@ -188,7 +188,18 @@ export const ShelvesPage: React.FC = () => {
                 </div>
               </EmptyState>
             ) : null}
-            {message && hasLoaded ? (
+            {message && hasLoaded && partial ? (
+              <div role="alert" className="dictionary-empty compact">
+                <p>
+                  {message.text}。全{total}件のうち{wordPacks.length}
+                  件を取得し、表示中の件数だけで棚を分類しています。
+                </p>
+                <Button variant="subtle" onClick={() => void reload()}>
+                  全件を再読み込み
+                </Button>
+              </div>
+            ) : null}
+            {message && hasLoaded && !partial ? (
               <div role="alert" className="dictionary-empty compact">
                 <p>
                   {message.text}
@@ -317,14 +328,16 @@ export const ShelvesPage: React.FC = () => {
         </div>
         <AppRightRail>
           <RailCard title="現在の棚" badge={railBadge}>
-            <div className="dictionary-rail-metrics" aria-label="棚の集計">
-              <span>
-                <strong>{total}</strong>保存済み
-              </span>
-              <span>
-                <strong>{activeItems.length}</strong>表示中
-              </span>
-            </div>
+            {hasLoaded ? (
+              <div className="dictionary-rail-metrics" aria-label="棚の集計">
+                <span>
+                  <strong>{total}</strong>保存済み
+                </span>
+                <span>
+                  <strong>{activeItems.length}</strong>表示中
+                </span>
+              </div>
+            ) : null}
             <p className="dictionary-rail-copy">{railCopy}</p>
           </RailCard>
         </AppRightRail>
