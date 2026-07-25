@@ -27,7 +27,7 @@ Lexicon の一覧を、右レール、狭幅、文字拡大、長い見出し語
 ## Resume Command
 
 ```bash
-cd /private/tmp/wordpack-list-ui-20260724
+cd /private/tmp/wordpack-list-states-20260724
 git status --short --branch
 sed -n '1,240p' plans/lexicon-list-ui-hardening.md
 cat plans/lexicon-list-ui-hardening.status.json
@@ -36,9 +36,9 @@ cat plans/lexicon-list-ui-hardening.status.json
 ## Smoke Tests
 
 ```bash
-cd apps/frontend && npx tsc -p tsconfig.json
-cd apps/frontend && npm test -- WordPackListPanel.actions-layout.test.tsx WordPackListPanel.modal.test.tsx
-npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/wordpack.spec.ts
+(cd apps/frontend && npx tsc -p tsconfig.json)
+(cd apps/frontend && npm test -- --run src/WordPackListPanel.states.test.tsx --silent)
+npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/wordpack-list-states.spec.ts
 ```
 
 ## Session Notes
@@ -48,3 +48,4 @@ npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/wordpack.spec.ts
 - 2026-07-24: Issue #544 の単列リスト、操作メニュー、キーボード移動、変更前後の安全なモック証跡、長文・右レール・390px幅の回帰検証を実装した。PR / CI / review 確認を継続する。
 - 2026-07-24: Issue #544 の初回 CI は全 check 成功。Codex 自動レビューで補助操作の可視ラベルと公開先の曖昧さを検出したため、カード・リスト双方へ「その他」を表示し、「ゲスト公開にする / ゲスト公開を解除」へ具体化した。
 - 2026-07-24: レビュー反映 head `9155921` の全 CI が成功し、Codex review thread 2件へ回答して解決済みにした。PR #546 は非ドラフトのまま merge 待ち。
+- 2026-07-24: PR #546 の最終 head `365e1ef` から Issue #545 の依存ブランチを作成し、初回読み込み中、初回空、検索・絞り込み0件、初回失敗、更新中、更新失敗を分離した。前回一覧保持、回復操作、live region、狭幅を unit / Playwright / axe と固定モック証跡で検証済み。#546 merge 後に main へ載せ替えて PR / CI / review gate を進める。

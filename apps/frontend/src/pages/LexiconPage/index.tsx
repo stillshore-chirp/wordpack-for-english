@@ -18,9 +18,9 @@ export const LexiconPage: React.FC<LexiconPageProps> = ({
   const [topSearch, setTopSearch] = React.useState('');
   const topSearchRef = React.useRef<HTMLInputElement>(null);
 
-  const focusCreateInput = () => {
+  const focusCreateInput = React.useCallback(() => {
     try { focusRef.current?.focus(); } catch {}
-  };
+  }, [focusRef]);
 
   const applyTopSearch = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -41,6 +41,17 @@ export const LexiconPage: React.FC<LexiconPageProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
+
+  React.useEffect(() => {
+    const handleCreateFocus = () => focusCreateInput();
+    const handleSearchCleared = () => setTopSearch('');
+    window.addEventListener('wordpack:create-focus', handleCreateFocus);
+    window.addEventListener('wordpack:list-search-cleared', handleSearchCleared);
+    return () => {
+      window.removeEventListener('wordpack:create-focus', handleCreateFocus);
+      window.removeEventListener('wordpack:list-search-cleared', handleSearchCleared);
+    };
+  }, [focusCreateInput]);
 
   return (
     <div className="dictionary-main lexicon-main">

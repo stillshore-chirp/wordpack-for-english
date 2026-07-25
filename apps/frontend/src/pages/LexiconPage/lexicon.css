@@ -1542,9 +1542,151 @@
   cursor: not-allowed;
 }
 
-.lexicon-list-section .wp-empty {
-  border-color: var(--lexicon-line);
+.lexicon-list-section .wp-list-loading,
+.lexicon-list-section .wp-list-refreshing {
+  border: 1px solid var(--lexicon-line);
+  border-radius: 9px;
+  background: rgba(19, 34, 55, 0.72);
+  color: var(--dict-text);
+}
+
+.lexicon-list-section .wp-list-loading {
+  min-height: 11rem;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+}
+
+.lexicon-list-section .wp-list-refreshing {
+  margin: 0.15rem 0 0.75rem;
+  padding: 0.75rem 0.9rem;
+}
+
+.lexicon-list-section .wp-list-state {
+  min-height: 12rem;
+  display: grid;
+  align-content: center;
+  gap: 1rem;
+  margin-top: 0.25rem;
+  border: 1px solid var(--lexicon-line);
+  border-left-width: 4px;
+  border-radius: 9px;
+  background:
+    radial-gradient(circle at top right, rgba(47, 115, 255, 0.08), transparent 38%),
+    rgba(15, 29, 48, 0.9);
+  color: var(--dict-text);
+  padding: clamp(1.25rem, 3vw, 2rem);
+}
+
+.lexicon-list-section .wp-list-state.is-empty {
+  border-left-color: #5d91ff;
+}
+
+.lexicon-list-section .wp-list-state.is-no-results {
+  border-left-color: #62c6d8;
+}
+
+.lexicon-list-section .wp-list-state.is-error {
+  border-left-color: #f2b84b;
+  background:
+    radial-gradient(circle at top right, rgba(242, 184, 75, 0.1), transparent 38%),
+    rgba(25, 31, 43, 0.96);
+}
+
+.lexicon-list-section .wp-list-state__message {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.9rem;
+}
+
+.lexicon-list-section .wp-list-state__symbol {
+  width: 2.6rem;
+  height: 2.6rem;
+  flex: 0 0 2.6rem;
+  display: inline-grid;
+  place-items: center;
+  border: 1px solid rgba(124, 166, 255, 0.5);
+  border-radius: 999px;
+  background: rgba(47, 115, 255, 0.18);
+  color: #dbe8ff;
+  font-size: 1.25rem;
+  font-weight: 900;
+}
+
+.lexicon-list-section .wp-list-state.is-no-results .wp-list-state__symbol {
+  border-color: rgba(98, 198, 216, 0.55);
+  background: rgba(98, 198, 216, 0.14);
+  color: #c9f6ff;
+}
+
+.lexicon-list-section .wp-list-state.is-error .wp-list-state__symbol {
+  border-color: rgba(242, 184, 75, 0.58);
+  background: rgba(242, 184, 75, 0.14);
+  color: #ffe2a3;
+}
+
+.lexicon-list-section .wp-list-state h3 {
+  margin: 0;
+  color: var(--dict-text);
+  font-size: 1rem;
+  line-height: 1.4;
+}
+
+.lexicon-list-section .wp-list-state p {
+  max-width: 46rem;
+  margin: 0.35rem 0 0;
   color: var(--lexicon-muted);
+  font-size: 0.9rem;
+  line-height: 1.65;
+}
+
+.lexicon-list-section .wp-list-state__detail {
+  color: #d8c7a6;
+  font-size: 0.82rem;
+}
+
+.lexicon-list-section .wp-list-state__conditions {
+  display: grid;
+  gap: 0.5rem;
+  padding-left: 3.5rem;
+}
+
+.lexicon-list-section .wp-list-state__conditions > span {
+  color: var(--lexicon-faint);
+  font-size: 0.78rem;
+  font-weight: 800;
+}
+
+.lexicon-list-section .wp-list-state__conditions ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.lexicon-list-section .wp-list-state__conditions li {
+  border: 1px solid rgba(98, 198, 216, 0.44);
+  border-radius: 999px;
+  background: rgba(98, 198, 216, 0.1);
+  color: #d8f8ff;
+  padding: 0.35rem 0.62rem;
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+.lexicon-list-section .wp-list-state__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  padding-left: 3.5rem;
+}
+
+.lexicon-list-section .wp-list-state__action {
+  min-height: 2.75rem;
+  padding-inline: 1rem;
+  font-weight: 850;
 }
 
 @media (max-width: 1320px) {
@@ -1581,6 +1723,20 @@
     overflow-x: auto;
     padding-bottom: 0.15rem;
     scroll-snap-type: x proximity;
+  }
+
+  .lexicon-list-section .wp-list-state {
+    min-height: 10rem;
+    padding: 1.1rem;
+  }
+
+  .lexicon-list-section .wp-list-state__conditions,
+  .lexicon-list-section .wp-list-state__actions {
+    padding-left: 0;
+  }
+
+  .lexicon-list-section .wp-list-state__action {
+    width: 100%;
   }
 
   .lexicon-list-section .wp-recent-item {
