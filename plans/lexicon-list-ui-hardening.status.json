@@ -1,0 +1,38 @@
+{
+  "task": "lexicon-list-ui-hardening",
+  "branch": "codex/list-ui-hardening",
+  "base_branch": "main",
+  "status": "issue_544_ready_for_merge",
+  "completed": [
+    "repo_start_gate",
+    "uiux_governance_read",
+    "attachment_review",
+    "production_layout_measurement",
+    "issue_inventory",
+    "issue_544_implementation",
+    "issue_544_local_verification",
+    "issue_544_initial_ci",
+    "issue_544_review_feedback_implementation",
+    "issue_544_review_feedback_local_verification",
+    "issue_544_latest_head_ci",
+    "issue_544_review_threads_resolved"
+  ],
+  "in_progress": ["issue_544_merge_gate"],
+  "pending": [
+    "issue_545",
+    "issue_164",
+    "issue_115",
+    "completion_review"
+  ],
+  "verification": {
+    "pre_change_attachment": "available",
+    "production_dom_snapshot": "confirmed",
+    "production_layout_metrics": "confirmed: title width 0px and grid overflow",
+    "issue_544": "review-feedback head 9155921 passed all PR checks plus 189 frontend tests, 12 targeted tests, typecheck, architecture boundaries, 9 smoke E2E tests, axe, desktop and 390px layout assertions, and Darwin/Linux visual evidence; both Codex review threads resolved"
+  },
+  "risks": [
+    "Current initial-load failure can be shown together with the true-empty message.",
+    "Client-side filtering only covers the fetched page.",
+    "PR #546 remains open; Issue #545 should start from main after #546 is merged."
+  ]
+}

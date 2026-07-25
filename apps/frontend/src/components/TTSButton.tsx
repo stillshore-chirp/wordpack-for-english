@@ -1,4 +1,4 @@
-import { type CSSProperties, type ReactNode, useMemo, useState } from 'react';
+import { type AriaRole, type CSSProperties, type ReactNode, useMemo, useState } from 'react';
 import { useSettings } from '../SettingsContext';
 import { TTS_TEXT_MAX_LENGTH } from '../constants/tts';
 import { useAuth } from '../AuthContext';
@@ -10,11 +10,12 @@ type Props = {
   icon?: ReactNode;
   label?: string;
   ariaLabel?: string;
+  role?: AriaRole;
   voice?: string;
   style?: CSSProperties;
 };
 
-export function TTSButton({ text, className, icon, label = '音声', ariaLabel, voice = 'alloy', style }: Props) {
+export function TTSButton({ text, className, icon, label = '音声', ariaLabel, role, voice = 'alloy', style }: Props) {
   const { isGuest } = useAuth();
   const [loading, setLoading] = useState(false);
   let contextApiBase: string | undefined;
@@ -131,6 +132,7 @@ export function TTSButton({ text, className, icon, label = '音声', ariaLabel, 
         className={className}
         data-testid="speak-btn"
         style={style}
+        role={role}
         aria-label={loading ? `${resolvedAriaLabel}を読み上げ中` : resolvedAriaLabel}
       >
         {icon}

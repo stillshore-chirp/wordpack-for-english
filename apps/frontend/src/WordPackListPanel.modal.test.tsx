@@ -281,7 +281,7 @@ describe('WordPackListPanel modal preview', () => {
     });
   });
 
-  it('カード/リスト表示ともにWordPack語彙の読み上げボタンが表示される', async () => {
+  it('カード表示では読み上げを直接、リスト表示では項目メニューから利用できる', async () => {
     setupFetchMocks();
     renderWithAuth();
 
@@ -301,16 +301,28 @@ describe('WordPackListPanel modal preview', () => {
       await user.click(screen.getByRole('button', { name: 'リスト' }));
     });
 
-    const buttonsInListView = await screen.findAllByRole('button', { name: /の音声$/ });
-    expect(buttonsInListView).toHaveLength(3);
-
-    const senseButtonsInListView = await screen.findAllByRole('button', { name: '語義' });
-    expect(senseButtonsInListView).toHaveLength(3);
-
     const listItems = await screen.findAllByTestId('wp-index-item');
-    const firstListOpenButton = within(listItems[0]).getByRole('button', { name: /開く/ });
+    const firstListItem = listItems.find((item) => item.textContent?.includes('alpha'));
+    expect(firstListItem).toBeDefined();
+    const firstListOpenButton = within(firstListItem!).getByRole('button', { name: '開く' });
     firstListOpenButton.focus();
     expect(firstListOpenButton).toHaveFocus();
+
+    expect(within(firstListItem!).queryByRole('menuitem', { name: 'alphaの音声を再生' })).toBeNull();
+    await act(async () => {
+      await user.click(within(firstListItem!).getByRole('button', { name: 'alpha のその他の操作' }));
+    });
+    const actionMenu = within(firstListItem!).getByRole('menu', { name: 'alpha の操作メニュー' });
+    expect(within(actionMenu).getByRole('menuitem', { name: 'alphaの音声を再生' })).toBeInTheDocument();
+
+    await act(async () => {
+      await user.keyboard('{Escape}');
+    });
+    expect(within(firstListItem!).queryByRole('menu', { name: 'alpha の操作メニュー' })).toBeNull();
+    await waitFor(() => {
+      expect(within(firstListItem!).getByRole('button', { name: 'alpha のその他の操作' })).toHaveFocus();
+    });
+    firstListOpenButton.focus();
 
     await act(async () => {
       await user.keyboard('{Enter}');
@@ -363,15 +375,17 @@ describe('WordPackListPanel modal preview', () => {
     expect(listItems).toHaveLength(3);
 
     const firstListItem = listItems[0];
-    const listSenseButton = within(firstListItem).getByRole('button', { name: '語義' });
+    await act(async () => {
+      await user.click(within(firstListItem).getByRole('button', { name: 'alpha のその他の操作' }));
+    });
+    const listSenseButton = within(firstListItem).getByRole('menuitemcheckbox', { name: '語義を表示' });
 
     await act(async () => {
       await user.click(listSenseButton);
     });
 
-    const titleRow = within(firstListItem).getByTestId('wp-index-title-row');
-    expect(titleRow).toHaveTextContent('alpha');
-    expect(titleRow).toHaveTextContent('アルファ概説');
+    expect(within(firstListItem).getByTestId('wp-index-title-row')).toHaveTextContent('alpha');
+    expect(firstListItem).toHaveTextContent('アルファ概説');
 
     await act(async () => {
       await user.click(screen.getByRole('button', { name: 'カード' }));
