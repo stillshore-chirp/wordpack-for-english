@@ -164,20 +164,20 @@ describe('WordPackListPanel list states', () => {
     let state = heading.closest('section');
     expect(within(state!).getByRole('status')).toHaveTextContent('保存済みのWordPackは残っています。');
     expect(screen.queryByRole('heading', { name: '最近開いたWordPack' })).not.toBeInTheDocument();
-    expect(within(state!).getByRole('list', { name: '現在適用中の条件' })).toHaveTextContent(
+    expect(screen.getByRole('list', { name: '適用中の検索・絞り込み条件' })).toHaveTextContent(
       '検索: no-match（部分一致）',
     );
-    await user.click(within(state!).getByRole('button', { name: '検索を解除' }));
+    await user.click(screen.getByRole('button', { name: '検索: no-match（部分一致）を解除' }));
     await waitFor(() => expect(screen.getAllByTestId('wp-card')).toHaveLength(2));
     expect(searchInput).toHaveValue('');
 
     await user.click(screen.getByRole('button', { name: '公開中 0' }));
     heading = await screen.findByRole('heading', { name: '絞り込み条件に一致するWordPackがありません' });
     state = heading.closest('section');
-    expect(within(state!).getByRole('list', { name: '現在適用中の条件' })).toHaveTextContent(
+    expect(screen.getByRole('list', { name: '適用中の検索・絞り込み条件' })).toHaveTextContent(
       '公開状態: 公開中',
     );
-    await user.click(within(state!).getByRole('button', { name: '絞り込みを解除' }));
+    await user.click(screen.getByRole('button', { name: '公開状態: 公開中を解除' }));
     await waitFor(() => expect(screen.getAllByTestId('wp-card')).toHaveLength(2));
   });
 
@@ -259,5 +259,66 @@ describe('WordPackListPanel list states', () => {
         expect.stringContaining('offset=200'),
         expect.stringContaining('offset=200'),
       ]);
+  });
+
+  it('適用中の複数条件を個別または一括で解除できる', async () => {
+    setupFetch(() => listResponse());
+    renderWithAuth();
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(screen.getAllByTestId('wp-card')).toHaveLength(2));
+    const searchInput = screen.getByRole('searchbox', { name: '保存済みWordPackを検索' });
+    await user.type(searchInput, 'alpha{Enter}');
+    await user.click(screen.getByRole('button', { name: '非公開 2' }));
+    await user.click(screen.getByRole('button', { name: '生成済み 2' }));
+
+    const conditionsHeading = await screen.findByRole('heading', { name: '適用中の条件' });
+    const conditions = screen.getByRole('list', { name: '適用中の検索・絞り込み条件' });
+    expect(conditions).toHaveTextContent('検索: alpha（部分一致）');
+    expect(conditions).toHaveTextContent('公開状態: 非公開');
+    expect(conditions).toHaveTextContent('生成状態: 生成済み');
+    expect(screen.getByLabelText('全体件数 2件')).toHaveTextContent('全体 2件');
+    expect(screen.getByText('このページ 2件')).toBeInTheDocument();
+    expect(screen.getByText('条件一致 1件')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '検索: alpha（部分一致）を解除' }));
+    await waitFor(() => expect(searchInput).toHaveValue(''));
+    await waitFor(() => expect(conditionsHeading).toHaveFocus());
+    expect(screen.queryByText('検索: alpha（部分一致）')).not.toBeInTheDocument();
+    expect(conditions).toHaveTextContent('公開状態: 非公開');
+
+    await user.click(screen.getByRole('button', { name: 'すべて解除' }));
+    await waitFor(() => expect(screen.queryByRole('heading', { name: '適用中の条件' })).not.toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole('heading', { name: /保存済みWordPack/ })).toHaveFocus());
+    expect(screen.getAllByTestId('wp-card')).toHaveLength(2);
+  });
+
+  it('セッションから復元した検索方式と絞り込み条件を表示する', async () => {
+    sessionStorage.setItem(
+      'wp.list.ui_state.v1',
+      JSON.stringify({
+        sortKey: 'updated_at',
+        sortOrder: 'desc',
+        viewMode: 'card',
+        generationFilter: 'generated',
+        visibilityFilter: 'private',
+        searchMode: 'prefix',
+        searchInput: 'alp',
+        appliedSearch: { mode: 'prefix', value: 'alp' },
+        offset: 0,
+        showAllSense: false,
+      }),
+    );
+    setupFetch(() => listResponse());
+    renderWithAuth();
+
+    const conditions = await screen.findByRole('list', { name: '適用中の検索・絞り込み条件' });
+    expect(conditions).toHaveTextContent('検索: alp（前方一致）');
+    expect(conditions).toHaveTextContent('公開状態: 非公開');
+    expect(conditions).toHaveTextContent('生成状態: 生成済み');
+    await waitFor(() => expect(
+      screen.getByRole('searchbox', { name: '保存済みWordPackを検索' }),
+    ).toHaveValue('alp'));
+    await waitFor(() => expect(screen.getAllByTestId('wp-card')).toHaveLength(1));
   });
 });

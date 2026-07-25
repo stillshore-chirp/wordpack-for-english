@@ -14,7 +14,7 @@
 | Frontend architecture boundaries | `node ./scripts/check_frontend_architecture_boundaries.mjs` | page / feature layer の API transport 直参照と legacy fetcher import を検査 |
 | Backend p95 | `API_P95_THRESHOLD_MS=1500 PYTHONPATH=apps/backend pytest -q --no-cov tests/test_api_performance.py` | [backend-performance.md](./backend-performance.md) |
 | Frontend integration | `cd apps/frontend && INTEGRATION_TEST=true BACKEND_PROXY_TARGET=http://127.0.0.1:8000 npm run test` | [frontend-integration-tests.md](./frontend-integration-tests.md) |
-| Playwright smoke | `npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/auth.spec.ts tests/e2e/guest.spec.ts tests/e2e/wordpack-list-states.spec.ts tests/e2e/wordpack.spec.ts` | [playwright-e2e.md](./playwright-e2e.md) |
+| Playwright smoke | `npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/auth.spec.ts tests/e2e/guest.spec.ts tests/e2e/wordpack-active-conditions.spec.ts tests/e2e/wordpack-list-states.spec.ts tests/e2e/wordpack.spec.ts` | [playwright-e2e.md](./playwright-e2e.md) |
 | Visual regression | `E2E_BASE_URL=http://127.0.0.1:5173 npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/visual.spec.ts` | [visual-regression.md](./visual-regression.md) |
 
 Firestore Emulator を使う Backend CI は Java 21 を前提とし、Python 3.13 と 3.14 の両方で同じ pytest suite を実行します。さらに `Dockerfile.backend` を Python 3.14 でビルドし、コンテナの `/healthz` まで確認します。ローカルで同じ suite を実行する場合は、Java 21 と Firebase CLI を用意したうえで次を使います。

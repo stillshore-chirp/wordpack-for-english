@@ -89,6 +89,14 @@ type PersistedState = {
   showAllSense: boolean;
 };
 
+type ActiveConditionKey = 'search' | 'visibility' | 'generation';
+
+interface ActiveCondition {
+  key: ActiveConditionKey;
+  label: string;
+  clearLabel: string;
+}
+
 const STORAGE_KEY = 'wp.list.ui_state.v1';
 const PAGE_LIMIT = 200;
 const SEARCH_MODE_LABELS: Record<SearchMode, string> = {
@@ -137,7 +145,6 @@ interface WordPackListStateProps {
   symbol: string;
   tone: 'empty' | 'no-results' | 'error';
   detail?: string;
-  conditions?: string[];
   actions?: React.ReactNode;
 }
 
@@ -148,7 +155,6 @@ const WordPackListState: React.FC<WordPackListStateProps> = ({
   symbol,
   tone,
   detail,
-  conditions = [],
   actions,
 }) => (
   <section className={`wp-list-state is-${tone}`} aria-labelledby={`${id}-title`}>
@@ -164,14 +170,6 @@ const WordPackListState: React.FC<WordPackListStateProps> = ({
         {detail ? <p className="wp-list-state__detail">{detail}</p> : null}
       </div>
     </div>
-    {conditions.length > 0 ? (
-      <div className="wp-list-state__conditions">
-        <span>現在の条件</span>
-        <ul aria-label="現在適用中の条件">
-          {conditions.map((condition) => <li key={condition}>{condition}</li>)}
-        </ul>
-      </div>
-    ) : null}
     {actions ? <div className="wp-list-state__actions">{actions}</div> : null}
   </section>
 );
@@ -264,6 +262,17 @@ export const WordPackListPanel: React.FC = () => {
       try { window.removeEventListener('wordpack:list-search', handler as EventListener); } catch {}
     };
   }, []);
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      try {
+        window.dispatchEvent(new CustomEvent('wordpack:list-search-synced', {
+          detail: { value: appliedSearch?.value.trim() ?? '' },
+        }));
+      } catch {}
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [appliedSearch]);
 
   // 一覧の取得は他のフィルタ操作と競合するため、AbortController を共通化して最新の結果のみを反映させる。
   const loadWordPacks = useCallback(
@@ -636,7 +645,8 @@ export const WordPackListPanel: React.FC = () => {
   );
 
   const handleApplySearch = useCallback(() => {
-    setAppliedSearch({ mode: searchMode, value: searchInput.trim() });
+    const value = searchInput.trim();
+    setAppliedSearch(value ? { mode: searchMode, value } : null);
   }, [searchMode, searchInput]);
 
   const clearAppliedSearch = useCallback(() => {
@@ -748,19 +758,53 @@ export const WordPackListPanel: React.FC = () => {
   );
   const hasAppliedSearch = normalizedSearch !== null;
   const hasActiveFilters = generationFilter !== 'all' || visibilityFilter !== 'all';
-  const activeConditionLabels = useMemo(() => {
-    const conditions: string[] = [];
+  const activeConditions = useMemo<ActiveCondition[]>(() => {
+    const conditions: ActiveCondition[] = [];
     if (appliedSearch?.value.trim()) {
-      conditions.push(`検索: ${appliedSearch.value.trim()}（${SEARCH_MODE_LABELS[appliedSearch.mode]}）`);
+      const label = `検索: ${appliedSearch.value.trim()}（${SEARCH_MODE_LABELS[appliedSearch.mode]}）`;
+      conditions.push({
+        key: 'search',
+        label,
+        clearLabel: `${label}を解除`,
+      });
     }
     if (visibilityFilter !== 'all') {
-      conditions.push(`公開状態: ${VISIBILITY_FILTER_LABELS[visibilityFilter]}`);
+      const label = `公開状態: ${VISIBILITY_FILTER_LABELS[visibilityFilter]}`;
+      conditions.push({
+        key: 'visibility',
+        label,
+        clearLabel: `${label}を解除`,
+      });
     }
     if (generationFilter !== 'all') {
-      conditions.push(`生成状態: ${GENERATION_FILTER_LABELS[generationFilter]}`);
+      const label = `生成状態: ${GENERATION_FILTER_LABELS[generationFilter]}`;
+      conditions.push({
+        key: 'generation',
+        label,
+        clearLabel: `${label}を解除`,
+      });
     }
     return conditions;
   }, [appliedSearch, generationFilter, visibilityFilter]);
+  const focusConditionContext = useCallback((hasRemainingConditions: boolean) => {
+    window.setTimeout(() => {
+      const targetId = hasRemainingConditions
+        ? 'wp-active-conditions-heading'
+        : 'wp-saved-list-heading';
+      document.getElementById(targetId)?.focus();
+    }, 0);
+  }, []);
+  const handleClearCondition = useCallback((key: ActiveConditionKey) => {
+    if (key === 'search') clearAppliedSearch();
+    if (key === 'visibility') setVisibilityFilter('all');
+    if (key === 'generation') setGenerationFilter('all');
+    focusConditionContext(activeConditions.length > 1);
+  }, [activeConditions.length, clearAppliedSearch, focusConditionContext]);
+  const handleClearAllConditions = useCallback(() => {
+    clearAppliedSearch();
+    clearFilters();
+    focusConditionContext(false);
+  }, [clearAppliedSearch, clearFilters, focusConditionContext]);
   const isInitialListLoading = listLoading && wordPacks.length === 0;
   const hasUnavailableInitialList = Boolean(listError) && wordPacks.length === 0;
   const showInitialEmpty = !listLoading && !listError && wordPacks.length === 0;
@@ -772,16 +816,6 @@ export const WordPackListPanel: React.FC = () => {
       : hasAppliedSearch
         ? '検索条件に一致するWordPackがありません'
         : '絞り込み条件に一致するWordPackがありません';
-  const noResultsResetLabel =
-    hasAppliedSearch && hasActiveFilters
-      ? 'すべての条件を解除'
-      : hasAppliedSearch
-        ? '検索を解除'
-        : '絞り込みを解除';
-  const resetNoResultsConditions = useCallback(() => {
-    if (hasAppliedSearch) clearAppliedSearch();
-    if (hasActiveFilters) clearFilters();
-  }, [clearAppliedSearch, clearFilters, hasActiveFilters, hasAppliedSearch]);
   const openPreview = useCallback((wordPackId: string) => {
     setActionMenuOpenId(null);
     setPreviewWordPackId(wordPackId);
@@ -1054,7 +1088,7 @@ export const WordPackListPanel: React.FC = () => {
         ) : null}
 
         <div className="wp-list-header">
-          <h2 id="wp-saved-list-heading">
+          <h2 id="wp-saved-list-heading" tabIndex={-1}>
             <span>保存済みWordPack</span>
             <span
               className="wp-count-pill"
@@ -1063,10 +1097,10 @@ export const WordPackListPanel: React.FC = () => {
                   ? '件数を確認中'
                   : hasUnavailableInitialList
                     ? '件数を取得できませんでした'
-                    : `${total}件`
+                    : `全体件数 ${total}件`
               }
             >
-              {isInitialListLoading ? '確認中' : hasUnavailableInitialList ? '未取得' : `${total}件`}
+              {isInitialListLoading ? '確認中' : hasUnavailableInitialList ? '未取得' : `全体 ${total}件`}
             </span>
           </h2>
           <p className="wp-list-summary">
@@ -1076,9 +1110,11 @@ export const WordPackListPanel: React.FC = () => {
                 ? '件数と一覧を取得できませんでした'
                 : (
                   <>
-                    {total}件中 {sortedWordPacks.length}件を表示
-                    <span>生成済み {generatedCount}件</span>
-                    <span>未生成 {emptyCount}件</span>
+                    <span>このページ {wordPacks.length}件</span>
+                    {activeConditions.length > 0 ? (
+                      <span>条件一致 {sortedWordPacks.length}件</span>
+                    ) : null}
+                    <span>このページ内: 生成済み {generatedCount}件 / 未生成 {emptyCount}件</span>
                   </>
                 )}
           </p>
@@ -1104,6 +1140,44 @@ export const WordPackListPanel: React.FC = () => {
             更新
           </button>
         </div>
+
+        {activeConditions.length > 0 ? (
+          <section
+            className="wp-active-conditions"
+            aria-labelledby="wp-active-conditions-heading"
+          >
+            <div className="wp-active-conditions__header">
+              <div>
+                <h3 id="wp-active-conditions-heading" tabIndex={-1}>適用中の条件</h3>
+                <p aria-live="polite">
+                  {activeConditions.length}件の条件を適用中。このページで{sortedWordPacks.length}件一致
+                </p>
+              </div>
+              <button
+                type="button"
+                className="wp-active-conditions__reset"
+                onClick={handleClearAllConditions}
+              >
+                すべて解除
+              </button>
+            </div>
+            <ul aria-label="適用中の検索・絞り込み条件">
+              {activeConditions.map((condition) => (
+                <li key={condition.key}>
+                  <span>{condition.label}</span>
+                  <button
+                    type="button"
+                    aria-label={condition.clearLabel}
+                    title={condition.clearLabel}
+                    onClick={() => handleClearCondition(condition.key)}
+                  >
+                    <span aria-hidden="true">解除</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ) : null}
 
         {showListControls ? (
           <div className="wp-filter-chip-row" role="group" aria-label="WordPackの絞り込み">
@@ -1262,17 +1336,7 @@ export const WordPackListPanel: React.FC = () => {
             tone="no-results"
             symbol="⌕"
             title={noResultsTitle}
-            description="保存済みのWordPackは残っています。条件を解除すると、現在読み込んでいる一覧へ戻れます。"
-            conditions={activeConditionLabels}
-            actions={(
-              <Button
-                variant="primary"
-                className="wp-list-state__action"
-                onClick={resetNoResultsConditions}
-              >
-                {noResultsResetLabel}
-              </Button>
-            )}
+            description="保存済みのWordPackは残っています。上の適用中条件を個別に解除するか、「すべて解除」で現在読み込んでいる一覧へ戻れます。"
           />
         ) : wordPacks.length > 0 ? (
           <>

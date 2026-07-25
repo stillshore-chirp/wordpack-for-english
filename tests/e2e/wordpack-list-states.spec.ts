@@ -72,12 +72,12 @@ test.describe('Lexicon WordPack一覧の状態と回復導線', () => {
 
     await expect(page.getByRole('heading', { name: '検索条件に一致するWordPackがありません' })).toBeVisible();
     await expect(page.getByRole('heading', { name: '最近開いたWordPack' })).toHaveCount(0);
-    await expect(page.getByRole('list', { name: '現在適用中の条件' })).toContainText(
+    await expect(page.getByRole('list', { name: '適用中の検索・絞り込み条件' })).toContainText(
       '検索: no-match（部分一致）',
     );
     await runA11yCheck(page);
 
-    const clearSearchButton = page.getByRole('button', { name: '検索を解除' });
+    const clearSearchButton = page.getByRole('button', { name: '検索: no-match（部分一致）を解除' });
     const clearSearchBox = await clearSearchButton.boundingBox();
     const viewport = page.viewportSize();
     expect(clearSearchBox).not.toBeNull();
@@ -90,10 +90,10 @@ test.describe('Lexicon WordPack一覧の状態と回復導線', () => {
 
     await page.getByRole('button', { name: '公開中 0' }).click();
     await expect(page.getByRole('heading', { name: '絞り込み条件に一致するWordPackがありません' })).toBeVisible();
-    await expect(page.getByRole('list', { name: '現在適用中の条件' })).toContainText(
+    await expect(page.getByRole('list', { name: '適用中の検索・絞り込み条件' })).toContainText(
       '公開状態: 公開中',
     );
-    await page.getByRole('button', { name: '絞り込みを解除' }).click();
+    await page.getByRole('button', { name: '公開状態: 公開中を解除' }).click();
     await expect(page.getByTestId('wp-card')).toHaveCount(2);
   });
 
@@ -195,12 +195,12 @@ test.describe('Lexicon WordPack一覧の状態と回復導線', () => {
     const searchInput = page.getByRole('searchbox', { name: '保存済みWordPackを検索' });
     await searchInput.fill('no-match');
     await searchInput.press('Enter');
-    const clearButton = page.getByRole('button', { name: '検索を解除' });
+    const clearButton = page.getByRole('button', { name: '検索: no-match（部分一致）を解除' });
     await expect(clearButton).toBeVisible();
 
     const layout = await page.evaluate(() => {
       const button = Array.from(document.querySelectorAll('button'))
-        .find((element) => element.textContent?.trim() === '検索を解除');
+        .find((element) => element.getAttribute('aria-label') === '検索: no-match（部分一致）を解除');
       return {
         documentClientWidth: document.documentElement.clientWidth,
         documentScrollWidth: document.documentElement.scrollWidth,
