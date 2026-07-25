@@ -54,6 +54,12 @@
   padding-right: 0.15rem;
 }
 
+.dictionary-rail:focus-visible {
+  outline: 3px solid var(--dict-accent);
+  outline-offset: 0.25rem;
+  border-radius: var(--dict-radius-sm);
+}
+
 .dictionary-rail-card {
   display: grid;
   gap: 0.85rem;
@@ -433,7 +439,7 @@ body.theme-dark .dictionary-reader-canvas {
 }
 
 .explore-connection-card h3,
-.shelf-wordpack-card h3 {
+.shelf-wordpack-card h4 {
   margin: 0.45rem 0 0.25rem;
   overflow-wrap: anywhere;
 }
@@ -564,6 +570,9 @@ body.theme-dark .dictionary-reader-canvas {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 1rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .shelf-card {
@@ -578,11 +587,11 @@ body.theme-dark .dictionary-reader-canvas {
   background: var(--dict-surface);
 }
 
-.shelf-card[aria-current='true'] {
+.shelf-card[data-selected='true'] {
   box-shadow: var(--dict-focus);
 }
 
-.shelf-card h3 {
+.shelf-card h4 {
   margin: 0;
   font-size: 1.4rem;
 }
@@ -598,6 +607,23 @@ body.theme-dark .dictionary-reader-canvas {
   justify-content: space-between;
   gap: 0.75rem;
   color: var(--dict-muted);
+}
+
+.shelf-card-summary {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.shelves-results {
+  scroll-margin-top: 1rem;
+}
+
+.shelves-results-heading:focus-visible {
+  outline: 3px solid var(--dict-accent);
+  outline-offset: 0.3rem;
+  border-radius: 0.2rem;
 }
 
 .shelf-card.yellow,
@@ -620,6 +646,9 @@ body.theme-dark .dictionary-reader-canvas {
 .shelf-wordpack-list {
   display: grid;
   gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .shelf-wordpack-card {
@@ -791,5 +820,13 @@ body.theme-dark .dictionary-reader-canvas {
   .dictionary-bottom-nav button[aria-current='page'] {
     background: rgba(131, 206, 248, 0.16);
     color: var(--dict-text);
+  }
+
+  .shelf-wordpack-card {
+    grid-template-columns: 1fr;
+  }
+
+  .shelf-wordpack-card .dictionary-button {
+    justify-self: start;
   }
 }

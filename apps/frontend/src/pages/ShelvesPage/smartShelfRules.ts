@@ -42,7 +42,7 @@ export const buildSmartShelves = (wordPacks: WordPackListItem[]): SmartShelf[] =
     {
       id: 'empty',
       title: '未生成',
-      description: '空のまま保存されているWordPack',
+      description: '例文をまだ生成していないWordPack',
       accent: 'rose',
       items: wordPacks.filter((wordPack) => wordPack.is_empty),
     },
@@ -55,8 +55,8 @@ export const buildSmartShelves = (wordPacks: WordPackListItem[]): SmartShelf[] =
     },
     {
       id: 'learned',
-      title: '学習済み多め',
-      description: '学習済み記録があるWordPack',
+      title: '学習済みあり',
+      description: '「使える」と記録したWordPack',
       accent: 'purple',
       items: wordPacks.filter((wordPack) => wordPack.learned_count > 0).sort(byUpdatedAtDesc),
     },
@@ -72,14 +72,14 @@ export const buildSmartShelves = (wordPacks: WordPackListItem[]): SmartShelf[] =
     {
       id: 'guest-public',
       title: 'ゲスト公開中',
-      description: 'guest_public が有効なWordPack',
+      description: 'ゲスト閲覧で公開しているWordPack',
       accent: 'gold',
       items: wordPacks.filter((wordPack) => wordPack.guest_public).sort(byUpdatedAtDesc),
     },
     {
       id: 'sense-missing',
       title: '語義未設定',
-      description: '語義タイトルが空またはfallbackのWordPack',
+      description: '語義タイトルをまだ設定していないWordPack',
       accent: 'rose',
       items: wordPacks.filter(missingSenseTitle).sort(byUpdatedAtDesc),
     },
