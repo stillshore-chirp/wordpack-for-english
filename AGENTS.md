@@ -111,9 +111,10 @@ git に push される文書、レポート、サンプル、PR本文を作成�
 ## 作業開始ゲート
 
 - 最初に作業ディレクトリ、現在ブランチ、作業ツリー、直近の git 履歴を確認する。
-- リポジトリ変更、Issue / PR、CI、review、release など GitHub CLI を使う作業では、対応開始時に `gh --version` と `gh auth status` を実行する。対象hostが明らかな場合は `gh auth status -h <host>` で確認する。
+- リポジトリ変更、Issue / PR、CI、review、release など GitHub CLI を使う作業では、対応開始時にまず `gh --version` を実行し、導入済みなら `gh auth status` も実行する。対象hostが明らかな場合は `gh auth status -h <host>` で確認する。
+- `gh` が未導入の場合は、実行できない `gh auth login` を案内してはいけない。利用環境に対応した公式の導入手順、または Issue / PR / CI / review を含む完了ゲート全体を満たせる利用可能な代替clientを示す。どちらも利用できない場合は導入をユーザーへ求め、`gh --version` の成功を確認してから開始する。
 - sandbox、credential store制限、network制限がある実行環境での `gh auth status` 失敗だけを根拠に、認証切れと断定してはいけない。可能なら credential store とnetworkへ到達できる実行環境で同じ確認を再実行する。再確認できない場合は「認証切れ」ではなく「制限環境のため未確認」と報告する。
-- `gh` が未導入、または制限のない実行環境で未ログイン・認証切れを確認した場合は、その状態を後工程まで持ち越してはいけない。Issue検索、作業ブランチ作成、実装へ進む前に、対象host、該当account、確認結果、推奨する再認証コマンド `gh auth login -h <host>` をユーザーへ示して再認証を求め、`gh auth status` の成功を再確認してから再開する。
+- `gh` が導入済みで、制限のない実行環境でも未ログイン・認証切れを確認した場合は、その状態を後工程まで持ち越してはいけない。Issue検索、作業ブランチ作成、実装へ進む前に、対象host、該当account、確認結果、推奨する再認証コマンド `gh auth login -h <host>` をユーザーへ示して再認証を求め、`gh auth status` の成功を再確認してから再開する。
 - GitHub App や connector で一部操作が成功しても、後続の完了ゲートで `gh` を使う場合は CLI の認証成功を代替しない。認証エラーを検出した時点で同じ開始ゲートへ戻る。
 - スレッド最初の仕事開始時は `main` にいることを確認する。`main` 以外にいる場合は、未確認差分を保護したうえで `main` にチェックアウトする。その後、現在位置が `main` であっても必ず `git fetch origin` と `git merge --ff-only origin/main` を実行し、`origin/main` の最新状態に合わせる。
 - 最新の `main` 上で、作業開始前に `codex/<目的>` 形式の作業ブランチを作成してチェックアウトする。
