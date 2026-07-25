@@ -191,8 +191,8 @@ export const ShelvesPage: React.FC = () => {
             {message && hasLoaded && partial ? (
               <div role="alert" className="dictionary-empty compact">
                 <p>
-                  {message.text}。全{total}件のうち{wordPacks.length}
-                  件を取得し、表示中の件数だけで棚を分類しています。
+                  {message.text}。取得済み{wordPacks.length}件（現在の保存件数
+                  {total}件）で棚を分類しています。
                 </p>
                 <Button variant="subtle" onClick={() => void reload()}>
                   全件を再読み込み
@@ -312,6 +312,7 @@ export const ShelvesPage: React.FC = () => {
               <ShelfWordPackList
                 items={activeItems}
                 query={hasQuery ? query.trim() : undefined}
+                queryMatchesShelf={activeResult?.matchedByShelf}
                 onOpenPreview={setPreviewWordPackId}
                 onClearSearch={hasQuery ? clearSearch : undefined}
               />

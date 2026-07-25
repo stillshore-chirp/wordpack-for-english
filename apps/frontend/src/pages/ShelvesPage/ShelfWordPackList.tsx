@@ -8,6 +8,7 @@ interface ShelfWordPackListProps {
   onOpenPreview: (wordPackId: string) => void;
   onClearSearch?: () => void;
   query?: string;
+  queryMatchesShelf?: boolean;
 }
 
 const resolveSenseTitle = (wordPack: WordPackListItem): string =>
@@ -18,18 +19,20 @@ export const ShelfWordPackList: React.FC<ShelfWordPackListProps> = ({
   onOpenPreview,
   onClearSearch,
   query,
+  queryMatchesShelf,
 }) => {
   if (items.length === 0) {
+    const filteredByQuery = Boolean(query && !queryMatchesShelf);
     return (
       <EmptyState>
         <div>
           <p>
-            {query
+            {filteredByQuery
               ? `「${query}」の条件で表示できるWordPackはこの棚にありません。`
               : 'この棚に入るWordPackはまだありません。'}
           </p>
           <p>
-            {query
+            {filteredByQuery
               ? '検索を解除すると、この棚のすべてのWordPackを確認できます。'
               : '別の棚を見るか、LexiconでWordPackを作成してください。'}
           </p>

@@ -402,11 +402,90 @@ describe('ShelvesPage', () => {
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(
-      '続きを取得できません。全201件のうち200件を取得し、表示中の件数だけで棚を分類しています。',
+      '続きを取得できません。取得済み200件（現在の保存件数201件）で棚を分類しています。',
     );
     expect(screen.getByRole('heading', { name: 'page-error-0' })).toBeInTheDocument();
     expect(screen.getByLabelText('棚の集計')).toHaveTextContent('201保存済み');
     expect(screen.getByRole('button', { name: '全件を再読み込み' })).toBeInTheDocument();
     expect(screen.queryByText(/棚を表示できません/)).not.toBeInTheDocument();
+  });
+
+  it('deduplicates pages and warns when the list changes during offset pagination', async () => {
+    const firstPage = Array.from({ length: 200 }, (_, index): WordPackListItem => ({
+      ...wordPacks[0],
+      id: `wp:mutable:${index}`,
+      lemma: `mutable-${index}`,
+    }));
+    setupFetch((offset) =>
+      jsonResponse({
+        items:
+          offset === 0
+            ? firstPage
+            : [
+              firstPage[199],
+              {
+                ...wordPacks[0],
+                id: 'wp:mutable:200',
+                lemma: 'mutable-200',
+              },
+            ],
+        total: offset === 0 ? 201 : 202,
+        limit: 200,
+        offset,
+      }),
+    );
+    await renderPage();
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(
+      '読み込み中にWordPack一覧が更新されました。取得済み201件（現在の保存件数202件）で棚を分類しています。',
+    );
+    const guestShelf = screen
+      .getByRole('heading', { name: 'ゲスト公開中', level: 4 })
+      .closest('article');
+    expect(guestShelf).toHaveTextContent('201件');
+    await act(async () => {
+      await userEvent.click(
+        screen.getByRole('button', {
+          name: '「ゲスト公開中」棚のWordPack一覧を表示',
+        }),
+      );
+    });
+    expect(
+      screen.getAllByRole('heading', { name: 'mutable-199' }),
+    ).toHaveLength(1);
+    expect(screen.getByRole('heading', { name: 'mutable-200' })).toBeInTheDocument();
+    expect(screen.getByLabelText('棚の集計')).toHaveTextContent('202保存済み');
+  });
+
+  it('uses the ordinary empty guidance when a query matches an empty shelf name', async () => {
+    setupFetch(() =>
+      jsonResponse({
+        items: [{ ...wordPacks[0], guest_public: false }],
+        total: 1,
+        limit: 200,
+        offset: 0,
+      }),
+    );
+    await renderPage();
+    const user = userEvent.setup();
+    const search = await screen.findByRole('searchbox', {
+      name: '棚とWordPackを検索',
+    });
+
+    await act(async () => {
+      await user.type(search, 'ゲスト公開中');
+    });
+
+    const emptyShelf = await screen.findByRole('region', {
+      name: 'ゲスト公開中',
+    });
+    expect(emptyShelf).toHaveTextContent('この棚に入るWordPackはまだありません。');
+    expect(emptyShelf).toHaveTextContent(
+      '別の棚を見るか、LexiconでWordPackを作成してください。',
+    );
+    expect(emptyShelf).not.toHaveTextContent(
+      '検索を解除すると、この棚のすべてのWordPackを確認できます。',
+    );
   });
 });

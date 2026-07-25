@@ -139,6 +139,8 @@
 | P1 | 右レールがスクロール可能でもキーボードフォーカスを受け取れない | 200% の axe `scrollable-region-focusable` | 右レールをフォーカス可能にし、可視アウトラインを追加 |
 | P1 | 2ページ目以降の取得失敗で取得済みページも捨てる | PR #557 Codex review | 取得済みページを partial data として表示し、失敗理由と全件再読み込みを提示 |
 | P2 | 初回 loading / error で未取得件数を0件と表示する | PR #557 Codex review | `hasLoaded` になるまで右レールの集計を表示しない |
+| P2 | offset pagination 中の更新で重複・欠落を全件取得と誤認し得る | PR #557 Codex re-review | ID重複排除、各ページの最新 total 照合、変動時の partial warning |
+| P2 | 0件の棚名検索に「解除すれば全件を確認」と誤案内する | PR #557 Codex re-review | 棚メタデータ一致と項目絞り込みを区別し、通常の空棚案内を表示 |
 | P1 | full-page の狭幅画像は固定ナビゲーションの合成で状態を誤読しやすい | 証跡画像の目視 | 390×844 の実ビューポート画像を採用 |
 
 - ユーザー価値: 棚選択から復習対象確認へ進む価値が明確
@@ -171,7 +173,7 @@
   - [棚選択後の一覧](../evidence/issues-551-554/after-shelves-open-result.png)
   - [検索該当なし](../evidence/issues-551-554/after-shelves-no-results.png)
   - [狭幅](../evidence/issues-551-554/after-shelves-narrow.png)
-- テスト結果: Shelves component 9件、Shelves E2E 4件（axe、390px、200%、error retry を含む）、フロントエンド全体198件、標準 Playwright smoke 9件
+- テスト結果: Shelves component 11件、Shelves E2E 4件（axe、390px、200%、error retry を含む）、フロントエンド全体200件、標準 Playwright smoke 9件
 - 手動確認: 棚選択後の可視フォーカス、一覧の画面内移動、検索整合、狭幅の横スクロールなし
 - 取得できなかった証跡: 実ユーザーの操作観察は未実施
 

@@ -65,11 +65,16 @@ export const useWordPackList = ({
         signal: controller.signal,
         timeoutMs: requestTimeoutMs,
       });
-      const items = [...firstPage.items];
+      const itemsById = new Map(
+        firstPage.items.map((item) => [item.id, item] as const),
+      );
       let offset = firstPage.items.length;
+      let expectedTotal = firstPage.total;
+      let collectionChangedDuringPagination =
+        itemsById.size !== firstPage.items.length;
       let pageErrorText: string | null = null;
 
-      while (loadAll && offset < firstPage.total) {
+      while (loadAll && offset < expectedTotal) {
         try {
           const page = await fetchWordPackList(apiBase, {
             limit,
@@ -77,8 +82,18 @@ export const useWordPackList = ({
             signal: controller.signal,
             timeoutMs: requestTimeoutMs,
           });
+          if (page.total !== expectedTotal) {
+            collectionChangedDuringPagination = true;
+          }
+          expectedTotal = page.total;
           if (page.items.length === 0) break;
-          items.push(...page.items);
+          page.items.forEach((item) => {
+            if (itemsById.has(item.id)) {
+              collectionChangedDuringPagination = true;
+              return;
+            }
+            itemsById.set(item.id, item);
+          });
           offset += page.items.length;
         } catch (error) {
           if (controller.signal.aborted) throw error;
@@ -90,12 +105,22 @@ export const useWordPackList = ({
         }
       }
 
+      const items = [...itemsById.values()];
+      const isPartial =
+        Boolean(pageErrorText) ||
+        collectionChangedDuringPagination ||
+        items.length < expectedTotal;
       setWordPacks(items.map(normalizeWordPackListItem));
-      setTotal(firstPage.total);
-      setPartial(items.length < firstPage.total);
+      setTotal(expectedTotal);
+      setPartial(isPartial);
       setHasLoaded(true);
       if (pageErrorText) {
         setMessage({ kind: 'alert', text: pageErrorText });
+      } else if (collectionChangedDuringPagination) {
+        setMessage({
+          kind: 'alert',
+          text: '読み込み中にWordPack一覧が更新されました',
+        });
       }
     } catch (error) {
       if (controller.signal.aborted) return;
