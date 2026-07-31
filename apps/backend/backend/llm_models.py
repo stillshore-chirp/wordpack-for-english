@@ -30,7 +30,7 @@ def ensure_supported_reasoning_options(options: dict | None) -> dict | None:
         return None
     effort = options.get("effort")
     if effort is None:
-        return options
+        return {**options, "effort": DEFAULT_REASONING_EFFORT}
     selected = str(effort).strip()
     if selected not in SUPPORTED_REASONING_EFFORTS:
         allowed = ", ".join(SUPPORTED_REASONING_EFFORTS)
@@ -45,7 +45,7 @@ def ensure_supported_text_options(options: dict | None) -> dict | None:
         return None
     verbosity = options.get("verbosity")
     if verbosity is None:
-        return options
+        return {**options, "verbosity": DEFAULT_TEXT_VERBOSITY}
     selected = str(verbosity).strip()
     if selected not in SUPPORTED_TEXT_VERBOSITIES:
         allowed = ", ".join(SUPPORTED_TEXT_VERBOSITIES)

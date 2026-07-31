@@ -12,8 +12,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "apps" / "backend")
 from backend.llm_models import (  # noqa: E402
     DEFAULT_LLM_MODEL,
     DEFAULT_REASONING_EFFORT,
+    DEFAULT_TEXT_VERBOSITY,
     SUPPORTED_LLM_MODELS,
     ensure_supported_llm_model,
+    ensure_supported_reasoning_options,
+    ensure_supported_text_options,
 )
 from backend.models.article import ArticleImportRequest  # noqa: E402
 from backend.models.quiz import QuizGenerateRequest  # noqa: E402
@@ -28,8 +31,23 @@ def test_luna_is_the_only_supported_model_and_high_is_the_default_effort():
     assert ensure_supported_llm_model(None) == "gpt-5.6-luna"
 
 
-def test_high_reasoning_default_reserves_the_documented_output_budget():
+def test_high_reasoning_defaults_reserve_time_and_output_budget():
+    assert Settings.model_fields["llm_timeout_ms"].default == 300000
     assert Settings.model_fields["llm_max_tokens"].default == 25000
+
+
+def test_partial_reasoning_options_keep_the_high_application_default():
+    assert ensure_supported_reasoning_options({"summary": "auto"}) == {
+        "summary": "auto",
+        "effort": DEFAULT_REASONING_EFFORT,
+    }
+
+
+def test_partial_text_options_keep_the_medium_application_default():
+    assert ensure_supported_text_options({"format": {"type": "json_object"}}) == {
+        "format": {"type": "json_object"},
+        "verbosity": DEFAULT_TEXT_VERBOSITY,
+    }
 
 
 @pytest.mark.parametrize("model", ["gpt-5.4-mini", "gpt-5.4-nano"])

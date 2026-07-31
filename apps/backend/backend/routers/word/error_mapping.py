@@ -65,7 +65,7 @@ def timeout_error(*, lemma: str, **_: Any) -> HTTPException:
         detail={
             "message": "LLM request timed out",
             "reason_code": "TIMEOUT",
-            "hint": "LLM_TIMEOUT_MS を増やす（例: 90000）、HTTP全体のタイムアウトは +5秒。リトライも検討。",
+            "hint": "LLM_TIMEOUT_MS（既定300000）と上流HTTPの上限を確認してください。Firebase経由では非同期ジョブまたは直接接続も検討してください。",
         },
     )
 
