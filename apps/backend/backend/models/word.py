@@ -6,7 +6,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..domain.wordpack.lemma import LEMMA_ALLOWED_PATTERN, validate_lemma
-from ..llm_models import ensure_supported_llm_model
+from ..llm_models import (
+    ensure_supported_llm_model,
+    ensure_supported_reasoning_options,
+    ensure_supported_text_options,
+)
 from .common import Citation, ConfidenceLevel
 
 
@@ -54,23 +58,23 @@ class WordPackRequest(BaseModel):
                     "lemma": "converge",
                     "pronunciation_enabled": True,
                     "regenerate_scope": "all",
-                    "model": "gpt-5.4-mini",
-                    "reasoning": {"effort": "minimal"},
+                    "model": "gpt-5.6-luna",
+                    "reasoning": {"effort": "high"},
                     "text": {"verbosity": "medium"},
                 },
                 {
                     "lemma": "converge",
                     "pronunciation_enabled": False,
                     "regenerate_scope": "examples",
-                    "model": "gpt-5.4-mini",
-                    "reasoning": {"effort": "minimal"},
+                    "model": "gpt-5.6-luna",
+                    "reasoning": {"effort": "high"},
                     "text": {"verbosity": "medium"},
                 },
                 {
                     "lemma": "converge",
                     "regenerate_scope": "collocations",
-                    "model": "gpt-5.4-nano",
-                    "reasoning": {"effort": "minimal"},
+                    "model": "gpt-5.6-luna",
+                    "reasoning": {"effort": "high"},
                     "text": {"verbosity": "medium"},
                 },
             ],
@@ -99,7 +103,7 @@ class WordPackRequest(BaseModel):
     )
     reasoning: dict | None = Field(
         default=None,
-        description="reasoning オプション（例: {effort: minimal|low|medium|high}）",
+        description="reasoning オプション（例: {effort: none|low|medium|high|xhigh|max}）",
     )
     text: dict | None = Field(
         default=None, description="text オプション（例: {verbosity: low|medium|high}）"
@@ -114,6 +118,16 @@ class WordPackRequest(BaseModel):
     @classmethod
     def ensure_model_supported(cls, value: str | None) -> str | None:
         return ensure_supported_llm_model(value) if value else value
+
+    @field_validator("reasoning")
+    @classmethod
+    def ensure_reasoning_supported(cls, value: dict | None) -> dict | None:
+        return ensure_supported_reasoning_options(value)
+
+    @field_validator("text")
+    @classmethod
+    def ensure_text_supported(cls, value: dict | None) -> dict | None:
+        return ensure_supported_text_options(value)
 
 
 class Sense(BaseModel):
@@ -494,3 +508,13 @@ class WordPackRegenerateRequest(BaseModel):
     @classmethod
     def ensure_model_supported(cls, value: str | None) -> str | None:
         return ensure_supported_llm_model(value) if value else value
+
+    @field_validator("reasoning")
+    @classmethod
+    def ensure_reasoning_supported(cls, value: dict | None) -> dict | None:
+        return ensure_supported_reasoning_options(value)
+
+    @field_validator("text")
+    @classmethod
+    def ensure_text_supported(cls, value: dict | None) -> dict | None:
+        return ensure_supported_text_options(value)

@@ -1,9 +1,17 @@
 import { fetchJson, ApiError } from './fetcher';
 import { APP_EVENTS, dispatchAppEvent } from '../shared/events/appEvents';
 
-export const SUPPORTED_LLM_MODELS = ['gpt-5.4-mini', 'gpt-5.4-nano'] as const;
+export const SUPPORTED_LLM_MODELS = ['gpt-5.6-luna'] as const;
 export type SupportedLlmModel = (typeof SUPPORTED_LLM_MODELS)[number];
-export const DEFAULT_LLM_MODEL: SupportedLlmModel = 'gpt-5.4-mini';
+export const DEFAULT_LLM_MODEL: SupportedLlmModel = 'gpt-5.6-luna';
+
+export const SUPPORTED_REASONING_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type ReasoningEffort = (typeof SUPPORTED_REASONING_EFFORTS)[number];
+export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'high';
+
+export const SUPPORTED_TEXT_VERBOSITIES = ['low', 'medium', 'high'] as const;
+export type TextVerbosity = (typeof SUPPORTED_TEXT_VERBOSITIES)[number];
+export const DEFAULT_TEXT_VERBOSITY: TextVerbosity = 'medium';
 
 export const normalizeLlmModel = (model?: string | null): SupportedLlmModel => {
   const selected = (model || '').trim();
@@ -14,8 +22,8 @@ export const normalizeLlmModel = (model?: string | null): SupportedLlmModel => {
 
 export interface ModelRequestConfig {
   model?: string;
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
-  textVerbosity?: 'low' | 'medium' | 'high';
+  reasoningEffort?: ReasoningEffort;
+  textVerbosity?: TextVerbosity;
 }
 
 export const composeModelRequestFields = ({
@@ -26,8 +34,8 @@ export const composeModelRequestFields = ({
   const normalizedModel = normalizeLlmModel(model || DEFAULT_LLM_MODEL);
   return {
     model: normalizedModel,
-    reasoning: { effort: reasoningEffort || 'minimal' },
-    text: { verbosity: textVerbosity || 'medium' },
+    reasoning: { effort: reasoningEffort || DEFAULT_REASONING_EFFORT },
+    text: { verbosity: textVerbosity || DEFAULT_TEXT_VERBOSITY },
   };
 };
 
@@ -35,8 +43,8 @@ export interface RegenerateSettings {
   pronunciationEnabled: boolean;
   regenerateScope: 'all' | 'examples' | 'collocations';
   requestTimeoutMs: number;
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
-  textVerbosity?: 'low' | 'medium' | 'high';
+  reasoningEffort?: ReasoningEffort;
+  textVerbosity?: TextVerbosity;
 }
 
 export interface NotificationsAdapter {

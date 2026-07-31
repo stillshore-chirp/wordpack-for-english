@@ -107,7 +107,7 @@ def test_quiz_generate_flow_warns_when_source_lemma_is_not_in_passage() -> None:
             "difficulty": "medium",
             "section_count": 1,
             "questions_per_section": 1,
-            "model": "gpt-5.4-mini",
+            "model": "gpt-5.6-luna",
         }
     )
 

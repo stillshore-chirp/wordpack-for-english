@@ -22,7 +22,7 @@ const setupGuestWordPackFetch = () => {
 
     if (url.endsWith('/api/config') && method === 'GET') {
       return new Response(
-        JSON.stringify({ request_timeout_ms: 60000, llm_model: 'gpt-5.4-mini' }),
+        JSON.stringify({ request_timeout_ms: 60000, llm_model: 'gpt-5.6-luna' }),
         { status: 200, headers: { 'Content-Type': 'application/json' } },
       );
     }

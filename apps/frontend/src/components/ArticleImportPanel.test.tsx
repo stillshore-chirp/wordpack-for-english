@@ -42,8 +42,8 @@ const setupArticleImportHandlers = () => {
         title_en: 'Title',
         body_en: 'Body EN',
         body_ja: 'Body JA',
-        llm_model: 'gpt-5.4-mini',
-        llm_params: 'reasoning.effort=minimal;text.verbosity=medium',
+        llm_model: 'gpt-5.6-luna',
+        llm_params: 'reasoning.effort=high;text.verbosity=medium',
         related_word_packs: [
           { word_pack_id: 'wp:regen:1', lemma: 'alpha', status: 'existing', is_empty: false },
         ],
@@ -176,7 +176,7 @@ describe('ArticleImportPanel (MSW + contexts)', () => {
     const user = userEvent.setup();
 
     const modelSelect = await screen.findByLabelText('モデル');
-    await user.selectOptions(modelSelect, 'gpt-5.4-mini');
+    await user.selectOptions(modelSelect, 'gpt-5.6-luna');
 
     expect(screen.getByLabelText('reasoning.effort')).toBeInTheDocument();
     expect(screen.getByLabelText('text.verbosity')).toBeInTheDocument();

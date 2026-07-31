@@ -375,7 +375,7 @@ test.describe('WordPack 操作', () => {
       await page.getByRole('button', { name: 'WordPackプレビューを閉じる' }).click();
       const queue = page.getByRole('region', { name: '生成キュー' });
       await expect(queue).toContainText('alpha');
-      await expect(queue).toContainText('Dev: gpt-5.4-mini');
+      await expect(queue).toContainText('Dev: gpt-5.6-luna');
       const alphaCard = page.getByTestId('wp-card').filter({ hasText: 'alpha' }).first();
       await alphaCard.getByRole('button', { name: '開く' }).click();
       await expect(page.getByRole('dialog', { name: /WordPack プレビュー/ })).toBeVisible();

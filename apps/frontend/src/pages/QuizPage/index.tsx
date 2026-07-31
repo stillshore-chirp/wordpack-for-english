@@ -17,6 +17,7 @@ import {
   generateWordPackRequest,
 } from '../../features/wordpack/api';
 import type { WordPackListItem } from '../../features/wordpack/types';
+import { DEFAULT_LLM_MODEL } from '../../lib/wordpack';
 import {
   createQuizGenerationJob,
   deleteQuiz,
@@ -661,7 +662,7 @@ export const QuizPage: React.FC = () => {
     });
     try {
       const modelFields = composeModelRequestFields({
-        model: settings.model ?? 'gpt-5.4-mini',
+        model: settings.model ?? DEFAULT_LLM_MODEL,
         reasoningEffort: settings.reasoningEffort,
         textVerbosity: settings.textVerbosity,
       }) as Pick<QuizGenerateRequest, 'model' | 'reasoning' | 'text'>;
@@ -834,7 +835,7 @@ export const QuizPage: React.FC = () => {
         pronunciation_enabled: settings.pronunciationEnabled,
         regenerate_scope: settings.regenerateScope,
         ...composeModelRequestFields({
-          model: settings.model ?? 'gpt-5.4-mini',
+          model: settings.model ?? DEFAULT_LLM_MODEL,
           reasoningEffort: settings.reasoningEffort,
           textVerbosity: settings.textVerbosity,
         }),

@@ -368,14 +368,14 @@ def test_word_pack_llm_model_updates_on_generate_and_regenerate(client):
         "/api/word/pack",
         json={
             "lemma": "alpha",
-            "model": "gpt-5.4-mini",
+            "model": "gpt-5.6-luna",
             "reasoning": {"effort": "medium"},
             "text": {"verbosity": "low"},
         },
     )
     assert r_gen.status_code == 200
     wp = r_gen.json()
-    assert wp.get("llm_model") == "gpt-5.4-mini"
+    assert wp.get("llm_model") == "gpt-5.6-luna"
     assert wp.get("llm_params")
     assert "reasoning.effort=medium" in wp["llm_params"]
     assert "text.verbosity=low" in wp["llm_params"]
@@ -394,15 +394,15 @@ def test_word_pack_llm_model_updates_on_generate_and_regenerate(client):
     r_regen = client.post(f"/api/word/packs/{pack_id}/regenerate", json={
         "pronunciation_enabled": True,
         "regenerate_scope": "all",
-        "model": "gpt-5.4-nano",
-        "reasoning": {"effort": "minimal"},
+        "model": "gpt-5.6-luna",
+        "reasoning": {"effort": "high"},
         "text": {"verbosity": "medium"},
     })
     assert r_regen.status_code == 200
     wp2 = r_regen.json()
-    assert wp2.get("llm_model") == "gpt-5.4-nano"
+    assert wp2.get("llm_model") == "gpt-5.6-luna"
     assert wp2.get("llm_params")
-    assert "reasoning.effort=minimal" in wp2["llm_params"]
+    assert "reasoning.effort=high" in wp2["llm_params"]
     assert "text.verbosity=medium" in wp2["llm_params"]
     assert isinstance(wp2.get("sense_title"), str) and wp2["sense_title"].strip()
     r_detail_after = client.get(f"/api/word/packs/{pack_id}")
@@ -479,7 +479,7 @@ def test_generate_examples_uses_llm_meta(client, monkeypatch):
     resp = client.post(
         f"/api/word/packs/{pack_id}/examples/Dev/generate",
         json={
-            "model": "gpt-5.4-mini",
+            "model": "gpt-5.6-luna",
             "reasoning": {"effort": "low"},
             "text": {"verbosity": "medium"},
         },
@@ -490,7 +490,7 @@ def test_generate_examples_uses_llm_meta(client, monkeypatch):
     assert payload.get("added") == 2
     assert payload["items"]
     first = payload["items"][0]
-    assert first["llm_model"] == "gpt-5.4-mini"
+    assert first["llm_model"] == "gpt-5.6-luna"
     assert "reasoning.effort=low" in first["llm_params"]
     assert "text.verbosity=medium" in first["llm_params"]
     assert first.get("transcription_typing_count", 0) == 0
@@ -500,7 +500,7 @@ def test_generate_examples_uses_llm_meta(client, monkeypatch):
     detail = r_detail.json()
     examples = detail.get("examples", {}).get("Dev", [])
     assert len(examples) >= 2
-    assert examples[-1]["llm_model"] == "gpt-5.4-mini"
+    assert examples[-1]["llm_model"] == "gpt-5.6-luna"
     assert examples[-1]["transcription_typing_count"] == 0
 def test_word_lookup(client: TestClient, monkeypatch: pytest.MonkeyPatch):
     from backend.models.word import WordPack
@@ -1307,17 +1307,17 @@ def test_article_import_includes_llm_metadata(monkeypatch):
 
     payload = {
         "text": "Resilience keeps systems available.",
-        "model": "gpt-5.4-mini",
-        "reasoning": {"effort": "focused"},
+        "model": "gpt-5.6-luna",
+        "reasoning": {"effort": "high"},
         "text_opts": {"verbosity": "medium"},
     }
 
     r_imp = client.post("/api/article/import", json=payload)
     assert r_imp.status_code == 200
     data = r_imp.json()
-    assert data["llm_model"] == "gpt-5.4-mini"
+    assert data["llm_model"] == "gpt-5.6-luna"
     assert data["llm_params"]
-    assert "reasoning.effort=focused" in data["llm_params"]
+    assert "reasoning.effort=high" in data["llm_params"]
     assert "text.verbosity=medium" in data["llm_params"]
     # generation_category は明示指定していないため None のままでよい
     _assert_iso_utc(data["generation_started_at"])
@@ -1328,7 +1328,7 @@ def test_article_import_includes_llm_metadata(monkeypatch):
     r_get = client.get(f"/api/article/{art_id}")
     assert r_get.status_code == 200
     detail = r_get.json()
-    assert detail["llm_model"] == "gpt-5.4-mini"
+    assert detail["llm_model"] == "gpt-5.6-luna"
     assert detail["llm_params"] == data["llm_params"]
     _assert_iso_utc(detail["generation_started_at"])
     _assert_iso_utc(detail["generation_completed_at"])
@@ -1412,7 +1412,7 @@ def test_article_import_category_and_zero_duration(monkeypatch):
 
     payload = {
         "text": "text",
-        "model": "gpt-5.4-mini",
+        "model": "gpt-5.6-luna",
         "generation_category": "Common",
     }
 

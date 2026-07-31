@@ -26,7 +26,11 @@ from ..domain.article.lemma_filter import STOP_LEMMAS, filter_article_lemmas
 from ..flows.article_import import ArticleImportFlow
 from ..flows.category_generate_import import CategoryGenerateAndImportFlow
 from ..logging import logger
-from ..llm_models import ensure_supported_llm_model
+from ..llm_models import (
+    ensure_supported_llm_model,
+    ensure_supported_reasoning_options,
+    ensure_supported_text_options,
+)
 from ..models.article import (
     ARTICLE_IMPORT_TEXT_MAX_LENGTH,
     ArticleDetailResponse,
@@ -313,6 +317,16 @@ class CategoryGenerateImportRequest(BaseModel):
     @classmethod
     def ensure_model_supported(cls, value: str | None) -> str | None:
         return ensure_supported_llm_model(value) if value else value
+
+    @field_validator("reasoning")
+    @classmethod
+    def ensure_reasoning_supported(cls, value: dict | None) -> dict | None:
+        return ensure_supported_reasoning_options(value)
+
+    @field_validator("text")
+    @classmethod
+    def ensure_text_supported(cls, value: dict | None) -> dict | None:
+        return ensure_supported_text_options(value)
 
 
 @router.post("/generate_and_import")

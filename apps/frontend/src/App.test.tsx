@@ -95,7 +95,7 @@ const configSuccess = () =>
   new Response(
     JSON.stringify({
       request_timeout_ms: 60000,
-      llm_model: 'gpt-5.4-mini',
+      llm_model: 'gpt-5.6-luna',
       google_client_id: 'test-client',
     }),
     { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -216,7 +216,7 @@ describe('App navigation', () => {
       const url = resolveUrl(input);
       if (url.endsWith('/api/config')) {
         return Promise.resolve(
-          new Response(JSON.stringify({ request_timeout_ms: 60000, llm_model: 'gpt-5.4-mini' }), {
+          new Response(JSON.stringify({ request_timeout_ms: 60000, llm_model: 'gpt-5.6-luna' }), {
             status: 200,
             headers: { 'Content-Type': 'application/json' },
           }),
@@ -481,7 +481,7 @@ describe('App navigation', () => {
         }
         return Promise.resolve(
           new Response(
-            JSON.stringify({ request_timeout_ms: 120000, llm_model: 'gpt-5.4-mini' }),
+            JSON.stringify({ request_timeout_ms: 120000, llm_model: 'gpt-5.6-luna' }),
             { status: 200, headers: { 'Content-Type': 'application/json' } },
           ),
         );

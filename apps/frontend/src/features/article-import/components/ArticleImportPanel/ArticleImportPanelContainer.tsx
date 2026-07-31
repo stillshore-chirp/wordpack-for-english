@@ -11,7 +11,17 @@ import { SidebarPortal } from '../../../../components/SidebarPortal';
 import { ARTICLE_IMPORT_TEXT_MAX_LENGTH } from '../../../../constants/article';
 import { useAuth } from '../../../../AuthContext';
 import { GuestLock } from '../../../../components/GuestLock';
-import { DEFAULT_LLM_MODEL, SUPPORTED_LLM_MODELS, normalizeLlmModel } from '../../../../lib/wordpack';
+import {
+  DEFAULT_LLM_MODEL,
+  DEFAULT_REASONING_EFFORT,
+  DEFAULT_TEXT_VERBOSITY,
+  SUPPORTED_LLM_MODELS,
+  SUPPORTED_REASONING_EFFORTS,
+  SUPPORTED_TEXT_VERBOSITIES,
+  normalizeLlmModel,
+  type ReasoningEffort,
+  type TextVerbosity,
+} from '../../../../lib/wordpack';
 import {
   deleteWordPackFromArticle,
   fetchArticleDetail,
@@ -88,8 +98,8 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
     try {
       const body: any = { text: trimmedText, generation_category: selectedCategory };
       body.model = selectedModel;
-      body.reasoning = { effort: settings.reasoningEffort || 'minimal' };
-      body.text_opts = { verbosity: settings.textVerbosity || 'medium' };
+      body.reasoning = { effort: settings.reasoningEffort || DEFAULT_REASONING_EFFORT };
+      body.text_opts = { verbosity: settings.textVerbosity || DEFAULT_TEXT_VERBOSITY };
       const res = await fetchJson<ArticleDetailResponse>(`${settings.apiBase}/article/import`, {
         method: 'POST',
         body,
@@ -148,8 +158,8 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
         try {
           const reqBody: any = { category: selectedCategory };
           reqBody.model = selectedModel;
-          reqBody.reasoning = { effort: settings.reasoningEffort || 'minimal' };
-          reqBody.text = { verbosity: settings.textVerbosity || 'medium' };
+          reqBody.reasoning = { effort: settings.reasoningEffort || DEFAULT_REASONING_EFFORT };
+          reqBody.text = { verbosity: settings.textVerbosity || DEFAULT_TEXT_VERBOSITY };
           const res = await fetchJson<{ lemma: string; word_pack_id: string; category: string; generated_examples: number; article_ids: string[] }>(`${settings.apiBase}/article/generate_and_import`, {
             method: 'POST',
             body: reqBody,
@@ -359,14 +369,16 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
                   <select
                     id={`article-reasoning-select-${suffix}`}
                     aria-label={isSidebar ? 'reasoning.effort（サイドバー）' : 'reasoning.effort'}
-                    value={settings.reasoningEffort || 'minimal'}
-                    onChange={(e) => setSettings((prev) => ({ ...prev, reasoningEffort: e.target.value as any }))}
+                    value={settings.reasoningEffort || DEFAULT_REASONING_EFFORT}
+                    onChange={(e) => setSettings((prev) => ({
+                      ...prev,
+                      reasoningEffort: e.target.value as ReasoningEffort,
+                    }))}
                     disabled={loading}
                   >
-                    <option value="minimal">minimal</option>
-                    <option value="low">low</option>
-                    <option value="medium">medium</option>
-                    <option value="high">high</option>
+                    {SUPPORTED_REASONING_EFFORTS.map((effort) => (
+                      <option key={effort} value={effort}>{effort}</option>
+                    ))}
                   </select>
                 </GuestLock>
               </div>
@@ -376,13 +388,16 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
                   <select
                     id={`article-verbosity-select-${suffix}`}
                     aria-label={isSidebar ? 'text.verbosity（サイドバー）' : 'text.verbosity'}
-                    value={settings.textVerbosity || 'medium'}
-                    onChange={(e) => setSettings((prev) => ({ ...prev, textVerbosity: e.target.value as any }))}
+                    value={settings.textVerbosity || DEFAULT_TEXT_VERBOSITY}
+                    onChange={(e) => setSettings((prev) => ({
+                      ...prev,
+                      textVerbosity: e.target.value as TextVerbosity,
+                    }))}
                     disabled={loading}
                   >
-                    <option value="low">low</option>
-                    <option value="medium">medium</option>
-                    <option value="high">high</option>
+                    {SUPPORTED_TEXT_VERBOSITIES.map((verbosity) => (
+                      <option key={verbosity} value={verbosity}>{verbosity}</option>
+                    ))}
                   </select>
                 </GuestLock>
               </div>

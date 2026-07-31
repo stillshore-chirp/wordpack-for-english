@@ -80,8 +80,8 @@ Request:
 ```json
 {
   "lemma": "converge",
-  "model": "gpt-5.4-mini",
-  "reasoning": { "effort": "minimal" },
+  "model": "gpt-5.6-luna",
+  "reasoning": { "effort": "high" },
   "text": { "verbosity": "medium" }
 }
 ```
@@ -175,7 +175,7 @@ Request:
 {
   "text": "English article text...",
   "generation_category": "Common",
-  "model": "gpt-5.4-mini"
+  "model": "gpt-5.6-luna"
 }
 ```
 

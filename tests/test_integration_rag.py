@@ -13,7 +13,7 @@ def client_with_openai_llm():
     """OpenAI LLMを使用するテストクライアント"""
     env_patch = pytest.MonkeyPatch()
     env_patch.setenv("LLM_PROVIDER", "openai")
-    env_patch.setenv("LLM_MODEL", "gpt-5.4-mini")
+    env_patch.setenv("LLM_MODEL", "gpt-5.6-luna")
     env_patch.setenv("STRICT_MODE", "false")
 
     # 実キーや外部ネットワークに依存しないよう、プロバイダのテスト用応答を使う。

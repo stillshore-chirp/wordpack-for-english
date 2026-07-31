@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useNotifications, type NotificationItem } from '../NotificationsContext';
 import { useOptionalSettings } from '../SettingsContext';
 import { ApiError, fetchJson } from '../lib/fetcher';
+import { DEFAULT_LLM_MODEL } from '../lib/wordpack';
 import { WordPackPreviewModal } from './WordPackPreviewModal';
 import type { WordPackListItem } from '../features/wordpack/types';
 
@@ -117,7 +118,7 @@ const QueueItem: React.FC<{
           <p>{item.message || (item.status === 'progress' ? 'LLM応答を待機しています' : '生成履歴に保存されました')}</p>
         ) : null}
         <div className="generation-queue-item__meta">
-          <span>{item.category ? `${item.category}: ` : ''}{item.model || 'gpt-5.4-mini'}</span>
+          <span>{item.category ? `${item.category}: ` : ''}{item.model || DEFAULT_LLM_MODEL}</span>
           <span>{item.status === 'progress' ? `経過 ${formatElapsed(elapsedMs)}` : `${formatElapsed(elapsedMs)}前後`}</span>
         </div>
         {item.status === 'progress' ? (

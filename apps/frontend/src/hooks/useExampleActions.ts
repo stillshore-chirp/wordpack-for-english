@@ -1,7 +1,11 @@
 import { useCallback, useState } from 'react';
 import { ApiError, fetchJson } from '../lib/fetcher';
 import { APP_EVENTS, dispatchAppEvent } from '../shared/events/appEvents';
-import { composeModelRequestFields } from '../lib/wordpack';
+import {
+  composeModelRequestFields,
+  type ReasoningEffort,
+  type TextVerbosity,
+} from '../lib/wordpack';
 import { Examples, WordPack, WordPackMessage } from './useWordPack';
 import type { useNotifications } from '../NotificationsContext';
 
@@ -11,8 +15,8 @@ interface UseExampleActionsParams {
   currentWordPackId: string | null;
   data: WordPack | null;
   model: string;
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
-  textVerbosity?: 'low' | 'medium' | 'high';
+  reasoningEffort?: ReasoningEffort;
+  textVerbosity?: TextVerbosity;
   setStatusMessage: (next: WordPackMessage) => void;
   loadWordPack: (wordPackId: string) => Promise<void>;
   notify: Pick<ReturnType<typeof useNotifications>, 'add' | 'update'>;

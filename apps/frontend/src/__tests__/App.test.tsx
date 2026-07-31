@@ -18,7 +18,7 @@ const setupConfigFetch = () => {
     const url = typeof input === 'string' ? input : input.toString();
     if (url.endsWith('/api/config')) {
       return Promise.resolve(
-        new Response(JSON.stringify({ request_timeout_ms: 60000, llm_model: 'gpt-5.4-mini' }), {
+        new Response(JSON.stringify({ request_timeout_ms: 60000, llm_model: 'gpt-5.6-luna' }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         }),
