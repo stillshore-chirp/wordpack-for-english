@@ -102,6 +102,9 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
     setMsg(null);
     setArticle(null);
     const notifId = addNotification({ title: '文章インポート中...', message: 'LLMで要約と語彙抽出を実行しています', status: 'progress', model: selectedModel });
+    let acceptedJobId: string | undefined;
+    let acceptedArticleId: string | undefined;
+    let confirmedJobFailure = false;
     try {
       const body: any = { text: trimmedText, generation_category: selectedCategory };
       body.model = selectedModel;
@@ -111,6 +114,7 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
         signal: ctrl.signal,
         timeoutMs: settings.requestTimeoutMs,
       });
+      acceptedJobId = job.job_id;
       updateNotification(notifId, {
         message: 'バックグラウンドで文章を処理しています',
         jobId: job.job_id,
@@ -142,11 +146,14 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
         });
       }
       if (job.status === 'failed') {
+        confirmedJobFailure = true;
         throw new ApiError(job.error || '文章インポートに失敗しました', 500);
       }
       if (!job.article_id) {
+        confirmedJobFailure = true;
         throw new ApiError('文章インポート結果を確認できませんでした', 500);
       }
+      acceptedArticleId = job.article_id;
       // 一覧カードと同じ導線: GET の結果のみで表示（フォールバックしない）
       const refreshed = await fetchArticleDetail(settings.apiBase, job.article_id, {
         signal: ctrl.signal,
@@ -170,8 +177,29 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
     } catch (e) {
       if (ctrl.signal.aborted) return;
       const m = e instanceof ApiError ? e.message : '文章インポートに失敗しました';
-      setMsg({ kind: 'alert', text: m });
-      updateNotification(notifId, { title: '文章インポート失敗', status: 'error', message: m, model: selectedModel });
+      if (acceptedJobId && !confirmedJobFailure) {
+        setMsg({
+          kind: 'alert',
+          text: '文章インポートはバックグラウンドで継続しています。生成キューから状態を確認してください。',
+        });
+        updateNotification(notifId, {
+          title: '文章インポートの状態を確認中',
+          status: 'progress',
+          message: '一時的に状態を取得できませんでした。自動で再確認します。',
+          model: selectedModel,
+          jobId: acceptedJobId,
+          jobType: 'article-import',
+          articleId: acceptedArticleId,
+        });
+      } else {
+        setMsg({ kind: 'alert', text: m });
+        updateNotification(notifId, {
+          title: '文章インポート失敗',
+          status: 'error',
+          message: m,
+          model: selectedModel,
+        });
+      }
     } finally {
       setLoading(false);
     }

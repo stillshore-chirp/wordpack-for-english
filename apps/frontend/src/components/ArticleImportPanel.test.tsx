@@ -6,11 +6,16 @@ import { server } from '../../vitest.setup';
 import { AuthProvider } from '../AuthContext';
 import { SettingsProvider } from '../SettingsContext';
 import { ModalProvider } from '../ModalContext';
-import { NotificationsProvider } from '../NotificationsContext';
+import { NotificationsProvider, useNotifications } from '../NotificationsContext';
 import { ConfirmDialogProvider } from '../ConfirmDialogContext';
 import { ArticleImportPanel } from './ArticleImportPanel';
 
 const SIDEBAR_PORTAL_ID = 'app-sidebar-controls';
+
+const NotificationProbe = () => {
+  const { notifications } = useNotifications();
+  return <div data-testid="notification-probe">{JSON.stringify(notifications)}</div>;
+};
 
 const createSidebarPortalContainer = () => {
   const container = document.createElement('div');
@@ -98,6 +103,7 @@ const renderWithProviders = () => {
           <ConfirmDialogProvider>
             <NotificationsProvider persist={false}>
               <ArticleImportPanel />
+              <NotificationProbe />
             </NotificationsProvider>
           </ConfirmDialogProvider>
         </ModalProvider>
@@ -156,6 +162,39 @@ describe('ArticleImportPanel (MSW + contexts)', () => {
 
     await waitFor(() => {
       expect(importButton).toBeEnabled();
+    });
+  });
+
+  it('ジョブ受付後の一時的な記事取得失敗は生成キューで再照合できる状態を保つ', async () => {
+    server.use(
+      http.get('/api/article/:id', () => HttpResponse.json(
+        { detail: { message: '記事を一時的に取得できません' } },
+        { status: 503 },
+      )),
+    );
+    renderWithProviders();
+    const user = userEvent.setup();
+
+    const textarea = await screen.findByPlaceholderText('文章を貼り付け（日本語/英語）');
+    await user.type(textarea, 'recoverable import');
+    await user.click(screen.getByRole('button', { name: '文章をインポート' }));
+
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent(
+      '文章インポートはバックグラウンドで継続しています。生成キューから状態を確認してください。',
+    );
+    await waitFor(() => {
+      const notifications = JSON.parse(
+        screen.getByTestId('notification-probe').textContent || '[]',
+      );
+      expect(notifications).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          status: 'progress',
+          jobId: 'article-import-job:test',
+          jobType: 'article-import',
+          articleId: 'art:abcd1234',
+        }),
+      ]));
     });
   });
 
