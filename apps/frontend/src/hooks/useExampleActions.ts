@@ -192,12 +192,15 @@ export const useExampleActions = ({
         message: '当該の例文を元に記事を生成しています',
         status: 'progress',
       });
+      let acceptedJobId: string | undefined;
+      let confirmedJobFailure = false;
 
       try {
         let job = await createArticleImportJob(apiBase, { text: ex.en }, {
           signal: ctrl.signal,
           timeoutMs: requestTimeoutMs,
         });
+        acceptedJobId = job.job_id;
         notify.update(notifId, {
           message: 'バックグラウンドで文章を処理しています',
           jobId: job.job_id,
@@ -224,9 +227,11 @@ export const useExampleActions = ({
           });
         }
         if (job.status === 'failed') {
+          confirmedJobFailure = true;
           throw new ApiError(job.error || '文章インポートに失敗しました', 500);
         }
         if (!job.article_id) {
+          confirmedJobFailure = true;
           throw new ApiError('文章インポート結果を確認できませんでした', 500);
         }
         notify.update(notifId, {
@@ -245,8 +250,26 @@ export const useExampleActions = ({
           return;
         }
         const m = resolveErrorMessage(error, '文章インポートに失敗しました');
-        setStatusMessage({ kind: 'alert', text: m });
-        notify.update(notifId, { title: '文章インポート失敗', status: 'error', message: m });
+        if (acceptedJobId && !confirmedJobFailure) {
+          setStatusMessage({
+            kind: 'alert',
+            text: '文章インポートはバックグラウンドで継続しています。生成キューから状態を確認してください。',
+          });
+          notify.update(notifId, {
+            title: '文章インポートの状態を確認中',
+            status: 'progress',
+            message: '一時的に状態を取得できませんでした。自動で再確認します。',
+            jobId: acceptedJobId,
+            jobType: 'article-import',
+          });
+        } else {
+          setStatusMessage({ kind: 'alert', text: m });
+          notify.update(notifId, {
+            title: '文章インポート失敗',
+            status: 'error',
+            message: m,
+          });
+        }
       } finally {
         setExamplesLoading(false);
       }
