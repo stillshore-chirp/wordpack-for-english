@@ -157,6 +157,7 @@ export const useExampleActions = ({
           message: `例文（${category}）をバックグラウンドで追加生成しています`,
           jobId: job.job_id,
           jobType: 'example-generation',
+          pollingOwner: 'foreground',
         });
         const deadlineMs = Date.now()
           + (generationRequestTimeoutMs ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS);
@@ -192,13 +193,14 @@ export const useExampleActions = ({
           lemma: lemmaText,
           jobId: job.job_id,
           jobType: 'example-generation',
+          pollingOwner: null,
         });
         await loadWordPack(wordPackId);
         dispatchAppEvent(APP_EVENTS.wordPackUpdated);
         try { onWordPackGenerated?.(wordPackId); } catch {}
       } catch (error) {
         if (ctrl.signal.aborted) {
-          notify.update(notifId, { title: `【${lemmaText}】の生成失敗`, status: 'error', message: '処理を中断しました', model, category, wordPackId, lemma: lemmaText });
+          notify.update(notifId, { title: `【${lemmaText}】の生成失敗`, status: 'error', message: '処理を中断しました', model, category, wordPackId, lemma: lemmaText, pollingOwner: null });
           return;
         }
         const text = resolveErrorMessage(error, '例文の追加生成に失敗しました');
@@ -217,6 +219,7 @@ export const useExampleActions = ({
             lemma: lemmaText,
             jobId: acceptedJobId,
             jobType: 'example-generation',
+            pollingOwner: null,
           });
         } else {
           setStatusMessage({ kind: 'alert', text });
@@ -267,6 +270,7 @@ export const useExampleActions = ({
           message: 'バックグラウンドで文章を処理しています',
           jobId: job.job_id,
           jobType: 'article-import',
+          pollingOwner: 'foreground',
         });
         const deadlineMs = Date.now()
           + (generationRequestTimeoutMs ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS);
@@ -286,6 +290,7 @@ export const useExampleActions = ({
             message: 'バックグラウンドで文章を処理しています',
             jobId: job.job_id,
             jobType: 'article-import',
+            pollingOwner: 'foreground',
           });
         }
         if (job.status === 'failed') {
@@ -303,12 +308,13 @@ export const useExampleActions = ({
           jobId: job.job_id,
           jobType: 'article-import',
           articleId: job.article_id,
+          pollingOwner: null,
         });
         dispatchAppEvent(APP_EVENTS.articleUpdated);
         setStatusMessage({ kind: 'status', text: '例文から文章インポートを実行しました' });
       } catch (error) {
         if (ctrl.signal.aborted) {
-          notify.update(notifId, { title: '文章インポートを中断', status: 'error', message: '処理をキャンセルしました' });
+          notify.update(notifId, { title: '文章インポートを中断', status: 'error', message: '処理をキャンセルしました', pollingOwner: null });
           return;
         }
         const m = resolveErrorMessage(error, '文章インポートに失敗しました');
@@ -323,6 +329,7 @@ export const useExampleActions = ({
             message: '一時的に状態を取得できませんでした。自動で再確認します。',
             jobId: acceptedJobId,
             jobType: 'article-import',
+            pollingOwner: null,
           });
         } else {
           setStatusMessage({ kind: 'alert', text: m });

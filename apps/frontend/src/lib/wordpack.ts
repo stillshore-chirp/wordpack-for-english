@@ -50,8 +50,8 @@ export interface RegenerateSettings {
 }
 
 export interface NotificationsAdapter {
-  add: (input: { title: string; message?: string; status?: 'progress' | 'success' | 'error'; id?: string; model?: string; category?: string; wordPackId?: string | null; lemma?: string | null; jobId?: string | null }) => string;
-  update: (id: string, patch: { title?: string; message?: string; status?: 'progress' | 'success' | 'error'; model?: string; category?: string; wordPackId?: string | null; lemma?: string | null; jobId?: string | null }) => void;
+  add: (input: { title: string; message?: string; status?: 'progress' | 'success' | 'error'; id?: string; model?: string; category?: string; wordPackId?: string | null; lemma?: string | null; jobId?: string | null; pollingOwner?: 'foreground' | null }) => string;
+  update: (id: string, patch: { title?: string; message?: string; status?: 'progress' | 'success' | 'error'; model?: string; category?: string; wordPackId?: string | null; lemma?: string | null; jobId?: string | null; pollingOwner?: 'foreground' | null }) => void;
 }
 
 export interface RegenerateWordPackMessages {
@@ -98,7 +98,7 @@ export async function regenerateWordPackRequest(params: {
     });
     acceptedJobId = job.job_id;
 
-    notify.update(notifId, { jobId: job.job_id, model: model || undefined, wordPackId, lemma });
+    notify.update(notifId, { jobId: job.job_id, model: model || undefined, wordPackId, lemma, pollingOwner: 'foreground' });
 
     let latest = job;
     const startedAt = Date.now();
@@ -123,7 +123,7 @@ export async function regenerateWordPackRequest(params: {
 
     if (latest.status === 'failed') {
       const errMsg = latest.error || messages?.failure || '処理に失敗しました';
-      notify.update(notifId, { title: `【${lemma}】の生成失敗`, status: 'error', message: errMsg, model: model || undefined, wordPackId, lemma, jobId: job.job_id });
+      notify.update(notifId, { title: `【${lemma}】の生成失敗`, status: 'error', message: errMsg, model: model || undefined, wordPackId, lemma, jobId: job.job_id, pollingOwner: null });
       confirmedJobFailure = true;
       throw new ApiError(errMsg, 502);
     }
@@ -136,11 +136,12 @@ export async function regenerateWordPackRequest(params: {
         wordPackId,
         lemma,
         jobId: job.job_id,
+        pollingOwner: null,
       });
       return;
     }
 
-    notify.update(notifId, { title: `【${lemma}】の生成完了！`, status: 'success', message: messages?.success || '処理が完了しました', model: model || undefined, wordPackId, lemma, jobId: job.job_id });
+    notify.update(notifId, { title: `【${lemma}】の生成完了！`, status: 'success', message: messages?.success || '処理が完了しました', model: model || undefined, wordPackId, lemma, jobId: job.job_id, pollingOwner: null });
     dispatchAppEvent(APP_EVENTS.wordPackUpdated);
   } catch (e) {
     if (acceptedJobId && !confirmedJobFailure) {
@@ -152,11 +153,12 @@ export async function regenerateWordPackRequest(params: {
         wordPackId,
         lemma,
         jobId: acceptedJobId,
+        pollingOwner: null,
       });
       return;
     }
     const m = messages?.failure || (e instanceof ApiError ? e.message : '処理に失敗しました');
-    notify.update(notifId, { title: `【${lemma}】の生成失敗`, status: 'error', message: m, model: model || undefined, wordPackId, lemma, jobId: acceptedJobId });
+    notify.update(notifId, { title: `【${lemma}】の生成失敗`, status: 'error', message: m, model: model || undefined, wordPackId, lemma, jobId: acceptedJobId, pollingOwner: null });
     throw e;
   }
 }

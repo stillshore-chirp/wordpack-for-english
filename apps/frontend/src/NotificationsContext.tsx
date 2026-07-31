@@ -7,6 +7,7 @@ export type NotificationJobType =
   | 'quiz-generation'
   | 'category-generate-import'
   | 'example-generation';
+export type NotificationPollingOwner = 'foreground';
 
 export interface NotificationItem {
   id: string;
@@ -22,12 +23,13 @@ export interface NotificationItem {
   jobId?: string | null; // 任意: 非同期再生成ジョブの状態確認用
   jobType?: NotificationJobType | null; // 任意: ジョブ状態APIの判別用
   articleId?: string | null; // 任意: 文章インポート完了結果の参照用
+  pollingOwner?: NotificationPollingOwner | null; // 現在の画面が能動poll中かを示す非永続状態
 }
 
 interface NotificationsContextValue {
   notifications: NotificationItem[];
-  add: (input: { title: string; message?: string; status?: NotificationStatus; id?: string; model?: string; category?: string; wordPackId?: string | null; lemma?: string | null; jobId?: string | null; jobType?: NotificationJobType | null; articleId?: string | null }) => string;
-  update: (id: string, patch: Partial<Pick<NotificationItem, 'title' | 'message' | 'status' | 'model' | 'category' | 'wordPackId' | 'lemma' | 'jobId' | 'jobType' | 'articleId'>>) => void;
+  add: (input: { title: string; message?: string; status?: NotificationStatus; id?: string; model?: string; category?: string; wordPackId?: string | null; lemma?: string | null; jobId?: string | null; jobType?: NotificationJobType | null; articleId?: string | null; pollingOwner?: NotificationPollingOwner | null }) => string;
+  update: (id: string, patch: Partial<Pick<NotificationItem, 'title' | 'message' | 'status' | 'model' | 'category' | 'wordPackId' | 'lemma' | 'jobId' | 'jobType' | 'articleId' | 'pollingOwner'>>) => void;
   remove: (id: string) => void;
   clearAll: () => void;
 }
@@ -42,7 +44,7 @@ function loadFromStorage(): NotificationItem[] {
     if (!raw) return [];
     const items = JSON.parse(raw) as NotificationItem[];
     if (!Array.isArray(items)) return [];
-    return items;
+    return items.map(({ pollingOwner: _pollingOwner, ...item }) => item);
   } catch {
     return [];
   }
@@ -50,7 +52,8 @@ function loadFromStorage(): NotificationItem[] {
 
 function saveToStorage(items: NotificationItem[]) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    const persistedItems = items.map(({ pollingOwner: _pollingOwner, ...item }) => item);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedItems));
   } catch {
     // ignore
   }
@@ -81,6 +84,7 @@ export const NotificationsProvider: React.FC<{ children: React.ReactNode } & { p
       jobId: input.jobId,
       jobType: input.jobType,
       articleId: input.articleId,
+      pollingOwner: input.pollingOwner,
     };
     setNotifications((prev) => {
       const next = [...prev, item];

@@ -175,6 +175,24 @@ const QueueHarness: React.FC = () => {
       >
         生成を完了
       </button>
+      <button
+        type="button"
+        onClick={() => {
+          notificationIdRef.current = add({
+            id: 'n-foreground-category',
+            title: '【Dev】の例文生成・記事化を開始します',
+            message: '前景画面が状態を確認しています',
+            status: 'progress',
+            model: 'gpt-5.6-luna',
+            category: 'Dev',
+            jobId: 'category-job:alpha',
+            jobType: 'category-generate-import',
+            pollingOwner: 'foreground',
+          });
+        }}
+      >
+        前景ポーリングを開始
+      </button>
       <GenerationQueuePanel />
     </>
   );
@@ -504,6 +522,30 @@ describe('GenerationQueuePanel', () => {
       headers: { 'Content-Type': 'application/json' },
     }));
     await act(async () => {});
+  });
+
+  it('前景ポーラーの実行中は復旧pollを重ねず再読込後に引き継ぐ', async () => {
+    const rendered = renderQueue();
+    await screen.findByRole('region', { name: '生成キュー' });
+    vi.useFakeTimers();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+    await user.click(screen.getByRole('button', { name: '前景ポーリングを開始' }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6000);
+    });
+
+    const statusPath = '/api/article/generate_and_import/jobs/category-job%3Aalpha';
+    expect(requestedUrls.some((url) => url.endsWith(statusPath))).toBe(false);
+    const persisted = JSON.parse(localStorage.getItem('wpfe.notifications.v1') || '[]');
+    expect(persisted[0]).not.toHaveProperty('pollingOwner');
+
+    rendered.unmount();
+    renderQueue();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(requestedUrls.some((url) => url.endsWith(statusPath))).toBe(true);
   });
 
   it('生成上限内でrunningのWordPackジョブは失敗扱いにしない', async () => {

@@ -417,6 +417,7 @@ export const useWordPack = ({
           model: model || undefined,
           wordPackId,
           lemma,
+          pollingOwner: 'foreground',
         });
 
         const job = await enqueueRegenerateWordPack({
@@ -474,6 +475,7 @@ export const useWordPack = ({
             wordPackId,
             lemma,
             jobId: job.job_id,
+            pollingOwner: null,
           });
           try { onWordPackGenerated?.(wordPackId); } catch {}
         } else if (latest.status === 'failed') {
@@ -487,6 +489,7 @@ export const useWordPack = ({
             wordPackId,
             lemma,
             jobId: job.job_id,
+            pollingOwner: null,
           });
         } else {
           const progressText = '再生成はサーバーで継続中です。生成キューで完了状態を確認できます。';
@@ -499,10 +502,14 @@ export const useWordPack = ({
             wordPackId,
             lemma,
             jobId: job.job_id,
+            pollingOwner: null,
           });
         }
       } catch (error) {
-        if (ctrl.signal.aborted) return;
+        if (ctrl.signal.aborted) {
+          if (notifId) updateNotification(notifId, { pollingOwner: null });
+          return;
+        }
         let text = error instanceof ApiError ? error.message : 'WordPackの再生成に失敗しました';
         if (error instanceof ApiError && error.status === 0 && /aborted|timed out/i.test(error.message)) {
           text = '再生成がタイムアウトしました（サーバ側で処理継続の可能性）。時間をおいて再試行してください。';
@@ -529,6 +536,7 @@ export const useWordPack = ({
             wordPackId,
             lemma,
             jobId: acceptedJobId,
+            pollingOwner: null,
           });
         }
       } finally {

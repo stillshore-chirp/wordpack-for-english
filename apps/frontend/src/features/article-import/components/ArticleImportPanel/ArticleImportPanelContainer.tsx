@@ -123,6 +123,7 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
         message: 'バックグラウンドで文章を処理しています',
         jobId: job.job_id,
         jobType: 'article-import',
+        pollingOwner: 'foreground',
       });
       const deadlineMs = Date.now()
         + (settings.generationRequestTimeoutMs ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS);
@@ -147,6 +148,7 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
           message: 'バックグラウンドで文章を処理しています',
           jobId: job.job_id,
           jobType: 'article-import',
+          pollingOwner: 'foreground',
         });
       }
       if (job.status === 'failed') {
@@ -173,13 +175,19 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
         jobId: job.job_id,
         jobType: 'article-import',
         articleId: job.article_id,
+        pollingOwner: null,
       });
       // グローバルに記事更新イベントを通知（一覧の自動更新用）
       dispatchAppEvent(APP_EVENTS.articleUpdated);
       setDetailOpen(true);
       try { setModalOpen(true); } catch {}
     } catch (e) {
-      if (ctrl.signal.aborted) return;
+      if (ctrl.signal.aborted) {
+        if (acceptedJobId) {
+          updateNotification(notifId, { pollingOwner: null });
+        }
+        return;
+      }
       const m = e instanceof ApiError ? e.message : '文章インポートに失敗しました';
       if (acceptedJobId && !confirmedJobFailure) {
         setMsg({
@@ -194,6 +202,7 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
           jobId: acceptedJobId,
           jobType: 'article-import',
           articleId: acceptedArticleId,
+          pollingOwner: null,
         });
       } else {
         setMsg({ kind: 'alert', text: m });
@@ -251,6 +260,7 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
             message: 'バックグラウンドで例文生成と記事化を続けています',
             jobId: job.job_id,
             jobType: 'category-generate-import',
+            pollingOwner: 'foreground',
           });
           const deadlineMs = Date.now()
             + (settings.generationRequestTimeoutMs ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS);
@@ -293,6 +303,7 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
             lemma,
             jobId: job.job_id,
             jobType: 'category-generate-import',
+            pollingOwner: null,
           });
           dispatchAppEvent(APP_EVENTS.wordPackUpdated);
           dispatchAppEvent(APP_EVENTS.articleUpdated);
@@ -308,6 +319,7 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
               category: selectedCategory,
               jobId: acceptedJobId,
               jobType: 'category-generate-import',
+              pollingOwner: null,
             });
             return { category: selectedCategory, pending: true as const };
           } else {

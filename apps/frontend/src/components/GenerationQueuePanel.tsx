@@ -218,6 +218,7 @@ export const GenerationQueuePanel: React.FC = () => {
   useEffect(() => {
     progressItems.forEach((item) => {
       if (!item.jobId) return;
+      if (item.pollingOwner === 'foreground') return;
       if (reconciliationInFlightRef.current.has(item.id)) return;
       const lastCheckedAt = reconciliationRef.current.get(item.id) ?? 0;
       const notificationWasRecentlyUpdated = nowMs - item.updatedAt

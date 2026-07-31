@@ -699,6 +699,7 @@ export const QuizPage: React.FC = () => {
       notifications.update(notifId, {
         jobId: job.job_id,
         jobType: 'quiz-generation',
+        pollingOwner: 'foreground',
       });
       let current = job;
       const pollingDeadline = Date.now() + Math.max(
@@ -720,6 +721,7 @@ export const QuizPage: React.FC = () => {
           message: '生成はサーバーで継続中です。生成キューで完了状態を確認できます。',
           jobId: current.job_id,
           jobType: 'quiz-generation',
+          pollingOwner: null,
         });
         setMessage({ kind: 'status', text: 'Quiz生成は継続中です。生成キューで状態を確認できます。' });
         return;
@@ -732,6 +734,7 @@ export const QuizPage: React.FC = () => {
           message: failureText,
           jobId: current.job_id,
           jobType: 'quiz-generation',
+          pollingOwner: null,
         });
         setMessage({ kind: 'alert', text: failureText });
         return;
@@ -742,6 +745,7 @@ export const QuizPage: React.FC = () => {
         message: '一覧を更新しました。',
         jobId: current.job_id,
         jobType: 'quiz-generation',
+        pollingOwner: null,
       });
       setMessage({ kind: 'status', text: 'Quizを生成しました。生成結果を開いています。' });
       await loadList();
@@ -756,6 +760,7 @@ export const QuizPage: React.FC = () => {
           : text,
         jobId: acceptedJobId,
         jobType: acceptedJobId ? 'quiz-generation' : undefined,
+        pollingOwner: null,
       });
       setMessage({
         kind: acceptedJobId ? 'status' : 'alert',
