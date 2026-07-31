@@ -184,11 +184,10 @@ async def enqueue_generation_job(
     )
     async with _generation_jobs_lock:
         _generation_jobs[job_id] = job
-    coroutine = _run_generation_job(job_id, store=store, runner=runner)
     if scheduler is None:
-        await coroutine
+        await _run_generation_job(job_id, store=store, runner=runner)
     else:
-        scheduler.spawn(coroutine)
+        scheduler.spawn(_run_generation_job(job_id, store=store, runner=runner))
     return job.to_response()
 
 

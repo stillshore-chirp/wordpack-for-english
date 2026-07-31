@@ -82,8 +82,11 @@ class FirestoreRegenerateJobStore(_LegacyClockMixin, FirestoreRegenerateJobRepos
     """Legacy import path for the regenerate job repository."""
 
 
-class FirestoreGenerationJobStore(_LegacyClockMixin, FirestoreGenerationJobRepository):
+class FirestoreGenerationJobStore(FirestoreGenerationJobRepository):
     """Legacy import path for long-running generation jobs."""
+
+    def _now_iso(self) -> str:
+        return _now_iso()
 
 
 class FirestoreSessionStore(FirestoreSessionRepository):
