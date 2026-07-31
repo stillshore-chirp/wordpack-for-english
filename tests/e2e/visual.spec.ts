@@ -303,8 +303,8 @@ const mockArticleImport = async (page: Page): Promise<void> => {
     body_en: 'Alpha releases validate core workflows for early adopters.',
     body_ja: 'アルファ版は初期利用者向けに主要なワークフローを検証します。',
     notes_ja: '例文抽出はDevカテゴリを優先。',
-    llm_model: 'gpt-5.4-mini',
-    llm_params: 'reasoning.effort=minimal;text.verbosity=medium',
+    llm_model: 'gpt-5.6-luna',
+    llm_params: 'reasoning.effort=high;text.verbosity=medium',
     generation_category: 'Dev',
     related_word_packs: [
       { word_pack_id: 'wp:e2e:alpha', lemma: 'alpha', status: 'existing' },
@@ -318,11 +318,15 @@ const mockArticleImport = async (page: Page): Promise<void> => {
     generation_duration_ms: 60000,
   };
 
-  await page.route((url) => url.pathname === '/api/article/import', (route) => {
+  await page.route((url) => url.pathname === '/api/article/import/jobs', (route) => {
     if (route.request().method() !== 'POST') {
       return route.fulfill(json({ detail: 'Not found' }, 404));
     }
-    return route.fulfill(json({ id: articleDetail.id }));
+    return route.fulfill(json({
+      job_id: 'article-import-job:e2e',
+      status: 'succeeded',
+      article_id: articleDetail.id,
+    }, 202));
   });
 
   await page.route((url) => url.pathname === '/api/article', (route) =>

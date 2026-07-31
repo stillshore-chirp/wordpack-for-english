@@ -1,6 +1,15 @@
 import React, { useCallback, useContext, useEffect, useState } from 'react';
 import { useAuth } from './AuthContext';
-import { normalizeLlmModel } from './lib/wordpack';
+import {
+  DEFAULT_REASONING_EFFORT,
+  DEFAULT_TEXT_VERBOSITY,
+  normalizeLlmModel,
+  type ReasoningEffort,
+  type TextVerbosity,
+} from './lib/wordpack';
+
+export const DEFAULT_REQUEST_TIMEOUT_MS = 60_000;
+export const DEFAULT_GENERATION_REQUEST_TIMEOUT_MS = 1_500_000;
 
 export interface Settings {
   apiBase: string;
@@ -8,10 +17,11 @@ export interface Settings {
   regenerateScope: 'all' | 'examples' | 'collocations';
   autoAdvanceAfterGrade: boolean;
   requestTimeoutMs: number;
+  generationRequestTimeoutMs?: number;
   // 選択中のLLMモデル（UI全体で共有）。未設定時はサーバの既定を同期。
   model?: string;
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
-  textVerbosity?: 'low' | 'medium' | 'high';
+  reasoningEffort?: ReasoningEffort;
+  textVerbosity?: TextVerbosity;
   theme: 'light' | 'dark';
   ttsPlaybackRate: number;
   ttsVolume: number;
@@ -167,11 +177,12 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       pronunciationEnabled: true,
       regenerateScope: 'all',
       autoAdvanceAfterGrade: false,
-      // 初期描画直後のズレを避けるため、保守的に長めの既定値。実値は /api/config で即同期。
-      requestTimeoutMs: 360000,
+      // 通常APIと長時間生成フローは分離し、一覧や更新が生成待ちへ巻き込まれないようにする。
+      requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
+      generationRequestTimeoutMs: DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
       model: savedModel,
-      reasoningEffort: 'minimal',
-      textVerbosity: 'medium',
+      reasoningEffort: DEFAULT_REASONING_EFFORT,
+      textVerbosity: DEFAULT_TEXT_VERBOSITY,
       theme: savedTheme === 'light' ? 'light' : 'dark',
       ttsPlaybackRate: normalizedTtsPlaybackRate,
       ttsVolume: normalizedTtsVolume,
@@ -222,10 +233,18 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           const hint = bodyText ? ` body=${bodyText}` : '';
           throw new Error(`Failed to load /api/config: ${res.status}${hint}`);
         }
-        const json = (await res.json()) as { request_timeout_ms?: number; llm_model?: string };
+        const json = (await res.json()) as {
+          request_timeout_ms?: number;
+          generation_request_timeout_ms?: number;
+          llm_model?: string;
+        };
         const ms = json.request_timeout_ms;
         if (!aborted && typeof ms === 'number' && Number.isFinite(ms)) {
           setSettings((prev) => ({ ...prev, requestTimeoutMs: ms }));
+        }
+        const generationMs = json.generation_request_timeout_ms;
+        if (!aborted && typeof generationMs === 'number' && Number.isFinite(generationMs)) {
+          setSettings((prev) => ({ ...prev, generationRequestTimeoutMs: generationMs }));
         }
         const m = (json as any).llm_model;
         if (!aborted && typeof m === 'string' && m) {

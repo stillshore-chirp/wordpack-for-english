@@ -18,7 +18,11 @@ import { ExamplesSection } from '../../../../components/wordpack/ExamplesSection
 import { useAuth } from '../../../../AuthContext';
 import { GuestLock } from '../../../../components/GuestLock';
 import { validateLemmaInput } from '../../../../lib/lemmaValidation';
-import { SUPPORTED_LLM_MODELS } from '../../../../lib/wordpack';
+import {
+  SUPPORTED_LLM_MODELS,
+  SUPPORTED_REASONING_EFFORTS,
+  SUPPORTED_TEXT_VERBOSITIES,
+} from '../../../../lib/wordpack';
 import { CitationsSection } from './CitationsSection';
 import { CollocationsSection } from './CollocationsSection';
 import { ConfidenceSection } from './ConfidenceSection';
@@ -73,7 +77,12 @@ export const WordPackPanel: React.FC<Props> = ({
   const { setModalOpen } = useModal();
   const { add: addNotification, update: updateNotification } = useNotifications();
   const confirmDialog = useConfirmDialog();
-  const { apiBase, pronunciationEnabled, requestTimeoutMs } = settings;
+  const {
+    apiBase,
+    generationRequestTimeoutMs,
+    pronunciationEnabled,
+    requestTimeoutMs,
+  } = settings;
   const { lemma, setLemma, lemmaValidation, model, showAdvancedModelOptions, handleChangeModel, advancedSettings } = useWordPackForm({ settings, setSettings });
   const [detailOpen, setDetailOpen] = useState(false);
   const panelInstanceId = useId();
@@ -111,6 +120,7 @@ export const WordPackPanel: React.FC<Props> = ({
   const { examplesLoading, deleteExample, generateExamples, importArticleFromExample, copyExampleText } = useExampleActions({
     apiBase,
     requestTimeoutMs,
+    generationRequestTimeoutMs,
     currentWordPackId,
     data,
     model,
@@ -489,10 +499,9 @@ export const WordPackPanel: React.FC<Props> = ({
                 onChange={(e) => advancedSettings.handleChangeReasoningEffort(e.target.value as typeof advancedSettings.reasoningEffort)}
                 disabled={isActionLoading}
               >
-                <option value="minimal">minimal</option>
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
+                {SUPPORTED_REASONING_EFFORTS.map((effort) => (
+                  <option key={effort} value={effort}>{effort}</option>
+                ))}
               </select>
             </GuestLock>
           </div>
@@ -506,9 +515,9 @@ export const WordPackPanel: React.FC<Props> = ({
                 onChange={(e) => advancedSettings.handleChangeTextVerbosity(e.target.value as typeof advancedSettings.textVerbosity)}
                 disabled={isActionLoading}
               >
-                <option value="low">low</option>
-                <option value="medium">medium</option>
-                <option value="high">high</option>
+                {SUPPORTED_TEXT_VERBOSITIES.map((verbosity) => (
+                  <option key={verbosity} value={verbosity}>{verbosity}</option>
+                ))}
               </select>
             </GuestLock>
           </div>

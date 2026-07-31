@@ -41,6 +41,19 @@ def test_deploy_script_supports_cloud_run_min_instances() -> None:
     assert "CLOUD_RUN_MIN_INSTANCES=1" in deploy_env_example
 
 
+def test_deploy_script_applies_no_cpu_throttling_from_env_file() -> None:
+    deploy_script = Path("scripts/deploy_cloud_run.sh").read_text(encoding="utf-8")
+    deploy_env_example = Path("env.deploy.example").read_text(encoding="utf-8")
+
+    assert 'NO_CPU_THROTTLING_ARG=""' in deploy_script
+    assert (
+        'NO_CPU_THROTTLING="${NO_CPU_THROTTLING_ARG:-'
+        '${CLOUD_RUN_NO_CPU_THROTTLING:-false}}"'
+    ) in deploy_script
+    assert 'RUN_ARGS+=(--no-cpu-throttling)' in deploy_script
+    assert "CLOUD_RUN_NO_CPU_THROTTLING=true" in deploy_env_example
+
+
 def test_deploy_script_rejects_invalid_cloud_run_min_instances() -> None:
     proc = subprocess.run(
         [

@@ -1,18 +1,32 @@
 import { useCallback, useState } from 'react';
 import { ApiError, fetchJson } from '../lib/fetcher';
 import { APP_EVENTS, dispatchAppEvent } from '../shared/events/appEvents';
-import { composeModelRequestFields } from '../lib/wordpack';
+import {
+  composeModelRequestFields,
+  type ReasoningEffort,
+  type TextVerbosity,
+} from '../lib/wordpack';
 import { Examples, WordPack, WordPackMessage } from './useWordPack';
 import type { useNotifications } from '../NotificationsContext';
+import {
+  createArticleImportJob,
+  fetchArticleImportJob,
+} from '../features/article-import/api/articleApi';
+import { DEFAULT_GENERATION_REQUEST_TIMEOUT_MS } from '../SettingsContext';
+import {
+  createExampleGenerationJob,
+  fetchExampleGenerationJob,
+} from '../features/generation/api';
 
 interface UseExampleActionsParams {
   apiBase: string;
   requestTimeoutMs: number;
+  generationRequestTimeoutMs?: number;
   currentWordPackId: string | null;
   data: WordPack | null;
   model: string;
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
-  textVerbosity?: 'low' | 'medium' | 'high';
+  reasoningEffort?: ReasoningEffort;
+  textVerbosity?: TextVerbosity;
   setStatusMessage: (next: WordPackMessage) => void;
   loadWordPack: (wordPackId: string) => Promise<void>;
   notify: Pick<ReturnType<typeof useNotifications>, 'add' | 'update'>;
@@ -33,6 +47,7 @@ interface UseExampleActionsResult {
 export const useExampleActions = ({
   apiBase,
   requestTimeoutMs,
+  generationRequestTimeoutMs,
   currentWordPackId,
   data,
   model,
@@ -129,39 +144,120 @@ export const useExampleActions = ({
         wordPackId,
         lemma: lemmaText,
       });
+      let acceptedJobId: string | undefined;
+      const clientJobId = crypto.randomUUID();
+      const candidateJobId = `example-generation-job:${clientJobId}`;
+      let confirmedJobFailure = false;
       try {
         const requestBody = buildModelRequest();
-        await fetchJson(`${apiBase}/word/packs/${wordPackId}/examples/${category}/generate`, {
-          method: 'POST',
-          body: requestBody,
+        notify.update(notifId, {
+          message: `例文（${category}）の生成受付リクエストを送信しています`,
+          jobId: candidateJobId,
+          jobType: 'example-generation',
+          pollingOwner: 'foreground',
+        });
+        let job = await createExampleGenerationJob(apiBase, wordPackId, category, requestBody, clientJobId, {
           signal: ctrl.signal,
           timeoutMs: requestTimeoutMs,
         });
-        setStatusMessage({ kind: 'status', text: `${category} に例文を2件追加しました` });
-        notify.update(notifId, { title: `【${lemmaText}】の生成完了！`, status: 'success', message: `${category} に例文を2件追加しました`, model, category, wordPackId, lemma: lemmaText });
-        await loadWordPack(wordPackId);
-        try { onWordPackGenerated?.(wordPackId); } catch {}
-      } catch (error) {
-        if (ctrl.signal.aborted) {
-          notify.update(notifId, { title: `【${lemmaText}】の生成失敗`, status: 'error', message: '処理を中断しました', model, category, wordPackId, lemma: lemmaText });
-          return;
-        }
-        const text = resolveErrorMessage(error, '例文の追加生成に失敗しました');
-        setStatusMessage({ kind: 'alert', text });
+        acceptedJobId = job.job_id;
         notify.update(notifId, {
-          title: `【${lemmaText}】の生成失敗`,
-          status: 'error',
-          message: `${category} の例文追加生成に失敗しました（${text}）`,
+          message: `例文（${category}）をバックグラウンドで追加生成しています`,
+          jobId: job.job_id,
+          jobType: 'example-generation',
+          pollingOwner: 'foreground',
+        });
+        const deadlineMs = Date.now()
+          + (generationRequestTimeoutMs ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS);
+        while (job.status === 'queued' || job.status === 'running') {
+          if (Date.now() >= deadlineMs) {
+            throw new ApiError(
+              '例文の追加生成が制限時間内に完了しませんでした。生成キューから状態を確認してください。',
+              0,
+            );
+          }
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 1000));
+          job = await fetchExampleGenerationJob(apiBase, wordPackId, category, job.job_id, {
+            signal: ctrl.signal,
+            timeoutMs: requestTimeoutMs,
+          });
+        }
+        if (job.status === 'failed') {
+          confirmedJobFailure = true;
+          throw new ApiError(job.error || '例文の追加生成に失敗しました', 500);
+        }
+        if (!job.result) {
+          confirmedJobFailure = true;
+          throw new ApiError('例文の追加生成結果を確認できませんでした', 500);
+        }
+        setStatusMessage({ kind: 'status', text: `${category} に例文を2件追加しました` });
+        notify.update(notifId, {
+          title: `【${lemmaText}】の生成完了！`,
+          status: 'success',
+          message: `${category} に例文を2件追加しました`,
           model,
           category,
           wordPackId,
           lemma: lemmaText,
+          jobId: job.job_id,
+          jobType: 'example-generation',
+          pollingOwner: null,
         });
+        await loadWordPack(wordPackId);
+        dispatchAppEvent(APP_EVENTS.wordPackUpdated);
+        try { onWordPackGenerated?.(wordPackId); } catch {}
+      } catch (error) {
+        if (ctrl.signal.aborted) {
+          notify.update(notifId, { title: `【${lemmaText}】の生成失敗`, status: 'error', message: '処理を中断しました', model, category, wordPackId, lemma: lemmaText, pollingOwner: null });
+          return;
+        }
+        const text = resolveErrorMessage(error, '例文の追加生成に失敗しました');
+        const recoverableJobId = acceptedJobId
+          ?? (error instanceof ApiError && error.status === 0 ? candidateJobId : undefined);
+        if (recoverableJobId && !confirmedJobFailure) {
+          const submissionConfirmed = acceptedJobId !== undefined;
+          setStatusMessage({
+            kind: 'status',
+            text: submissionConfirmed
+              ? '例文の追加生成はバックグラウンドで継続しています。生成キューから状態を確認してください。'
+              : '例文の追加生成の送信結果を確認中です。生成キューが同じIDで受理状況を再確認します。',
+          });
+          notify.update(notifId, {
+            title: submissionConfirmed
+              ? `【${lemmaText}】の生成状態を確認中`
+              : `【${lemmaText}】の受付状態を確認中`,
+            status: 'progress',
+            message: submissionConfirmed
+              ? '一時的に状態を取得できませんでした。自動で再確認します。'
+              : '送信結果が不明なため、同じジョブIDで自動確認します。',
+            model,
+            category,
+            wordPackId,
+            lemma: lemmaText,
+            jobId: recoverableJobId,
+            jobType: 'example-generation',
+            pollingOwner: null,
+          });
+        } else {
+          setStatusMessage({ kind: 'alert', text });
+          notify.update(notifId, {
+            title: `【${lemmaText}】の生成失敗`,
+            status: 'error',
+            message: `${category} の例文追加生成に失敗しました（${text}）`,
+            model,
+            category,
+            wordPackId,
+            lemma: lemmaText,
+            jobId: acceptedJobId ?? null,
+            jobType: acceptedJobId ? 'example-generation' : null,
+            pollingOwner: null,
+          });
+        }
       } finally {
         setExamplesLoading(false);
       }
     },
-    [apiBase, buildModelRequest, currentWordPackId, data?.lemma, ensureSavedWordPack, loadWordPack, model, notify, onWordPackGenerated, requestTimeoutMs, resolveErrorMessage, setStatusMessage],
+    [apiBase, buildModelRequest, currentWordPackId, data?.lemma, ensureSavedWordPack, generationRequestTimeoutMs, loadWordPack, model, notify, onWordPackGenerated, requestTimeoutMs, resolveErrorMessage, setStatusMessage],
   );
 
   const importArticleFromExample = useCallback(
@@ -181,30 +277,107 @@ export const useExampleActions = ({
         message: '当該の例文を元に記事を生成しています',
         status: 'progress',
       });
+      let acceptedJobId: string | undefined;
+      const clientJobId = crypto.randomUUID();
+      const candidateJobId = `article-import-job:${clientJobId}`;
+      let confirmedJobFailure = false;
 
       try {
-        await fetchJson<{ id: string }>(`${apiBase}/article/import`, {
-          method: 'POST',
-          body: { text: ex.en },
+        notify.update(notifId, {
+          message: '文章インポートの受付リクエストを送信しています',
+          jobId: candidateJobId,
+          jobType: 'article-import',
+          pollingOwner: 'foreground',
+        });
+        let job = await createArticleImportJob(apiBase, { text: ex.en }, clientJobId, {
           signal: ctrl.signal,
           timeoutMs: requestTimeoutMs,
         });
-        notify.update(notifId, { title: '文章インポート完了', status: 'success', message: '記事一覧を更新しました' });
+        acceptedJobId = job.job_id;
+        notify.update(notifId, {
+          message: 'バックグラウンドで文章を処理しています',
+          jobId: job.job_id,
+          jobType: 'article-import',
+          pollingOwner: 'foreground',
+        });
+        const deadlineMs = Date.now()
+          + (generationRequestTimeoutMs ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS);
+        while (job.status === 'queued' || job.status === 'running') {
+          if (Date.now() >= deadlineMs) {
+            throw new ApiError(
+              '文章インポートが制限時間内に完了しませんでした。生成キューから状態を確認してください。',
+              0,
+            );
+          }
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 1000));
+          job = await fetchArticleImportJob(apiBase, job.job_id, {
+            signal: ctrl.signal,
+            timeoutMs: requestTimeoutMs,
+          });
+        }
+        if (job.status === 'failed') {
+          confirmedJobFailure = true;
+          throw new ApiError(job.error || '文章インポートに失敗しました', 500);
+        }
+        if (!job.article_id) {
+          confirmedJobFailure = true;
+          throw new ApiError('文章インポート結果を確認できませんでした', 500);
+        }
+        notify.update(notifId, {
+          title: '文章インポート完了',
+          status: 'success',
+          message: '記事一覧を更新しました',
+          jobId: job.job_id,
+          jobType: 'article-import',
+          articleId: job.article_id,
+          pollingOwner: null,
+        });
         dispatchAppEvent(APP_EVENTS.articleUpdated);
         setStatusMessage({ kind: 'status', text: '例文から文章インポートを実行しました' });
       } catch (error) {
         if (ctrl.signal.aborted) {
-          notify.update(notifId, { title: '文章インポートを中断', status: 'error', message: '処理をキャンセルしました' });
+          notify.update(notifId, { title: '文章インポートを中断', status: 'error', message: '処理をキャンセルしました', pollingOwner: null });
           return;
         }
         const m = resolveErrorMessage(error, '文章インポートに失敗しました');
-        setStatusMessage({ kind: 'alert', text: m });
-        notify.update(notifId, { title: '文章インポート失敗', status: 'error', message: m });
+        const recoverableJobId = acceptedJobId
+          ?? (error instanceof ApiError && error.status === 0 ? candidateJobId : undefined);
+        if (recoverableJobId && !confirmedJobFailure) {
+          const submissionConfirmed = acceptedJobId !== undefined;
+          setStatusMessage({
+            kind: 'status',
+            text: submissionConfirmed
+              ? '文章インポートはバックグラウンドで継続しています。生成キューから状態を確認してください。'
+              : '文章インポートの送信結果を確認中です。生成キューが同じIDで受理状況を再確認します。',
+          });
+          notify.update(notifId, {
+            title: submissionConfirmed
+              ? '文章インポートの状態を確認中'
+              : '文章インポートの受付状態を確認中',
+            status: 'progress',
+            message: submissionConfirmed
+              ? '一時的に状態を取得できませんでした。自動で再確認します。'
+              : '送信結果が不明なため、同じジョブIDで自動確認します。',
+            jobId: recoverableJobId,
+            jobType: 'article-import',
+            pollingOwner: null,
+          });
+        } else {
+          setStatusMessage({ kind: 'alert', text: m });
+          notify.update(notifId, {
+            title: '文章インポート失敗',
+            status: 'error',
+            message: m,
+            jobId: acceptedJobId ?? null,
+            jobType: acceptedJobId ? 'article-import' : null,
+            pollingOwner: null,
+          });
+        }
       } finally {
         setExamplesLoading(false);
       }
     },
-    [apiBase, currentWordPackId, data?.lemma, ensureSavedWordPack, getExample, notify, requestTimeoutMs, resolveErrorMessage, setStatusMessage],
+    [apiBase, currentWordPackId, data?.lemma, ensureSavedWordPack, generationRequestTimeoutMs, getExample, notify, requestTimeoutMs, resolveErrorMessage, setStatusMessage],
   );
 
   const copyExampleText = useCallback(

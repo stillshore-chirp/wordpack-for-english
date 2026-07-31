@@ -23,7 +23,9 @@ prompt 構築は `backend.infrastructure.llm.prompts`、JSON 解析は `backend.
 ## ArticleImportFlow（文章インポート）
 ```mermaid
 graph TD
-    A[Client: POST /api/article/import] --> U[Article import router/usecase boundary];
+    A[Client: POST /api/article/import/jobs] --> J[Article import job: 202 Accepted];
+    J --> P[Client: GET /api/article/import/jobs/job_id];
+    J --> U[Article import application service];
     U --> B[ArticleImportFlow];
     B --> T[Title Subgraph: generate_title];
     T --> TR[Translation Subgraph: generate_translation];
@@ -33,6 +35,7 @@ graph TD
     LM --> FL["domain.article.lemma_filter: 句優先/機能語除外/記号除外/重複排除"];
     FL --> LC[link_or_create: 既存WordPack紐付け/なければ空パック作成];
     LC --> SA[save_article: 記事保存・メタ取得（llm_model/llm_params/生成カテゴリ/開始・終了時刻を含む）];
+    SA --> P;
     SA --> R[ArticleDetailResponse];
 
     subgraph Langfuse Spans

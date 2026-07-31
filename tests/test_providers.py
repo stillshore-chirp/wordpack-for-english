@@ -47,7 +47,7 @@ def test_get_llm_provider_openai_with_key(monkeypatch):
     # OpenAI provider with test key
     monkeypatch.setenv("STRICT_MODE", "false")
     monkeypatch.setenv("LLM_PROVIDER", "openai")
-    monkeypatch.setenv("LLM_MODEL", "gpt-5.4-mini")
+    monkeypatch.setenv("LLM_MODEL", "gpt-5.6-luna")
     monkeypatch.setenv("OPENAI_API_KEY", "test-key")
 
     # Reload settings to pick env
@@ -121,7 +121,9 @@ def test_openai_request_uses_reasoning_text_params(monkeypatch):
     """OpenAI 呼び出しで現行モデル用の reasoning/text/max_output_tokens だけを送る。"""
     monkeypatch.setenv("STRICT_MODE", "false")
     monkeypatch.setenv("LLM_PROVIDER", "openai")
-    monkeypatch.setenv("LLM_MODEL", "gpt-5.4-mini")
+    monkeypatch.setenv("LLM_MODEL", "gpt-5.6-luna")
+    monkeypatch.setenv("LLM_TIMEOUT_MS", "300000")
+    monkeypatch.setenv("LLM_MAX_TOKENS", "25000")
     monkeypatch.setenv("OPENAI_API_KEY", "dummy-realistic-key")
 
     from importlib import reload
@@ -165,24 +167,27 @@ def test_openai_request_uses_reasoning_text_params(monkeypatch):
     assert isinstance(out, str) and "\"senses\"" in out
     assert calls
     first = calls[0]
-    assert first["model"] == "gpt-5.4-mini"
+    assert first["model"] == "gpt-5.6-luna"
     assert first["reasoning"] == {"effort": "high"}
     assert first["text"] == {
         "verbosity": "high",
         "format": {"type": "json_object"},
     }
-    assert first["max_output_tokens"] > 0
+    assert first["max_output_tokens"] == 25000
+    assert first["timeout"] == 300.0
     assert "response_format" not in first
     assert "temperature" not in first
     assert "max_tokens" not in first
     assert "max_completion_tokens" not in first
 
 
-def test_openai_request_uses_nano_model(monkeypatch):
-    """gpt-5.4-nano でも同じ現行パラメータを送る。"""
+def test_openai_request_defaults_to_luna_high(monkeypatch):
+    """上書きなしでは Luna / high / medium を Responses API に送る。"""
     monkeypatch.setenv("STRICT_MODE", "false")
     monkeypatch.setenv("LLM_PROVIDER", "openai")
-    monkeypatch.setenv("LLM_MODEL", "gpt-5.4-nano")
+    monkeypatch.setenv("LLM_MODEL", "gpt-5.6-luna")
+    monkeypatch.setenv("LLM_TIMEOUT_MS", "300000")
+    monkeypatch.setenv("LLM_MAX_TOKENS", "25000")
     monkeypatch.setenv("OPENAI_API_KEY", "dummy-realistic-key")
 
     from importlib import reload
@@ -217,18 +222,17 @@ def test_openai_request_uses_nano_model(monkeypatch):
     backend.providers.llm.OpenAI = DummyOpenAI  # type: ignore[attr-defined, assignment]
 
     from backend.providers import get_llm_provider
-    llm = get_llm_provider(
-        reasoning_override={"effort": "high"},
-        text_override={"verbosity": "high"},
-    )
+    llm = get_llm_provider()
     out = llm.complete("ping")
     assert isinstance(out, str) and "\"senses\"" in out
-    assert calls[0]["model"] == "gpt-5.4-nano"
+    assert calls[0]["model"] == "gpt-5.6-luna"
     assert calls[0]["reasoning"] == {"effort": "high"}
     assert calls[0]["text"] == {
-        "verbosity": "high",
+        "verbosity": "medium",
         "format": {"type": "json_object"},
     }
+    assert calls[0]["max_output_tokens"] == 25000
+    assert calls[0]["timeout"] == 300.0
     assert "response_format" not in calls[0]
     assert "temperature" not in calls[0]
 
@@ -237,7 +241,7 @@ def test_openai_request_retries_without_optional_controls(monkeypatch):
     """モデルが reasoning/text.verbosity を拒否したら JSON 形式だけ残して再試行する。"""
     monkeypatch.setenv("STRICT_MODE", "false")
     monkeypatch.setenv("LLM_PROVIDER", "openai")
-    monkeypatch.setenv("LLM_MODEL", "gpt-5.4-mini")
+    monkeypatch.setenv("LLM_MODEL", "gpt-5.6-luna")
     monkeypatch.setenv("OPENAI_API_KEY", "dummy-realistic-key")
 
     from importlib import reload
@@ -277,7 +281,7 @@ def test_openai_request_retries_without_optional_controls(monkeypatch):
 
     from backend.providers import get_llm_provider
     llm = get_llm_provider(
-        reasoning_override={"effort": "minimal"},
+        reasoning_override={"effort": "high"},
         text_override={"verbosity": "high"},
     )
 
@@ -285,7 +289,7 @@ def test_openai_request_retries_without_optional_controls(monkeypatch):
 
     assert "\"senses\"" in out
     assert len(calls) == 2
-    assert calls[0]["reasoning"] == {"effort": "minimal"}
+    assert calls[0]["reasoning"] == {"effort": "high"}
     assert calls[0]["text"] == {
         "verbosity": "high",
         "format": {"type": "json_object"},
@@ -299,7 +303,7 @@ def test_openai_request_retries_without_json_format_when_needed(monkeypatch):
     """JSON mode 自体が拒否された場合は、プロンプト指示に委ねて通常出力で再試行する。"""
     monkeypatch.setenv("STRICT_MODE", "false")
     monkeypatch.setenv("LLM_PROVIDER", "openai")
-    monkeypatch.setenv("LLM_MODEL", "gpt-5.4-mini")
+    monkeypatch.setenv("LLM_MODEL", "gpt-5.6-luna")
     monkeypatch.setenv("OPENAI_API_KEY", "dummy-realistic-key")
 
     from importlib import reload
@@ -339,7 +343,7 @@ def test_openai_request_retries_without_json_format_when_needed(monkeypatch):
 
     from backend.providers import get_llm_provider
     llm = get_llm_provider(
-        reasoning_override={"effort": "minimal"},
+        reasoning_override={"effort": "high"},
         text_override={"verbosity": "high"},
     )
 
@@ -361,7 +365,7 @@ def test_openai_plain_text_request_does_not_force_json_format(monkeypatch):
     """プレーンテキスト生成では text.format=json_object を送らない。"""
     monkeypatch.setenv("STRICT_MODE", "false")
     monkeypatch.setenv("LLM_PROVIDER", "openai")
-    monkeypatch.setenv("LLM_MODEL", "gpt-5.4-mini")
+    monkeypatch.setenv("LLM_MODEL", "gpt-5.6-luna")
     monkeypatch.setenv("OPENAI_API_KEY", "dummy-realistic-key")
 
     from importlib import reload
@@ -397,7 +401,7 @@ def test_openai_plain_text_request_does_not_force_json_format(monkeypatch):
 
     from backend.providers import get_llm_provider
     llm = get_llm_provider(
-        reasoning_override={"effort": "minimal"},
+        reasoning_override={"effort": "high"},
         text_override={"verbosity": "medium"},
     )
 
@@ -405,7 +409,7 @@ def test_openai_plain_text_request_does_not_force_json_format(monkeypatch):
 
     assert out == "Concise title"
     assert len(calls) == 1
-    assert calls[0]["reasoning"] == {"effort": "minimal"}
+    assert calls[0]["reasoning"] == {"effort": "high"}
     assert calls[0]["text"] == {"verbosity": "medium"}
     assert "format" not in calls[0]["text"]
     assert "response_format" not in calls[0]
@@ -415,7 +419,7 @@ def test_openai_plain_text_request_retries_without_optional_controls(monkeypatch
     """プレーン生成でも任意の reasoning/text 指定が拒否されたら外して再試行する。"""
     monkeypatch.setenv("STRICT_MODE", "false")
     monkeypatch.setenv("LLM_PROVIDER", "openai")
-    monkeypatch.setenv("LLM_MODEL", "gpt-5.4-mini")
+    monkeypatch.setenv("LLM_MODEL", "gpt-5.6-luna")
     monkeypatch.setenv("OPENAI_API_KEY", "dummy-realistic-key")
 
     from importlib import reload
@@ -455,7 +459,7 @@ def test_openai_plain_text_request_retries_without_optional_controls(monkeypatch
 
     from backend.providers import get_llm_provider
     llm = get_llm_provider(
-        reasoning_override={"effort": "minimal"},
+        reasoning_override={"effort": "high"},
         text_override={"verbosity": "high"},
     )
 

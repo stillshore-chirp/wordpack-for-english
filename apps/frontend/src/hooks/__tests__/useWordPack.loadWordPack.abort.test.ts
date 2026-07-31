@@ -11,8 +11,8 @@ const mockSettings = vi.hoisted(() => ({
     regenerateScope: 'all',
     autoAdvanceAfterGrade: false,
     requestTimeoutMs: 30000,
-    model: 'gpt-5.4-mini',
-    reasoningEffort: 'minimal',
+    model: 'gpt-5.6-luna',
+    reasoningEffort: 'high',
     textVerbosity: 'medium',
     theme: 'dark',
     ttsPlaybackRate: 1,
@@ -29,6 +29,7 @@ const mockNotifications = vi.hoisted(() => ({
 }));
 
 vi.mock('../../SettingsContext', () => ({
+  DEFAULT_GENERATION_REQUEST_TIMEOUT_MS: 1_500_000,
   useSettings: () => mockSettings,
 }));
 
@@ -109,7 +110,7 @@ describe('useWordPack.loadWordPack', () => {
       return d.promise as any;
     });
 
-    const { result } = renderHook(() => useWordPack({ model: 'gpt-5.4-mini' }));
+    const { result } = renderHook(() => useWordPack({ model: 'gpt-5.6-luna' }));
 
     let p1!: Promise<void>;
     act(() => {
@@ -141,7 +142,7 @@ describe('useWordPack.loadWordPack', () => {
   });
 
   it('rejects invalid generated lemmas before starting network calls', async () => {
-    const { result } = renderHook(() => useWordPack({ model: 'gpt-5.4-mini' }));
+    const { result } = renderHook(() => useWordPack({ model: 'gpt-5.6-luna' }));
 
     await act(async () => {
       await result.current.generateWordPack('This sentence, with punctuation.');
@@ -156,7 +157,7 @@ describe('useWordPack.loadWordPack', () => {
   });
 
   it('rejects invalid empty WordPack lemmas before starting network calls', async () => {
-    const { result } = renderHook(() => useWordPack({ model: 'gpt-5.4-mini' }));
+    const { result } = renderHook(() => useWordPack({ model: 'gpt-5.6-luna' }));
 
     await act(async () => {
       await result.current.createEmptyWordPack('文脈依存');
@@ -170,4 +171,3 @@ describe('useWordPack.loadWordPack', () => {
     });
   });
 });
-

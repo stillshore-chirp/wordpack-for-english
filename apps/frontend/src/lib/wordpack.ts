@@ -1,9 +1,18 @@
 import { fetchJson, ApiError } from './fetcher';
 import { APP_EVENTS, dispatchAppEvent } from '../shared/events/appEvents';
 
-export const SUPPORTED_LLM_MODELS = ['gpt-5.4-mini', 'gpt-5.4-nano'] as const;
+export const SUPPORTED_LLM_MODELS = ['gpt-5.6-luna'] as const;
 export type SupportedLlmModel = (typeof SUPPORTED_LLM_MODELS)[number];
-export const DEFAULT_LLM_MODEL: SupportedLlmModel = 'gpt-5.4-mini';
+export const DEFAULT_LLM_MODEL: SupportedLlmModel = 'gpt-5.6-luna';
+
+export const SUPPORTED_REASONING_EFFORTS = ['none', 'low', 'medium', 'high', 'xhigh', 'max'] as const;
+export type ReasoningEffort = (typeof SUPPORTED_REASONING_EFFORTS)[number];
+export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'high';
+
+export const SUPPORTED_TEXT_VERBOSITIES = ['low', 'medium', 'high'] as const;
+export type TextVerbosity = (typeof SUPPORTED_TEXT_VERBOSITIES)[number];
+export const DEFAULT_TEXT_VERBOSITY: TextVerbosity = 'medium';
+const DEFAULT_GENERATION_JOB_TIMEOUT_MS = 25 * 60 * 1000;
 
 export const normalizeLlmModel = (model?: string | null): SupportedLlmModel => {
   const selected = (model || '').trim();
@@ -14,8 +23,8 @@ export const normalizeLlmModel = (model?: string | null): SupportedLlmModel => {
 
 export interface ModelRequestConfig {
   model?: string;
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
-  textVerbosity?: 'low' | 'medium' | 'high';
+  reasoningEffort?: ReasoningEffort;
+  textVerbosity?: TextVerbosity;
 }
 
 export const composeModelRequestFields = ({
@@ -26,8 +35,8 @@ export const composeModelRequestFields = ({
   const normalizedModel = normalizeLlmModel(model || DEFAULT_LLM_MODEL);
   return {
     model: normalizedModel,
-    reasoning: { effort: reasoningEffort || 'minimal' },
-    text: { verbosity: textVerbosity || 'medium' },
+    reasoning: { effort: reasoningEffort || DEFAULT_REASONING_EFFORT },
+    text: { verbosity: textVerbosity || DEFAULT_TEXT_VERBOSITY },
   };
 };
 
@@ -35,13 +44,14 @@ export interface RegenerateSettings {
   pronunciationEnabled: boolean;
   regenerateScope: 'all' | 'examples' | 'collocations';
   requestTimeoutMs: number;
-  reasoningEffort?: 'minimal' | 'low' | 'medium' | 'high';
-  textVerbosity?: 'low' | 'medium' | 'high';
+  generationRequestTimeoutMs?: number;
+  reasoningEffort?: ReasoningEffort;
+  textVerbosity?: TextVerbosity;
 }
 
 export interface NotificationsAdapter {
-  add: (input: { title: string; message?: string; status?: 'progress' | 'success' | 'error'; id?: string; model?: string; category?: string; wordPackId?: string | null; lemma?: string | null; jobId?: string | null }) => string;
-  update: (id: string, patch: { title?: string; message?: string; status?: 'progress' | 'success' | 'error'; model?: string; category?: string; wordPackId?: string | null; lemma?: string | null; jobId?: string | null }) => void;
+  add: (input: { title: string; message?: string; status?: 'progress' | 'success' | 'error'; id?: string; model?: string; category?: string; wordPackId?: string | null; lemma?: string | null; jobId?: string | null; pollingOwner?: 'foreground' | null }) => string;
+  update: (id: string, patch: { title?: string; message?: string; status?: 'progress' | 'success' | 'error'; model?: string; category?: string; wordPackId?: string | null; lemma?: string | null; jobId?: string | null; pollingOwner?: 'foreground' | null }) => void;
 }
 
 export interface RegenerateWordPackMessages {
@@ -73,6 +83,8 @@ export async function regenerateWordPackRequest(params: {
     wordPackId,
     lemma,
   });
+  let acceptedJobId: string | null = null;
+  let confirmedJobFailure = false;
 
   try {
     // Firebase Hosting / CDN 経路の 60s 制限を回避するため、再生成は非同期ジョブを起動してポーリングする。
@@ -84,20 +96,22 @@ export async function regenerateWordPackRequest(params: {
       lemma,
       abortSignal,
     });
+    acceptedJobId = job.job_id;
 
-    notify.update(notifId, { jobId: job.job_id, model: model || undefined, wordPackId, lemma });
+    notify.update(notifId, { jobId: job.job_id, model: model || undefined, wordPackId, lemma, pollingOwner: 'foreground' });
 
     let latest = job;
     const startedAt = Date.now();
     // 目的: Hosting/CDN 経由でも完了まで「待てる」ようにする。
-    // settings.requestTimeoutMs が 60_000 等の短い値でも、ジョブ自体は数分かかり得るため、
-    // ここは最低でも 15 分はポーリングを継続する（1回のHTTPは短いので60秒制限を跨がない）。
-    const deadlineMs = startedAt + Math.max(settings.requestTimeoutMs, 15 * 60 * 1000);
+    // 1回の状態取得は通常API上限を使い、ジョブ全体は生成専用上限まで待つ。
+    const deadlineMs = startedAt
+      + (settings.generationRequestTimeoutMs ?? DEFAULT_GENERATION_JOB_TIMEOUT_MS);
     while (Date.now() < deadlineMs) {
       if (abortSignal?.aborted) break;
       if (latest.status === 'succeeded' || latest.status === 'failed') break;
       // 1回のリクエストは短く、60s を跨がないようにする
-      await new Promise((r) => setTimeout(r, 1500));
+      const remainingMs = deadlineMs - Date.now();
+      await new Promise((r) => setTimeout(r, Math.min(1500, remainingMs)));
       latest = await fetchRegenerateJobStatus({
         apiBase,
         wordPackId,
@@ -107,17 +121,44 @@ export async function regenerateWordPackRequest(params: {
       });
     }
 
-    if (latest.status !== 'succeeded') {
+    if (latest.status === 'failed') {
       const errMsg = latest.error || messages?.failure || '処理に失敗しました';
-      notify.update(notifId, { title: `【${lemma}】の生成失敗`, status: 'error', message: errMsg, model: model || undefined, wordPackId, lemma, jobId: job.job_id });
+      notify.update(notifId, { title: `【${lemma}】の生成失敗`, status: 'error', message: errMsg, model: model || undefined, wordPackId, lemma, jobId: job.job_id, pollingOwner: null });
+      confirmedJobFailure = true;
       throw new ApiError(errMsg, 502);
     }
+    if (latest.status !== 'succeeded') {
+      notify.update(notifId, {
+        title: `【${lemma}】の生成中`,
+        status: 'progress',
+        message: '生成はサーバーで継続中です。生成キューで完了状態を確認できます。',
+        model: model || undefined,
+        wordPackId,
+        lemma,
+        jobId: job.job_id,
+        pollingOwner: null,
+      });
+      return;
+    }
 
-    notify.update(notifId, { title: `【${lemma}】の生成完了！`, status: 'success', message: messages?.success || '処理が完了しました', model: model || undefined, wordPackId, lemma, jobId: job.job_id });
+    notify.update(notifId, { title: `【${lemma}】の生成完了！`, status: 'success', message: messages?.success || '処理が完了しました', model: model || undefined, wordPackId, lemma, jobId: job.job_id, pollingOwner: null });
     dispatchAppEvent(APP_EVENTS.wordPackUpdated);
   } catch (e) {
+    if (acceptedJobId && !confirmedJobFailure) {
+      notify.update(notifId, {
+        title: `【${lemma}】の生成中`,
+        status: 'progress',
+        message: 'ジョブは受理済みですが状態確認に失敗しました。生成キューが確認を再開します。',
+        model: model || undefined,
+        wordPackId,
+        lemma,
+        jobId: acceptedJobId,
+        pollingOwner: null,
+      });
+      return;
+    }
     const m = messages?.failure || (e instanceof ApiError ? e.message : '処理に失敗しました');
-    notify.update(notifId, { title: `【${lemma}】の生成失敗`, status: 'error', message: m, model: model || undefined, wordPackId, lemma });
+    notify.update(notifId, { title: `【${lemma}】の生成失敗`, status: 'error', message: m, model: model || undefined, wordPackId, lemma, jobId: acceptedJobId, pollingOwner: null });
     throw e;
   }
 }

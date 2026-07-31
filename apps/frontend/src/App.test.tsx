@@ -6,7 +6,11 @@ import type { MockedFunction } from 'vitest';
 import { axe } from 'vitest-axe';
 import { App } from './App';
 import { AppProviders } from './main';
-import { AUTO_RETRY_INTERVAL_MS } from './SettingsContext';
+import {
+  AUTO_RETRY_INTERVAL_MS,
+  DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+} from './SettingsContext';
 import type { FC, ReactNode } from 'react';
 
 interface MockCredentialResponse {
@@ -95,7 +99,7 @@ const configSuccess = () =>
   new Response(
     JSON.stringify({
       request_timeout_ms: 60000,
-      llm_model: 'gpt-5.4-mini',
+      llm_model: 'gpt-5.6-luna',
       google_client_id: 'test-client',
     }),
     { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -179,6 +183,11 @@ beforeEach(() => {
 });
 
 describe('App navigation', () => {
+  it('uses separate request deadlines for ordinary calls and multi-call LLM flows', () => {
+    expect(DEFAULT_REQUEST_TIMEOUT_MS).toBe(60_000);
+    expect(DEFAULT_GENERATION_REQUEST_TIMEOUT_MS).toBe(1_500_000);
+  });
+
   it('shows login card when user has not authenticated yet', async () => {
     fetchMock.mockImplementation((input: RequestInfo | URL) => {
       const url = resolveUrl(input);
@@ -216,7 +225,7 @@ describe('App navigation', () => {
       const url = resolveUrl(input);
       if (url.endsWith('/api/config')) {
         return Promise.resolve(
-          new Response(JSON.stringify({ request_timeout_ms: 60000, llm_model: 'gpt-5.4-mini' }), {
+          new Response(JSON.stringify({ request_timeout_ms: 60000, llm_model: 'gpt-5.6-luna' }), {
             status: 200,
             headers: { 'Content-Type': 'application/json' },
           }),
@@ -481,7 +490,7 @@ describe('App navigation', () => {
         }
         return Promise.resolve(
           new Response(
-            JSON.stringify({ request_timeout_ms: 120000, llm_model: 'gpt-5.4-mini' }),
+            JSON.stringify({ request_timeout_ms: 120000, llm_model: 'gpt-5.6-luna' }),
             { status: 200, headers: { 'Content-Type': 'application/json' } },
           ),
         );

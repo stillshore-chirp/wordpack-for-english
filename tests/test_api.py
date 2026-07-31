@@ -1,6 +1,7 @@
 import json
 import re
 import sys
+import time
 import types
 from datetime import UTC, datetime
 from pathlib import Path
@@ -169,6 +170,55 @@ def test_word_pack(client):
     assert saved.json()["lemma"] == "converge"
 
 
+def test_word_pack_generation_job_persists_result(client):
+    with client as job_client:
+        response = job_client.post(
+            "/api/word/pack/jobs",
+            json={"lemma": "concurrent"},
+        )
+        assert response.status_code == 202
+        body = response.json()
+        assert body["job_type"] == "wordpack-generation"
+        job_id = body["job_id"]
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            poll = job_client.get(f"/api/word/pack/jobs/{job_id}")
+            assert poll.status_code == 200
+            body = poll.json()
+            if body["status"] in {"succeeded", "failed"}:
+                break
+            time.sleep(0.01)
+
+    assert body["status"] == "succeeded"
+    assert body["result"]["lemma"] == "concurrent"
+    assert body["result"]["id"].startswith("wp:")
+    saved = client.get(f"/api/word/packs/{body['result']['id']}")
+    assert saved.status_code == 200
+
+
+def test_article_import_job_accepts_idempotent_client_job_id(client):
+    client_job_id = "11111111-1111-4111-8111-111111111111"
+    payload = {
+        "text": "A resilient queue prevents duplicate imports.",
+        "client_job_id": client_job_id,
+    }
+    with client as job_client:
+        first = job_client.post("/api/article/import/jobs", json=payload)
+        second = job_client.post("/api/article/import/jobs", json=payload)
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert first.json()["job_id"] == second.json()["job_id"] == (
+        f"article-import-job:{client_job_id}"
+    )
+
+    invalid = client.post(
+        "/api/article/import/jobs",
+        json={"text": "invalid id", "client_job_id": "not-a-uuid"},
+    )
+    assert invalid.status_code == 422
+
+
 @pytest.mark.parametrize(
     "endpoint,payload",
     [
@@ -276,15 +326,14 @@ def test_generate_word_pack_strict_flow_error(monkeypatch: pytest.MonkeyPatch):
     assert resp.json().get("detail", {}).get("reason_code") == "LLM_JSON_PARSE"
 
 
-def test_create_empty_word_pack_generates_japanese_sense_title(monkeypatch: pytest.MonkeyPatch):
+def test_create_empty_word_pack_does_not_wait_for_llm(monkeypatch: pytest.MonkeyPatch):
     backend_main = _reload_backend_app(monkeypatch, strict=False)
     from fastapi.testclient import TestClient
     import backend.providers as providers_mod
 
     class _StubLLM:
         def complete(self, prompt: str) -> str:
-            # 空パック用の短い日本語タイトル生成プロンプトに対して固定応答
-            return "処理量"
+            raise AssertionError("empty WordPack creation must not call the LLM")
 
     providers_mod._LLM_INSTANCE = _StubLLM()
 
@@ -301,7 +350,7 @@ def test_create_empty_word_pack_generates_japanese_sense_title(monkeypatch: pyte
     target = next((it for it in items if it.get("id") == pack_id), None)
     assert target is not None
     assert target.get("lemma") == "throughput"
-    assert target.get("sense_title") == "処理量"
+    assert target.get("sense_title") == "throughput"
 
 
 
@@ -368,14 +417,14 @@ def test_word_pack_llm_model_updates_on_generate_and_regenerate(client):
         "/api/word/pack",
         json={
             "lemma": "alpha",
-            "model": "gpt-5.4-mini",
+            "model": "gpt-5.6-luna",
             "reasoning": {"effort": "medium"},
             "text": {"verbosity": "low"},
         },
     )
     assert r_gen.status_code == 200
     wp = r_gen.json()
-    assert wp.get("llm_model") == "gpt-5.4-mini"
+    assert wp.get("llm_model") == "gpt-5.6-luna"
     assert wp.get("llm_params")
     assert "reasoning.effort=medium" in wp["llm_params"]
     assert "text.verbosity=low" in wp["llm_params"]
@@ -394,15 +443,15 @@ def test_word_pack_llm_model_updates_on_generate_and_regenerate(client):
     r_regen = client.post(f"/api/word/packs/{pack_id}/regenerate", json={
         "pronunciation_enabled": True,
         "regenerate_scope": "all",
-        "model": "gpt-5.4-nano",
-        "reasoning": {"effort": "minimal"},
+        "model": "gpt-5.6-luna",
+        "reasoning": {"effort": "high"},
         "text": {"verbosity": "medium"},
     })
     assert r_regen.status_code == 200
     wp2 = r_regen.json()
-    assert wp2.get("llm_model") == "gpt-5.4-nano"
+    assert wp2.get("llm_model") == "gpt-5.6-luna"
     assert wp2.get("llm_params")
-    assert "reasoning.effort=minimal" in wp2["llm_params"]
+    assert "reasoning.effort=high" in wp2["llm_params"]
     assert "text.verbosity=medium" in wp2["llm_params"]
     assert isinstance(wp2.get("sense_title"), str) and wp2["sense_title"].strip()
     r_detail_after = client.get(f"/api/word/packs/{pack_id}")
@@ -479,7 +528,7 @@ def test_generate_examples_uses_llm_meta(client, monkeypatch):
     resp = client.post(
         f"/api/word/packs/{pack_id}/examples/Dev/generate",
         json={
-            "model": "gpt-5.4-mini",
+            "model": "gpt-5.6-luna",
             "reasoning": {"effort": "low"},
             "text": {"verbosity": "medium"},
         },
@@ -490,7 +539,7 @@ def test_generate_examples_uses_llm_meta(client, monkeypatch):
     assert payload.get("added") == 2
     assert payload["items"]
     first = payload["items"][0]
-    assert first["llm_model"] == "gpt-5.4-mini"
+    assert first["llm_model"] == "gpt-5.6-luna"
     assert "reasoning.effort=low" in first["llm_params"]
     assert "text.verbosity=medium" in first["llm_params"]
     assert first.get("transcription_typing_count", 0) == 0
@@ -500,8 +549,47 @@ def test_generate_examples_uses_llm_meta(client, monkeypatch):
     detail = r_detail.json()
     examples = detail.get("examples", {}).get("Dev", [])
     assert len(examples) >= 2
-    assert examples[-1]["llm_model"] == "gpt-5.4-mini"
+    assert examples[-1]["llm_model"] == "gpt-5.6-luna"
     assert examples[-1]["transcription_typing_count"] == 0
+
+    # TestClient を context manager として維持し、実運用の ASGI event loop と同様に
+    # 202 応答後も background task が完了するまで同じ portal を存続させる。
+    with client as job_client:
+        job_response = job_client.post(
+            f"/api/word/packs/{pack_id}/examples/Dev/generate/jobs",
+            json={"model": "gpt-5.6-luna", "reasoning": {"effort": "high"}},
+        )
+        assert job_response.status_code == 202
+        job_id = job_response.json()["job_id"]
+        job_body = job_response.json()
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            poll = job_client.get(
+                f"/api/word/packs/{pack_id}/examples/Dev/generate/jobs/{job_id}"
+            )
+            assert poll.status_code == 200
+            job_body = poll.json()
+            if job_body["status"] in {"succeeded", "failed"}:
+                break
+            time.sleep(0.05)
+    assert job_body["status"] == "succeeded"
+    assert job_body["result"]["word_pack_id"] == pack_id
+    assert job_body["result"]["added"] == 2
+
+    monkeypatch.setattr(
+        WordPackFlow,
+        "generate_examples_for_categories",
+        lambda self, lemma, plan: {next(iter(plan.keys())): []},
+        raising=False,
+    )
+    empty_response = client.post(
+        f"/api/word/packs/{pack_id}/examples/Dev/generate",
+        json={"model": "gpt-5.6-luna"},
+    )
+    assert empty_response.status_code == 502
+    assert empty_response.json()["detail"]["reason_code"] == "EMPTY_CONTENT"
+
+
 def test_word_lookup(client: TestClient, monkeypatch: pytest.MonkeyPatch):
     from backend.models.word import WordPack
     from backend.routers import word as word_router
@@ -1146,6 +1234,29 @@ def test_category_generate_and_import_endpoint(client, monkeypatch):
     )
     assert isinstance(body.get("article_ids"), list) and len(body["article_ids"]) >= 1
 
+    # TestClient を context manager として維持し、実運用の ASGI event loop と同様に
+    # 202 応答後も background task が完了するまで同じ portal を存続させる。
+    with client as job_client:
+        job_response = job_client.post(
+            "/api/article/generate_and_import/jobs",
+            json={"category": "Dev"},
+        )
+        assert job_response.status_code == 202
+        job_id = job_response.json()["job_id"]
+        job_body = job_response.json()
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            poll = job_client.get(f"/api/article/generate_and_import/jobs/{job_id}")
+            assert poll.status_code == 200
+            job_body = poll.json()
+            if job_body["status"] in {"succeeded", "failed"}:
+                break
+            time.sleep(0.05)
+    assert job_body["status"] == "succeeded"
+    assert isinstance(job_body["result"]["lemma"], str)
+    assert job_body["result"]["word_pack_id"].startswith("wp:")
+    assert job_body["result"]["generated_examples"] >= 2
+
     # 記事が取得できること
     first_article_id = body["article_ids"][0]
     r_get = client.get(f"/api/article/{first_article_id}")
@@ -1307,17 +1418,17 @@ def test_article_import_includes_llm_metadata(monkeypatch):
 
     payload = {
         "text": "Resilience keeps systems available.",
-        "model": "gpt-5.4-mini",
-        "reasoning": {"effort": "focused"},
+        "model": "gpt-5.6-luna",
+        "reasoning": {"effort": "high"},
         "text_opts": {"verbosity": "medium"},
     }
 
     r_imp = client.post("/api/article/import", json=payload)
     assert r_imp.status_code == 200
     data = r_imp.json()
-    assert data["llm_model"] == "gpt-5.4-mini"
+    assert data["llm_model"] == "gpt-5.6-luna"
     assert data["llm_params"]
-    assert "reasoning.effort=focused" in data["llm_params"]
+    assert "reasoning.effort=high" in data["llm_params"]
     assert "text.verbosity=medium" in data["llm_params"]
     # generation_category は明示指定していないため None のままでよい
     _assert_iso_utc(data["generation_started_at"])
@@ -1328,7 +1439,7 @@ def test_article_import_includes_llm_metadata(monkeypatch):
     r_get = client.get(f"/api/article/{art_id}")
     assert r_get.status_code == 200
     detail = r_get.json()
-    assert detail["llm_model"] == "gpt-5.4-mini"
+    assert detail["llm_model"] == "gpt-5.6-luna"
     assert detail["llm_params"] == data["llm_params"]
     _assert_iso_utc(detail["generation_started_at"])
     _assert_iso_utc(detail["generation_completed_at"])
@@ -1412,7 +1523,7 @@ def test_article_import_category_and_zero_duration(monkeypatch):
 
     payload = {
         "text": "text",
-        "model": "gpt-5.4-mini",
+        "model": "gpt-5.6-luna",
         "generation_category": "Common",
     }
 

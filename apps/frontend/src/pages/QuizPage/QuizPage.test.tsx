@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NotificationsProvider } from '../../NotificationsContext';
 import { QuizPage } from './index';
 import type { Quiz } from '../../features/quiz/types';
+import { APP_EVENTS, dispatchAppEvent } from '../../shared/events/appEvents';
 
 const authState = vi.hoisted(() => ({ isGuest: true }));
 
@@ -19,8 +20,9 @@ vi.mock('../../SettingsContext', () => ({
     settings: {
       apiBase: '/api',
       requestTimeoutMs: 60000,
-      model: 'gpt-5.4-mini',
-      reasoningEffort: 'minimal',
+      generationRequestTimeoutMs: 1_500_000,
+      model: 'gpt-5.6-luna',
+      reasoningEffort: 'high',
       textVerbosity: 'medium',
       pronunciationEnabled: true,
       regenerateScope: 'all',
@@ -291,6 +293,26 @@ describe('QuizPage', () => {
     expect(firstEnglishSentence).not.toHaveClass('is-pinned');
     await waitFor(() => {
       expect(screen.getByRole('dialog', { name: 'WordPack プレビュー' })).toHaveTextContent('wp:mitigate');
+    });
+  });
+
+  it('復旧したWordPack生成の更新イベントで選択中Quizの関連語を再取得する', async () => {
+    const recoveringQuiz: Quiz = structuredClone(quiz);
+    setupFetch(defaultWordPackItems, recoveringQuiz);
+    renderQuizPage();
+
+    expect(await screen.findByRole('heading', { name: 'Reliable API Deployments' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'fallback のWordPack操作を開く' })).toHaveClass('is-missing');
+
+    recoveringQuiz.related_word_packs = recoveringQuiz.related_word_packs.map((link) => (
+      link.lemma === 'fallback'
+        ? { ...link, status: 'existing', word_pack_id: 'wp:fallback', is_empty: false }
+        : link
+    ));
+    act(() => dispatchAppEvent(APP_EVENTS.wordPackUpdated));
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'fallback のWordPack操作を開く' })).not.toHaveClass('is-missing');
     });
   });
 

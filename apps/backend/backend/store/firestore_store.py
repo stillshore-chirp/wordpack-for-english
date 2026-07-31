@@ -14,6 +14,7 @@ from ..infrastructure.firestore.repositories.base import (
     firestore,
 )
 from ..infrastructure.firestore.repositories.examples import FirestoreExampleRepository
+from ..infrastructure.firestore.repositories.generation_jobs import FirestoreGenerationJobRepository
 from ..infrastructure.firestore.repositories.quizzes import FirestoreQuizRepository
 from ..infrastructure.firestore.repositories.regenerate_jobs import FirestoreRegenerateJobRepository
 from ..infrastructure.firestore.repositories.sessions import FirestoreSessionRepository
@@ -81,6 +82,13 @@ class FirestoreRegenerateJobStore(_LegacyClockMixin, FirestoreRegenerateJobRepos
     """Legacy import path for the regenerate job repository."""
 
 
+class FirestoreGenerationJobStore(FirestoreGenerationJobRepository):
+    """Legacy import path for long-running generation jobs."""
+
+    def _now_iso(self) -> str:
+        return _now_iso()
+
+
 class FirestoreSessionStore(FirestoreSessionRepository):
     """Legacy import path for the session repository."""
 
@@ -94,6 +102,7 @@ class AppFirestoreStore(AppFirestoreRepository):
     article_repository_cls = FirestoreArticleStore
     quiz_repository_cls = FirestoreQuizStore
     regenerate_job_repository_cls = FirestoreRegenerateJobStore
+    generation_job_repository_cls = FirestoreGenerationJobStore
     session_repository_cls = FirestoreSessionStore
 
 
@@ -102,6 +111,7 @@ __all__ = [
     "FirestoreArticleStore",
     "FirestoreBaseStore",
     "FirestoreExampleStore",
+    "FirestoreGenerationJobStore",
     "FirestoreQuizStore",
     "FirestoreRegenerateJobStore",
     "FirestoreSessionStore",

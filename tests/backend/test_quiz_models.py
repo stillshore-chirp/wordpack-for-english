@@ -100,7 +100,7 @@ def test_quiz_generate_request_normalizes_sources() -> None:
             "word_pack_ids": ["wp:mitigate"],
             "lemmas": ["Latency", " latency "],
             "avoid_topics": [" malware ", "malware", ""],
-            "model": "gpt-5.4-mini",
+            "model": "gpt-5.6-luna",
         }
     )
 

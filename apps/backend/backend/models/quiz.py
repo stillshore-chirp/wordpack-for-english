@@ -6,7 +6,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..domain.wordpack.lemma import validate_lemma
-from ..llm_models import ensure_supported_llm_model
+from ..llm_models import (
+    ensure_supported_llm_model,
+    ensure_supported_reasoning_options,
+    ensure_supported_text_options,
+)
 
 
 QUIZ_PASSAGE_MAX_LENGTH = 12000
@@ -219,6 +223,16 @@ class QuizGenerateRequest(BaseModel):
     @classmethod
     def ensure_model_supported(cls, value: str | None) -> str | None:
         return ensure_supported_llm_model(value) if value else value
+
+    @field_validator("reasoning")
+    @classmethod
+    def ensure_reasoning_supported(cls, value: dict | None) -> dict | None:
+        return ensure_supported_reasoning_options(value)
+
+    @field_validator("text")
+    @classmethod
+    def ensure_text_supported(cls, value: dict | None) -> dict | None:
+        return ensure_supported_text_options(value)
 
     @field_validator("lemmas")
     @classmethod

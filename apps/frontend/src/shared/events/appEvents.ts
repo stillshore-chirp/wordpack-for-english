@@ -3,6 +3,7 @@ export const APP_EVENTS = {
   wordPackUpdated: 'wordpack:updated',
   wordPackStudyProgress: 'wordpack:study-progress',
   articleUpdated: 'article:updated',
+  quizUpdated: 'quiz:updated',
 } as const;
 
 export interface AuthUnauthorizedDetail {
@@ -22,6 +23,7 @@ export type AppEventDetailMap = {
   [APP_EVENTS.wordPackUpdated]: undefined;
   [APP_EVENTS.wordPackStudyProgress]: WordPackStudyProgressDetail;
   [APP_EVENTS.articleUpdated]: undefined;
+  [APP_EVENTS.quizUpdated]: undefined;
 };
 
 export const dispatchAppEvent = <Name extends keyof AppEventDetailMap>(

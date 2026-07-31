@@ -9,7 +9,11 @@ from contextlib import contextmanager
 from typing import Any, Iterator, Optional
 
 from ..config import settings
-from ..llm_models import ensure_supported_llm_model
+from ..llm_models import (
+    DEFAULT_REASONING_EFFORT,
+    DEFAULT_TEXT_VERBOSITY,
+    ensure_supported_llm_model,
+)
 from ..logging import logger
 from ..observability import get_langfuse, span
 from . import _get_llm_executor, _get_llm_instance, _set_llm_instance
@@ -120,8 +124,8 @@ class _OpenAILLM(_LLMBase):  # pragma: no cover - オンライン利用が前提
         self._client = OpenAI(api_key=api_key)
         self._model = ensure_supported_llm_model(model)
         self._api_key = api_key
-        self._reasoning = reasoning or {"effort": "minimal"}
-        self._text = text or {"verbosity": "medium"}
+        self._reasoning = reasoning or {"effort": DEFAULT_REASONING_EFFORT}
+        self._text = text or {"verbosity": DEFAULT_TEXT_VERBOSITY}
 
     def _extract_text(self, resp: Any) -> str:
         """OpenAI Responses API のレスポンスから本文を抜き出す。"""
@@ -166,7 +170,7 @@ class _OpenAILLM(_LLMBase):  # pragma: no cover - オンライン利用が前提
         kwargs: dict[str, Any] = {
             "model": self._model,
             "input": prompt,
-            "max_output_tokens": int(getattr(settings, "llm_max_tokens", 900)),
+            "max_output_tokens": int(getattr(settings, "llm_max_tokens", 25000)),
             "timeout": settings.llm_timeout_ms / 1000.0,
         }
         if include_reasoning and self._reasoning:

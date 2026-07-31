@@ -1,6 +1,14 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 export type NotificationStatus = 'progress' | 'success' | 'error';
+export type NotificationJobType =
+  | 'wordpack-regeneration'
+  | 'article-import'
+  | 'quiz-generation'
+  | 'category-generate-import'
+  | 'example-generation'
+  | 'wordpack-generation';
+export type NotificationPollingOwner = 'foreground';
 
 export interface NotificationItem {
   id: string;
@@ -14,12 +22,15 @@ export interface NotificationItem {
   wordPackId?: string | null; // 任意: 完了カードからWordPackプレビューを開くためのID
   lemma?: string | null; // 任意: IDがない古い通知や生成直後のlookup用
   jobId?: string | null; // 任意: 非同期再生成ジョブの状態確認用
+  jobType?: NotificationJobType | null; // 任意: ジョブ状態APIの判別用
+  articleId?: string | null; // 任意: 文章インポート完了結果の参照用
+  pollingOwner?: NotificationPollingOwner | null; // 現在の画面が能動poll中かを示す非永続状態
 }
 
 interface NotificationsContextValue {
   notifications: NotificationItem[];
-  add: (input: { title: string; message?: string; status?: NotificationStatus; id?: string; model?: string; category?: string; wordPackId?: string | null; lemma?: string | null; jobId?: string | null }) => string;
-  update: (id: string, patch: Partial<Pick<NotificationItem, 'title' | 'message' | 'status' | 'model' | 'category' | 'wordPackId' | 'lemma' | 'jobId'>>) => void;
+  add: (input: { title: string; message?: string; status?: NotificationStatus; id?: string; model?: string; category?: string; wordPackId?: string | null; lemma?: string | null; jobId?: string | null; jobType?: NotificationJobType | null; articleId?: string | null; pollingOwner?: NotificationPollingOwner | null }) => string;
+  update: (id: string, patch: Partial<Pick<NotificationItem, 'title' | 'message' | 'status' | 'model' | 'category' | 'wordPackId' | 'lemma' | 'jobId' | 'jobType' | 'articleId' | 'pollingOwner'>>) => void;
   remove: (id: string) => void;
   clearAll: () => void;
 }
@@ -34,7 +45,7 @@ function loadFromStorage(): NotificationItem[] {
     if (!raw) return [];
     const items = JSON.parse(raw) as NotificationItem[];
     if (!Array.isArray(items)) return [];
-    return items;
+    return items.map(({ pollingOwner: _pollingOwner, ...item }) => item);
   } catch {
     return [];
   }
@@ -42,7 +53,8 @@ function loadFromStorage(): NotificationItem[] {
 
 function saveToStorage(items: NotificationItem[]) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
+    const persistedItems = items.map(({ pollingOwner: _pollingOwner, ...item }) => item);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(persistedItems));
   } catch {
     // ignore
   }
@@ -71,6 +83,9 @@ export const NotificationsProvider: React.FC<{ children: React.ReactNode } & { p
       wordPackId: input.wordPackId,
       lemma: input.lemma,
       jobId: input.jobId,
+      jobType: input.jobType,
+      articleId: input.articleId,
+      pollingOwner: input.pollingOwner,
     };
     setNotifications((prev) => {
       const next = [...prev, item];
@@ -80,7 +95,15 @@ export const NotificationsProvider: React.FC<{ children: React.ReactNode } & { p
   }, []);
 
   const update: NotificationsContextValue['update'] = useCallback((id, patch) => {
-    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, ...patch, updatedAt: Date.now() } : n)));
+    setNotifications((prev) => prev.map((notification) => {
+      if (notification.id !== id) return notification;
+      const changed = Object.entries(patch).some(([key, value]) => (
+        notification[key as keyof NotificationItem] !== value
+      ));
+      return changed
+        ? { ...notification, ...patch, updatedAt: Date.now() }
+        : notification;
+    }));
   }, []);
 
   const remove: NotificationsContextValue['remove'] = useCallback((id) => {

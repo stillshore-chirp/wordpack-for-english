@@ -41,16 +41,25 @@ describe('ArticleImportPanel model/params wiring (mocked fetch)', () => {
           { status: 200, headers: { 'Content-Type': 'application/json' } }
         );
       }
-      if (url.endsWith('/api/article/import') && init?.method === 'POST') {
+      if (url.endsWith('/api/article/import/jobs') && init?.method === 'POST') {
         return new Response(
-          JSON.stringify({ id: 'art:abcd1234' }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
+          JSON.stringify({
+            job_id: 'article-import-job:test',
+            status: 'succeeded',
+            article_id: 'art:abcd1234',
+          }),
+          { status: 202, headers: { 'Content-Type': 'application/json' } },
         );
       }
-      if (url.endsWith('/api/article/generate_and_import') && init?.method === 'POST') {
+      if (url.endsWith('/api/article/generate_and_import/jobs') && init?.method === 'POST') {
         return new Response(
-          JSON.stringify({ lemma: 'test', word_pack_id: 'wp:test:abcd', category: 'Common', generated_examples: 2, article_ids: ['art:1', 'art:2'] }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
+          JSON.stringify({
+            job_id: 'category-generate-import-job:test',
+            job_type: 'category-generate-import',
+            status: 'succeeded',
+            result: { lemma: 'test', word_pack_id: 'wp:test:abcd', category: 'Common', generated_examples: 2, article_ids: ['art:1', 'art:2'] },
+          }),
+          { status: 202, headers: { 'Content-Type': 'application/json' } },
         );
       }
       if (url.endsWith('/api/article/art:abcd1234') && (!init || (init && (!init.method || init.method === 'GET')))) {
@@ -60,8 +69,8 @@ describe('ArticleImportPanel model/params wiring (mocked fetch)', () => {
             title_en: 'Title',
             body_en: 'Body EN',
             body_ja: 'Body JA',
-            llm_model: 'gpt-5.4-mini',
-            llm_params: 'reasoning.effort=minimal;text.verbosity=medium',
+            llm_model: 'gpt-5.6-luna',
+            llm_params: 'reasoning.effort=high;text.verbosity=medium',
             related_word_packs: [
               { word_pack_id: 'wp:regen:1', lemma: 'alpha', status: 'existing', is_empty: false },
             ],
@@ -119,7 +128,7 @@ describe('ArticleImportPanel model/params wiring (mocked fetch)', () => {
     // モデルUIが表示される
     const modelSelect = await screen.findByLabelText('モデル');
     await act(async () => {
-      await user.selectOptions(modelSelect, 'gpt-5.4-mini');
+      await user.selectOptions(modelSelect, 'gpt-5.6-luna');
     });
 
     const textarea = screen.getByPlaceholderText('文章を貼り付け（日本語/英語）');
@@ -130,23 +139,23 @@ describe('ArticleImportPanel model/params wiring (mocked fetch)', () => {
 
     // リクエスト検証
     const calls = fetchMock.mock.calls
-      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/import') : ((c[0] as URL).toString().endsWith('/api/article/import'))))
+      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/import/jobs') : ((c[0] as URL).toString().endsWith('/api/article/import/jobs'))))
       .map((c) => (c[1]?.body ? JSON.parse(c[1]!.body as string) : {}));
     expect(calls.length).toBeGreaterThan(0);
-    expect(calls.some((b) => b.model === 'gpt-5.4-mini' && b.reasoning && b.text_opts && !('temperature' in b))).toBe(true);
+    expect(calls.some((b) => b.model === 'gpt-5.6-luna' && b.reasoning && b.text_opts && !('temperature' in b))).toBe(true);
   });
 
-  it('sends reasoning/text_opts for gpt-5.4-mini on import, and reasoning/text on generate_and_import', async () => {
+  it('sends reasoning/text_opts for gpt-5.6-luna on import, and reasoning/text on generate_and_import', async () => {
     const fetchMock = setupFetchMocks();
     renderWithAuth();
 
     const user = userEvent.setup();
     await openTab(user, '文章インポート');
 
-    // gpt-5.4-mini 選択で追加UIが表示
+    // gpt-5.6-luna 選択で追加UIが表示
     const modelSelect = await screen.findByLabelText('モデル');
     await act(async () => {
-      await user.selectOptions(modelSelect, 'gpt-5.4-mini');
+      await user.selectOptions(modelSelect, 'gpt-5.6-luna');
     });
     expect(screen.getByLabelText('reasoning.effort')).toBeInTheDocument();
     expect(screen.getByLabelText('text.verbosity')).toBeInTheDocument();
@@ -158,9 +167,9 @@ describe('ArticleImportPanel model/params wiring (mocked fetch)', () => {
     });
 
     const importBodies = fetchMock.mock.calls
-      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/import') : ((c[0] as URL).toString().endsWith('/api/article/import'))))
+      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/import/jobs') : ((c[0] as URL).toString().endsWith('/api/article/import/jobs'))))
       .map((c) => (c[1]?.body ? JSON.parse(c[1]!.body as string) : {}));
-    expect(importBodies.some((b) => b.model === 'gpt-5.4-mini' && b.reasoning && b.text_opts && !('temperature' in b))).toBe(true);
+    expect(importBodies.some((b) => b.model === 'gpt-5.6-luna' && b.reasoning && b.text_opts && !('temperature' in b))).toBe(true);
 
     // 例文生成・記事化でも同様のパラメータ（text キー）
     await closeImportResult(user);
@@ -169,9 +178,9 @@ describe('ArticleImportPanel model/params wiring (mocked fetch)', () => {
     });
 
     const genBodies = fetchMock.mock.calls
-      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/generate_and_import') : ((c[0] as URL).toString().endsWith('/api/article/generate_and_import'))))
+      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/generate_and_import/jobs') : ((c[0] as URL).toString().endsWith('/api/article/generate_and_import/jobs'))))
       .map((c) => (c[1]?.body ? JSON.parse(c[1]!.body as string) : {}));
-    expect(genBodies.some((b) => b.model === 'gpt-5.4-mini' && b.reasoning && b.text && !('temperature' in b))).toBe(true);
+    expect(genBodies.some((b) => b.model === 'gpt-5.6-luna' && b.reasoning && b.text && !('temperature' in b))).toBe(true);
   });
 
   it('sends selected generation_category in /api/article/import payload', async () => {
@@ -193,46 +202,10 @@ describe('ArticleImportPanel model/params wiring (mocked fetch)', () => {
     });
 
     const bodies = fetchMock.mock.calls
-      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/import') : ((c[0] as URL).toString().endsWith('/api/article/import'))))
+      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/import/jobs') : ((c[0] as URL).toString().endsWith('/api/article/import/jobs'))))
       .map((c) => (c[1]?.body ? JSON.parse(c[1]!.body as string) : {}));
     expect(bodies.length).toBeGreaterThan(0);
     expect(bodies.some((b) => b.generation_category === 'Dev')).toBe(true);
-  });
-
-  it('sends reasoning params for gpt-5.4-nano on both import and generate_and_import', async () => {
-    const fetchMock = setupFetchMocks();
-    renderWithAuth();
-
-    const user = userEvent.setup();
-    await openTab(user, '文章インポート');
-
-    const modelSelect = await screen.findByLabelText('モデル');
-    await act(async () => {
-      await user.selectOptions(modelSelect, 'gpt-5.4-nano');
-    });
-    // 追加UIが表示される
-    expect(screen.getByLabelText('reasoning.effort')).toBeInTheDocument();
-    expect(screen.getByLabelText('text.verbosity')).toBeInTheDocument();
-
-    const textarea = screen.getByPlaceholderText('文章を貼り付け（日本語/英語）');
-    await act(async () => {
-      await user.type(textarea, 'hello world nano');
-      await user.click(screen.getByRole('button', { name: '文章をインポート' }));
-    });
-
-    const importBodies = fetchMock.mock.calls
-      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/import') : ((c[0] as URL).toString().endsWith('/api/article/import'))))
-      .map((c) => (c[1]?.body ? JSON.parse(c[1]!.body as string) : {}));
-    expect(importBodies.some((b) => b.model === 'gpt-5.4-nano' && b.reasoning && b.text_opts && !('temperature' in b))).toBe(true);
-
-    await closeImportResult(user);
-    await act(async () => {
-      await user.click(screen.getByRole('button', { name: '例文を生成して記事化' }));
-    });
-    const genBodies = fetchMock.mock.calls
-      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/generate_and_import') : ((c[0] as URL).toString().endsWith('/api/article/generate_and_import'))))
-      .map((c) => (c[1]?.body ? JSON.parse(c[1]!.body as string) : {}));
-    expect(genBodies.some((b) => b.model === 'gpt-5.4-nano' && b.reasoning && b.text && !('temperature' in b))).toBe(true);
   });
 
   it('disables import button and alerts when text length exceeds limit', async () => {
@@ -256,7 +229,7 @@ describe('ArticleImportPanel model/params wiring (mocked fetch)', () => {
     expect(warning).toHaveAttribute('role', 'alert');
 
     const importBodies = fetchMock.mock.calls
-      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/import') : ((c[0] as URL).toString().endsWith('/api/article/import'))))
+      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/import/jobs') : ((c[0] as URL).toString().endsWith('/api/article/import/jobs'))))
       .map((c) => (c[1]?.body ? JSON.parse(c[1]!.body as string) : {}));
     expect(importBodies).toHaveLength(0);
   });
@@ -282,7 +255,7 @@ describe('ArticleImportPanel model/params wiring (mocked fetch)', () => {
     });
 
     const genBodies = fetchMock.mock.calls
-      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/generate_and_import') : ((c[0] as URL).toString().endsWith('/api/article/generate_and_import'))))
+      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/generate_and_import/jobs') : ((c[0] as URL).toString().endsWith('/api/article/generate_and_import/jobs'))))
       .map((c) => (c[1]?.body ? JSON.parse(c[1]!.body as string) : {}));
     expect(genBodies.length).toBeGreaterThan(0);
     expect(genBodies.some((b) => b.category === 'Dev')).toBe(true);
@@ -303,7 +276,7 @@ describe('ArticleImportPanel model/params wiring (mocked fetch)', () => {
     });
 
     const genBodies = fetchMock.mock.calls
-      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/generate_and_import') : ((c[0] as URL).toString().endsWith('/api/article/generate_and_import'))))
+      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/generate_and_import/jobs') : ((c[0] as URL).toString().endsWith('/api/article/generate_and_import/jobs'))))
       .map((c) => (c[1]?.body ? JSON.parse(c[1]!.body as string) : {}));
     expect(genBodies.map((b) => b.category).sort()).toEqual(
       ['Business', 'CS', 'Common', 'Dev', 'LLM'].sort(),
@@ -319,7 +292,7 @@ describe('ArticleImportPanel model/params wiring (mocked fetch)', () => {
 
     const modelSelect = await screen.findByLabelText('モデル');
     await act(async () => {
-      await user.selectOptions(modelSelect, 'gpt-5.4-nano');
+      await user.selectOptions(modelSelect, 'gpt-5.6-luna');
     });
     const textarea = screen.getByPlaceholderText('文章を貼り付け（日本語/英語）');
     await act(async () => {
@@ -335,34 +308,7 @@ describe('ArticleImportPanel model/params wiring (mocked fetch)', () => {
     const regenBodies = fetchMock.mock.calls
       .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/word/packs/wp:regen:1/regenerate/async') : ((c[0] as URL).toString().endsWith('/api/word/packs/wp:regen:1/regenerate/async'))))
       .map((c) => (c[1]?.body ? JSON.parse(c[1]!.body as string) : {}));
-    expect(regenBodies.some((b) => b.model === 'gpt-5.4-nano' && b.reasoning && b.text && !('temperature' in b))).toBe(true);
+    expect(regenBodies.some((b) => b.model === 'gpt-5.6-luna' && b.reasoning && b.text && !('temperature' in b))).toBe(true);
   });
 
-  it('uses selected mini model for regenerate from import result modal', async () => {
-    const fetchMock = setupFetchMocks();
-    renderWithAuth();
-
-    const user = userEvent.setup();
-    await openTab(user, '文章インポート');
-
-    const modelSelect = await screen.findByLabelText('モデル');
-    await act(async () => {
-      await user.selectOptions(modelSelect, 'gpt-5.4-mini');
-    });
-    const textarea = screen.getByPlaceholderText('文章を貼り付け（日本語/英語）');
-    await act(async () => {
-      await user.type(textarea, 'hello regenerate sampling');
-      await user.click(screen.getByRole('button', { name: '文章をインポート' }));
-    });
-
-    const regenBtn = await screen.findByRole('button', { name: '例文を生成' });
-    await act(async () => {
-      await user.click(regenBtn);
-    });
-
-    const regenBodies = fetchMock.mock.calls
-      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/word/packs/wp:regen:1/regenerate/async') : ((c[0] as URL).toString().endsWith('/api/word/packs/wp:regen:1/regenerate/async'))))
-      .map((c) => (c[1]?.body ? JSON.parse(c[1]!.body as string) : {}));
-    expect(regenBodies.some((b) => b.model === 'gpt-5.4-mini' && b.reasoning && b.text && !('temperature' in b))).toBe(true);
-  });
 });

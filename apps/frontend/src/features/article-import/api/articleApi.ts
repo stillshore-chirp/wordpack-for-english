@@ -1,7 +1,43 @@
 import { fetchJson } from '../../../shared/api/fetchJson';
+import { submitIdempotentJob } from '../../../shared/api/submitIdempotentJob';
 import type { ArticleDetailData } from '../../../components/ArticleDetailModal';
 
 export type ArticleDetailResponse = ArticleDetailData;
+
+export interface ArticleImportJobResponse {
+  job_id: string;
+  status: 'queued' | 'running' | 'succeeded' | 'failed';
+  article_id?: string | null;
+  error?: string | null;
+}
+
+export const createArticleImportJob = (
+  apiBase: string,
+  body: Record<string, unknown>,
+  clientJobId: string,
+  options?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<ArticleImportJobResponse> => (
+  submitIdempotentJob(
+    () => fetchJson<ArticleImportJobResponse>(`${apiBase}/article/import/jobs`, {
+      method: 'POST',
+      body: { ...body, client_job_id: clientJobId },
+      signal: options?.signal,
+      timeoutMs: options?.timeoutMs,
+    }),
+    () => !options?.signal?.aborted,
+  )
+);
+
+export const fetchArticleImportJob = (
+  apiBase: string,
+  jobId: string,
+  options?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<ArticleImportJobResponse> => (
+  fetchJson<ArticleImportJobResponse>(
+    `${apiBase}/article/import/jobs/${encodeURIComponent(jobId)}`,
+    options,
+  )
+);
 
 export const fetchArticleDetail = (
   apiBase: string,

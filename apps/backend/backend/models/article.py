@@ -1,8 +1,14 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from ..llm_models import ensure_supported_llm_model
+from ..llm_models import (
+    ensure_supported_llm_model,
+    ensure_supported_reasoning_options,
+    ensure_supported_text_options,
+)
 from .word import ExampleCategory
 
 
@@ -39,6 +45,16 @@ class ArticleImportRequest(BaseModel):
     @classmethod
     def ensure_model_supported(cls, value: str | None) -> str | None:
         return ensure_supported_llm_model(value) if value else value
+
+    @field_validator("reasoning")
+    @classmethod
+    def ensure_reasoning_supported(cls, value: dict | None) -> dict | None:
+        return ensure_supported_reasoning_options(value)
+
+    @field_validator("text_opts")
+    @classmethod
+    def ensure_text_supported(cls, value: dict | None) -> dict | None:
+        return ensure_supported_text_options(value)
 
 
 class ArticleWordPackLink(BaseModel):
@@ -80,6 +96,15 @@ class ArticleDetailResponse(Article):
     warnings: list[str] | None = Field(
         default=None, description="インポート時に発生した警告メッセージの一覧"
     )
+
+
+class ArticleImportJobResponse(BaseModel):
+    """非同期文章インポートの状態。"""
+
+    job_id: str
+    status: Literal["queued", "running", "succeeded", "failed"]
+    article_id: str | None = None
+    error: str | None = None
 
 
 class ArticleListItem(BaseModel):

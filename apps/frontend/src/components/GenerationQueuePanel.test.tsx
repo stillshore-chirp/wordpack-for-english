@@ -68,6 +68,81 @@ const setupFetchMocks = () => {
         headers: { 'Content-Type': 'application/json' },
       });
     }
+    if (url.endsWith('/api/word/packs/wp:alpha/regenerate/jobs/job-running')) {
+      return new Response(JSON.stringify({
+        job_id: 'job-running',
+        status: 'running',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (url.endsWith('/api/word/pack/jobs/wordpack-generation-job%3Aalpha')) {
+      return new Response(JSON.stringify({
+        job_id: 'wordpack-generation-job:alpha',
+        job_type: 'wordpack-generation',
+        status: 'succeeded',
+        result: {
+          id: 'wp:alpha',
+          ...wordPackResponse,
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (url.endsWith('/api/article/import/jobs/article-import-job%3Aalpha')) {
+      return new Response(JSON.stringify({
+        job_id: 'article-import-job:alpha',
+        status: 'succeeded',
+        article_id: 'art:alpha',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (url.endsWith('/api/quiz/generate/jobs/quiz-job%3Aalpha')) {
+      return new Response(JSON.stringify({
+        job_id: 'quiz-job:alpha',
+        status: 'succeeded',
+        quiz_id: 'quiz:alpha',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (url.endsWith('/api/article/generate_and_import/jobs/category-job%3Aalpha')) {
+      return new Response(JSON.stringify({
+        job_id: 'category-job:alpha',
+        job_type: 'category-generate-import',
+        status: 'succeeded',
+        result: {
+          lemma: 'alpha',
+          word_pack_id: 'wp:alpha',
+          category: 'Dev',
+          generated_examples: 2,
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (url.endsWith('/api/word/packs/wp%3Aalpha/examples/Dev/generate/jobs/example-job%3Aalpha')) {
+      return new Response(JSON.stringify({
+        job_id: 'example-job:alpha',
+        job_type: 'example-generation',
+        status: 'succeeded',
+        result: {
+          word_pack_id: 'wp:alpha',
+          lemma: 'alpha',
+          category: 'Dev',
+          added: 2,
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     if (url.endsWith('/api/word/lemma/alpha')) {
       return new Response(JSON.stringify({ found: true, id: 'wp:alpha', lemma: 'alpha', sense_title: 'alpha概説' }), {
         status: 200,
@@ -113,6 +188,24 @@ const QueueHarness: React.FC = () => {
         })}
       >
         生成を完了
+      </button>
+      <button
+        type="button"
+        onClick={() => {
+          notificationIdRef.current = add({
+            id: 'n-foreground-category',
+            title: '【Dev】の例文生成・記事化を開始します',
+            message: '前景画面が状態を確認しています',
+            status: 'progress',
+            model: 'gpt-5.6-luna',
+            category: 'Dev',
+            jobId: 'category-job:alpha',
+            jobType: 'category-generate-import',
+            pollingOwner: 'foreground',
+          });
+        }}
+      >
+        前景ポーリングを開始
       </button>
       <GenerationQueuePanel />
     </>
@@ -209,7 +302,7 @@ describe('GenerationQueuePanel', () => {
           status: 'progress',
           createdAt: staleAt,
           updatedAt: staleAt,
-          model: 'gpt-5.4-mini',
+          model: 'gpt-5.6-luna',
           wordPackId: 'wp:alpha',
           lemma: 'alpha',
           jobId: 'job-alpha',
@@ -225,7 +318,7 @@ describe('GenerationQueuePanel', () => {
     expect(requestedUrls.some((url) => url.endsWith('/api/word/packs/wp:alpha/regenerate/jobs/job-alpha'))).toBe(true);
   });
 
-  it('ジョブIDがない古い進行中カードは完了扱いしない', async () => {
+  it('ジョブIDがない進行中カードは同期処理として期限切れ補正しない', async () => {
     const staleAt = Date.now() - 21 * 60 * 1000;
     localStorage.setItem(
       'wpfe.notifications.v1',
@@ -237,7 +330,7 @@ describe('GenerationQueuePanel', () => {
           status: 'progress',
           createdAt: staleAt,
           updatedAt: staleAt,
-          model: 'gpt-5.4-mini',
+          model: 'gpt-5.6-luna',
           wordPackId: 'wp:alpha',
           lemma: 'alpha',
         },
@@ -245,9 +338,282 @@ describe('GenerationQueuePanel', () => {
     );
     renderQueue();
 
-    await waitFor(() => {
-      expect(screen.getAllByText(/ジョブIDが保存されていないため/).length).toBeGreaterThan(0);
-    });
+    expect(await screen.findByRole('button', { name: 'キューから隠す' })).toBeInTheDocument();
+    expect(screen.queryByText(/ジョブIDが保存されていないため/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'alpha の生成結果プレビューを開く' })).not.toBeInTheDocument();
+  });
+
+  it('全体上限を越えた文章インポートジョブは状態APIから完了へ補正する', async () => {
+    const articleUpdated = vi.fn();
+    window.addEventListener('article:updated', articleUpdated);
+    const staleAt = Date.now() - 27 * 60 * 1000;
+    localStorage.setItem(
+      'wpfe.notifications.v1',
+      JSON.stringify([
+        {
+          id: 'n-stale-article',
+          title: '文章インポート中...',
+          message: 'バックグラウンドで文章を処理しています',
+          status: 'progress',
+          createdAt: staleAt,
+          updatedAt: staleAt,
+          model: 'gpt-5.6-luna',
+          jobId: 'article-import-job:alpha',
+          jobType: 'article-import',
+        },
+      ]),
+    );
+    renderQueue();
+
+    expect(await screen.findByText('文章インポート完了')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent('保存済み記事を確認しました');
+    });
+    expect(
+      requestedUrls.some((url) => url.endsWith('/api/article/import/jobs/article-import-job%3Aalpha')),
+    ).toBe(true);
+    expect(articleUpdated).toHaveBeenCalledOnce();
+    window.removeEventListener('article:updated', articleUpdated);
+  });
+
+  it('再読込後の文章インポートジョブは全体上限を待たずに状態確認を再開する', async () => {
+    const persistedAt = Date.now() - 10 * 1000;
+    localStorage.setItem(
+      'wpfe.notifications.v1',
+      JSON.stringify([
+        {
+          id: 'n-restored-article',
+          title: '文章インポート中...',
+          message: 'バックグラウンドで文章を処理しています',
+          status: 'progress',
+          createdAt: persistedAt,
+          updatedAt: persistedAt,
+          model: 'gpt-5.6-luna',
+          jobId: 'article-import-job:alpha',
+          jobType: 'article-import',
+        },
+      ]),
+    );
+    renderQueue();
+
+    expect(await screen.findByText('文章インポート完了')).toBeInTheDocument();
+    expect(
+      requestedUrls.some((url) => url.endsWith('/api/article/import/jobs/article-import-job%3Aalpha')),
+    ).toBe(true);
+  });
+
+  it('再読込後のQuiz生成ジョブは状態APIから完了へ補正する', async () => {
+    const quizUpdated = vi.fn();
+    window.addEventListener('quiz:updated', quizUpdated);
+    const persistedAt = Date.now() - 10 * 1000;
+    localStorage.setItem(
+      'wpfe.notifications.v1',
+      JSON.stringify([
+        {
+          id: 'n-restored-quiz',
+          title: 'Quiz生成中',
+          message: '生成はサーバーで継続中です',
+          status: 'progress',
+          createdAt: persistedAt,
+          updatedAt: persistedAt,
+          model: 'gpt-5.6-luna',
+          jobId: 'quiz-job:alpha',
+          jobType: 'quiz-generation',
+        },
+      ]),
+    );
+    renderQueue();
+
+    expect(await screen.findByText('Quiz生成完了')).toBeInTheDocument();
+    expect(
+      requestedUrls.some((url) => url.endsWith('/api/quiz/generate/jobs/quiz-job%3Aalpha')),
+    ).toBe(true);
+    expect(quizUpdated).toHaveBeenCalledOnce();
+    window.removeEventListener('quiz:updated', quizUpdated);
+  });
+
+  it('再読込後のカテゴリ生成・記事化ジョブはWordPackと記事を更新する', async () => {
+    const persistedAt = Date.now() - 10 * 1000;
+    localStorage.setItem(
+      'wpfe.notifications.v1',
+      JSON.stringify([{
+        id: 'n-restored-category',
+        title: '【Dev】の例文生成・記事化を開始します',
+        message: 'バックグラウンドで生成しています',
+        status: 'progress',
+        createdAt: persistedAt,
+        updatedAt: persistedAt,
+        model: 'gpt-5.6-luna',
+        category: 'Dev',
+        jobId: 'category-job:alpha',
+        jobType: 'category-generate-import',
+      }]),
+    );
+    renderQueue();
+
+    expect(await screen.findByRole('button', { name: 'alpha の生成結果プレビューを開く' })).toBeInTheDocument();
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent('2件の例文から記事を作成しました');
+    });
+    expect(
+      requestedUrls.some((url) => url.endsWith('/api/article/generate_and_import/jobs/category-job%3Aalpha')),
+    ).toBe(true);
+  });
+
+  it('再読込後の新規WordPack生成ジョブは完了カードへ補正する', async () => {
+    const persistedAt = Date.now() - 10 * 1000;
+    localStorage.setItem(
+      'wpfe.notifications.v1',
+      JSON.stringify([{
+        id: 'n-restored-wordpack-generation',
+        title: '【alpha】の生成処理中...',
+        message: 'バックグラウンドで生成しています',
+        status: 'progress',
+        createdAt: persistedAt,
+        updatedAt: persistedAt,
+        model: 'gpt-5.6-luna',
+        lemma: 'alpha',
+        jobId: 'wordpack-generation-job:alpha',
+        jobType: 'wordpack-generation',
+      }]),
+    );
+    renderQueue();
+
+    expect(await screen.findByRole('button', { name: 'alpha の生成結果プレビューを開く' })).toBeInTheDocument();
+    expect(
+      requestedUrls.some((url) => url.endsWith('/api/word/pack/jobs/wordpack-generation-job%3Aalpha')),
+    ).toBe(true);
+  });
+
+  it('再読込後の追加例文生成ジョブはWordPackの完了カードへ補正する', async () => {
+    const persistedAt = Date.now() - 10 * 1000;
+    localStorage.setItem(
+      'wpfe.notifications.v1',
+      JSON.stringify([{
+        id: 'n-restored-example',
+        title: '【alpha】の生成処理中...',
+        message: '例文をバックグラウンドで追加生成しています',
+        status: 'progress',
+        createdAt: persistedAt,
+        updatedAt: persistedAt,
+        model: 'gpt-5.6-luna',
+        category: 'Dev',
+        wordPackId: 'wp:alpha',
+        lemma: 'alpha',
+        jobId: 'example-job:alpha',
+        jobType: 'example-generation',
+      }]),
+    );
+    renderQueue();
+
+    expect(await screen.findByRole('button', { name: 'alpha の生成結果プレビューを開く' })).toBeInTheDocument();
+    expect(
+      requestedUrls.some((url) => url.endsWith('/api/word/packs/wp%3Aalpha/examples/Dev/generate/jobs/example-job%3Aalpha')),
+    ).toBe(true);
+  });
+
+  it('状態確認が未完了の間は同じジョブを重複pollしない', async () => {
+    vi.useFakeTimers();
+    const persistedAt = Date.now() - 10 * 1000;
+    localStorage.setItem(
+      'wpfe.notifications.v1',
+      JSON.stringify([
+        {
+          id: 'n-slow-article',
+          title: '文章インポート中...',
+          message: 'バックグラウンドで文章を処理しています',
+          status: 'progress',
+          createdAt: persistedAt,
+          updatedAt: persistedAt,
+          model: 'gpt-5.6-luna',
+          jobId: 'article-import-job:slow',
+          jobType: 'article-import',
+        },
+      ]),
+    );
+    const fetchMock = vi.mocked(global.fetch);
+    const baseImplementation = fetchMock.getMockImplementation();
+    let statusRequestCount = 0;
+    const statusRequestResolvers: Array<(response: Response) => void> = [];
+    fetchMock.mockImplementation((input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/api/article/import/jobs/article-import-job%3Aslow')) {
+        statusRequestCount += 1;
+        return new Promise<Response>((resolve) => {
+          statusRequestResolvers.push(resolve);
+        });
+      }
+      if (!baseImplementation) throw new Error('fetch mock is unavailable');
+      return baseImplementation(input, init);
+    });
+
+    renderQueue();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6000);
+    });
+
+    expect(statusRequestCount).toBe(1);
+    statusRequestResolvers[0]?.(new Response(JSON.stringify({
+      job_id: 'article-import-job:slow',
+      status: 'running',
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    await act(async () => {});
+  });
+
+  it('前景ポーラーの実行中は復旧pollを重ねず再読込後に引き継ぐ', async () => {
+    const rendered = renderQueue();
+    await screen.findByRole('region', { name: '生成キュー' });
+    vi.useFakeTimers();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+
+    await user.click(screen.getByRole('button', { name: '前景ポーリングを開始' }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6000);
+    });
+
+    const statusPath = '/api/article/generate_and_import/jobs/category-job%3Aalpha';
+    expect(requestedUrls.some((url) => url.endsWith(statusPath))).toBe(false);
+    const persisted = JSON.parse(localStorage.getItem('wpfe.notifications.v1') || '[]');
+    expect(persisted[0]).not.toHaveProperty('pollingOwner');
+
+    rendered.unmount();
+    renderQueue();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(requestedUrls.some((url) => url.endsWith(statusPath))).toBe(true);
+  });
+
+  it('生成上限内でrunningのWordPackジョブは失敗扱いにしない', async () => {
+    const startedAt = Date.now() - 21 * 60 * 1000;
+    localStorage.setItem(
+      'wpfe.notifications.v1',
+      JSON.stringify([
+        {
+          id: 'n-running-alpha',
+          title: '【alpha】の再生成ジョブ開始',
+          message: 'バックグラウンドで再生成しています',
+          status: 'progress',
+          createdAt: startedAt,
+          updatedAt: startedAt,
+          model: 'gpt-5.6-luna',
+          wordPackId: 'wp:alpha',
+          lemma: 'alpha',
+          jobId: 'job-running',
+        },
+      ]),
+    );
+    renderQueue();
+
+    await waitFor(() => {
+      expect(
+        requestedUrls.some((url) => url.endsWith('/api/word/packs/wp:alpha/regenerate/jobs/job-running')),
+      ).toBe(true);
+    });
+    expect(screen.getByRole('button', { name: 'キューから隠す' })).toBeInTheDocument();
+    expect(screen.queryByText(/生成状態を確認できません/)).not.toBeInTheDocument();
   });
 });

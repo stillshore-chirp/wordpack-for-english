@@ -193,17 +193,34 @@ class Settings(BaseSettings):
     )
 
     # --- LLM 呼出しのタイムアウト/リトライ ---
-    llm_timeout_ms: int = Field(
+    request_timeout_ms: int = Field(
         default=60000,
+        description=(
+            "Timeout for ordinary frontend API requests (ms) / "
+            "通常のフロントエンドAPIリクエストのタイムアウト(ms)"
+        ),
+    )
+    llm_timeout_ms: int = Field(
+        default=300000,
         description="Per-attempt timeout for LLM calls (ms) / LLM呼出しの試行毎タイムアウト(ms)",
+    )
+    llm_request_timeout_ms: int = Field(
+        default=1500000,
+        description=(
+            "End-to-end timeout for multi-call LLM request flows (ms) / "
+            "複数LLM呼出しを含むリクエスト全体のタイムアウト(ms)"
+        ),
     )
     llm_max_retries: int = Field(
         default=1,
         description="Max retries for LLM calls / LLM呼出しの最大リトライ回数",
     )
     llm_max_tokens: int = Field(
-        default=900,
-        description="Max tokens for LLM completion output / LLM出力の最大トークン数",
+        default=25000,
+        description=(
+            "Max generated tokens including reasoning and visible output / "
+            "推論と可視出力を含む生成トークン上限"
+        ),
     )
 
     # （削除済み）

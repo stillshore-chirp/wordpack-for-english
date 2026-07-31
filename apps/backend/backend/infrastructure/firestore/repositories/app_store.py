@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from .base import Any, Iterable, Mapping, Sequence, datetime, firestore
-from .articles import FirestoreArticleRepository
+from .articles import ArticleImportJobStatus, FirestoreArticleRepository
 from .examples import FirestoreExampleRepository
+from .generation_jobs import FirestoreGenerationJobRepository, GenerationJobStatus
 from .quizzes import FirestoreQuizRepository, QuizGenerationJobStatus
 from .regenerate_jobs import FirestoreRegenerateJobRepository, RegenerateJobStatus
 from .sessions import FirestoreSessionRepository
@@ -19,6 +20,7 @@ class AppFirestoreRepository:
     article_repository_cls = FirestoreArticleRepository
     quiz_repository_cls = FirestoreQuizRepository
     regenerate_job_repository_cls = FirestoreRegenerateJobRepository
+    generation_job_repository_cls = FirestoreGenerationJobRepository
     session_repository_cls = FirestoreSessionRepository
 
     def __init__(self, *, client: firestore.Client | None = None) -> None:
@@ -29,6 +31,7 @@ class AppFirestoreRepository:
         self.articles = self.article_repository_cls(self._client)
         self.quizzes = self.quiz_repository_cls(self._client)
         self.regenerate_jobs = self.regenerate_job_repository_cls(self._client)
+        self.generation_jobs = self.generation_job_repository_cls(self._client)
         self.sessions = self.session_repository_cls(self._client)
 
     # --- Users ---
@@ -174,6 +177,76 @@ class AppFirestoreRepository:
 
     def get_regenerate_job(self, job_id: str) -> Mapping[str, Any] | None:
         return self.regenerate_jobs.get_regenerate_job(job_id)
+
+    # --- Article import jobs ---
+    def create_article_import_job(
+        self,
+        *,
+        job_id: str,
+        owner_user_id: str,
+        request_fingerprint: str = "",
+        status: ArticleImportJobStatus = "queued",
+    ) -> Mapping[str, Any]:
+        return self.articles.create_article_import_job(
+            job_id=job_id,
+            owner_user_id=owner_user_id,
+            request_fingerprint=request_fingerprint,
+            status=status,
+        )
+
+    def update_article_import_job(
+        self,
+        job_id: str,
+        *,
+        status: ArticleImportJobStatus,
+        article_id: str | None = None,
+        error: str | None = None,
+    ) -> Mapping[str, Any] | None:
+        return self.articles.update_article_import_job(
+            job_id,
+            status=status,
+            article_id=article_id,
+            error=error,
+        )
+
+    def get_article_import_job(self, job_id: str) -> Mapping[str, Any] | None:
+        return self.articles.get_article_import_job(job_id)
+
+    # --- Long-running generation jobs ---
+    def create_generation_job(
+        self,
+        *,
+        job_id: str,
+        owner_user_id: str,
+        job_type: str,
+        request_fingerprint: str = "",
+        status: GenerationJobStatus = "queued",
+    ) -> Mapping[str, Any]:
+        return self.generation_jobs.create_generation_job(
+            job_id=job_id,
+            owner_user_id=owner_user_id,
+            job_type=job_type,
+            request_fingerprint=request_fingerprint,
+            status=status,
+        )
+
+    def update_generation_job(
+        self,
+        job_id: str,
+        *,
+        status: GenerationJobStatus,
+        result_json: str | None = None,
+        error: str | None = None,
+    ) -> Mapping[str, Any] | None:
+        return self.generation_jobs.update_generation_job(
+            job_id,
+            status=status,
+            result_json=result_json,
+            error=error,
+        )
+
+    def get_generation_job(self, job_id: str) -> Mapping[str, Any] | None:
+        return self.generation_jobs.get_generation_job(job_id)
 
     # --- Examples ---
     def update_example_study_progress(

@@ -12,6 +12,16 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, sta
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from ..application.article.import_jobs import (
+    enqueue_article_import_job,
+    get_article_import_job,
+)
+from ..application.common.generation_jobs import (
+    GenerationJobResponse,
+    enqueue_generation_job,
+    fingerprint_generation_request,
+    get_generation_job,
+)
 from ..auth import principal_from_request
 from ..authorization.dependencies import require_user_permission
 from ..authorization.permissions import Permission
@@ -26,17 +36,23 @@ from ..domain.article.lemma_filter import STOP_LEMMAS, filter_article_lemmas
 from ..flows.article_import import ArticleImportFlow
 from ..flows.category_generate_import import CategoryGenerateAndImportFlow
 from ..logging import logger
-from ..llm_models import ensure_supported_llm_model
+from ..llm_models import (
+    ensure_supported_llm_model,
+    ensure_supported_reasoning_options,
+    ensure_supported_text_options,
+)
 from ..models.article import (
     ARTICLE_IMPORT_TEXT_MAX_LENGTH,
     ArticleDetailResponse,
     ArticleGuestPublicUpdateRequest,
     ArticleGuestPublicUpdateResponse,
     ArticleImportRequest,
+    ArticleImportJobResponse,
     ArticleListItem,
     ArticleListResponse,
     ArticleWordPackLink,
 )
+from ..infrastructure.runtime import AsyncioTaskScheduler, PrefixedUuidGenerator
 from ..models.word import ExampleCategory
 from ..observability import request_trace, span
 from ..store import store as _default_store
@@ -111,18 +127,90 @@ async def import_article(
     """文章インポートを受け付け、文字数超過は 413 で通知する。"""
 
     req = _validate_import_request(payload)
-    flow = ArticleImportFlow(owner_user_id=principal.user_id)
-    # ルータ層は薄く、Langfuse の親スパンを貼ってフローを呼び出す
-    from ..observability import request_trace
+    return _run_article_import(
+        req,
+        owner_user_id=principal.user_id,
+        endpoint="/api/article/import",
+    )
 
+
+def _run_article_import(
+    req: ArticleImportRequest,
+    *,
+    owner_user_id: str,
+    endpoint: str,
+) -> ArticleDetailResponse:
+    flow = ArticleImportFlow(owner_user_id=owner_user_id)
     with request_trace(
-        name="ArticleImportFlow", metadata={"endpoint": "/api/article/import"}
+        name="ArticleImportFlow", metadata={"endpoint": endpoint}
     ) as ctx:
         tr = ctx.get("trace") if isinstance(ctx, dict) else None  # type: ignore[assignment]
         with span(
             trace=tr, name="article.flow.run", input={"text_chars": len(req.text or "")}
         ) as _:
             return flow.run(req)
+
+
+@router.post(
+    "/import/jobs",
+    response_model=ArticleImportJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="文章インポートジョブを開始",
+)
+async def create_article_import_job(
+    payload: dict[str, Any] = Body(...),
+    principal: Principal = Depends(require_user_permission(Permission.ARTICLE_CREATE)),
+) -> ArticleImportJobResponse:
+    """Firebase Hosting の同期上限を避け、文章インポートを非同期実行する。"""
+
+    request_payload = dict(payload)
+    client_job_id = request_payload.pop("client_job_id", None)
+    resolved_job_id: str | None = None
+    if client_job_id is not None:
+        try:
+            resolved_job_id = f"article-import-job:{uuid.UUID(str(client_job_id))}"
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="client_job_id must be a UUID",
+            ) from exc
+
+    req = _validate_import_request(request_payload)
+    try:
+        return await enqueue_article_import_job(
+            req,
+            owner_user_id=principal.user_id,
+            store=store,
+            runner=partial(
+                _run_article_import,
+                owner_user_id=principal.user_id,
+                endpoint="/api/article/import/jobs",
+            ),
+            scheduler=AsyncioTaskScheduler(),
+            id_generator=PrefixedUuidGenerator("article-import-job:"),
+            job_id=resolved_job_id,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
+
+
+@router.get(
+    "/import/jobs/{job_id}",
+    response_model=ArticleImportJobResponse,
+    summary="文章インポートジョブの状態を取得",
+)
+async def get_article_import_job_status(
+    job_id: str,
+    principal: Principal = Depends(require_user_permission(Permission.ARTICLE_READ)),
+) -> ArticleImportJobResponse:
+    job = await get_article_import_job(
+        job_id,
+        owner_user_id=principal.user_id,
+        store=store,
+    )
+    if job is None:
+        raise HTTPException(status_code=404, detail="Article import job not found")
+    return job
 
 
 @router.get("/", response_model=ArticleListResponse)
@@ -308,11 +396,26 @@ class CategoryGenerateImportRequest(BaseModel):
     model: str | None = None
     reasoning: dict | None = None
     text: dict | None = None
+    client_job_id: uuid.UUID | None = Field(
+        default=None,
+        exclude=True,
+        description="202応答喪失時に同じ生成ジョブを再取得するためのクライアント採番UUID",
+    )
 
     @field_validator("model")
     @classmethod
     def ensure_model_supported(cls, value: str | None) -> str | None:
         return ensure_supported_llm_model(value) if value else value
+
+    @field_validator("reasoning")
+    @classmethod
+    def ensure_reasoning_supported(cls, value: dict | None) -> dict | None:
+        return ensure_supported_reasoning_options(value)
+
+    @field_validator("text")
+    @classmethod
+    def ensure_text_supported(cls, value: dict | None) -> dict | None:
+        return ensure_supported_text_options(value)
 
 
 @router.post("/generate_and_import")
@@ -342,3 +445,79 @@ async def generate_and_import_examples(
             # フローは同期実装のため、イベントループをブロックしないようスレッドにオフロード
             result = await anyio.to_thread.run_sync(partial(flow.run, req.category))
             return result
+
+
+@router.post(
+    "/generate_and_import/jobs",
+    response_model=GenerationJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="カテゴリ例文生成・記事化ジョブを開始",
+)
+async def create_generate_and_import_job(
+    req: CategoryGenerateImportRequest,
+    principal: Principal = Depends(require_user_permission(Permission.ARTICLE_CREATE)),
+) -> GenerationJobResponse:
+    """カテゴリ例文生成から記事保存までを、再接続可能な非同期ジョブとして開始する。"""
+
+    def runner() -> dict[str, object]:
+        flow = CategoryGenerateAndImportFlow(
+            model=req.model,
+            reasoning=req.reasoning,
+            text=req.text,
+            owner_user_id=principal.user_id,
+        )
+        with request_trace(
+            name="CategoryGenerateAndImportFlow",
+            metadata={"endpoint": "/api/article/generate_and_import/jobs"},
+        ) as ctx:
+            trace = ctx.get("trace") if isinstance(ctx, dict) else None
+            with span(
+                trace=trace,
+                name="article.category_generate_and_import",
+                input={"category": req.category.value},
+            ):
+                return flow.run(req.category)
+
+    try:
+        return await enqueue_generation_job(
+            owner_user_id=principal.user_id,
+            job_type="category-generate-import",
+            request_fingerprint=fingerprint_generation_request(
+                "category-generate-import",
+                req.model_dump(mode="json", exclude={"client_job_id"}),
+            ),
+            store=store,
+            runner=runner,
+            scheduler=AsyncioTaskScheduler(),
+            id_generator=PrefixedUuidGenerator("category-generate-import-job:"),
+            job_id=(
+                f"category-generate-import-job:{req.client_job_id}"
+                if req.client_job_id is not None
+                else None
+            ),
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+
+@router.get(
+    "/generate_and_import/jobs/{job_id}",
+    response_model=GenerationJobResponse,
+    summary="カテゴリ例文生成・記事化ジョブの状態を取得",
+)
+async def get_generate_and_import_job_status(
+    job_id: str,
+    principal: Principal = Depends(require_user_permission(Permission.ARTICLE_READ)),
+) -> GenerationJobResponse:
+    job = await get_generation_job(
+        job_id,
+        owner_user_id=principal.user_id,
+        expected_job_type="category-generate-import",
+        store=store,
+    )
+    if job is None:
+        raise HTTPException(status_code=404, detail="Generation job not found")
+    return job

@@ -122,6 +122,95 @@ def test_firestore_regenerate_job_roundtrip(firestore_store: AppFirestoreStore) 
     assert firestore_store.get_regenerate_job("missing") is None
 
 
+def test_firestore_article_import_job_roundtrip(firestore_store: AppFirestoreStore) -> None:
+    created = firestore_store.create_article_import_job(
+        job_id="article-import-job:demo",
+        owner_user_id="user-1",
+        request_fingerprint="article-fingerprint",
+    )
+
+    assert created["job_id"] == "article-import-job:demo"
+    assert created["owner_user_id"] == "user-1"
+    assert created["status"] == "queued"
+    assert created["article_id"] is None
+    assert created["request_fingerprint"] == "article-fingerprint"
+    replay = firestore_store.create_article_import_job(
+        job_id="article-import-job:demo",
+        owner_user_id="user-2",
+    )
+    assert replay["_created"] is False
+    assert replay["owner_user_id"] == "user-1"
+
+    running = firestore_store.update_article_import_job(
+        "article-import-job:demo",
+        status="running",
+    )
+    assert running is not None
+    assert running["status"] == "running"
+
+    succeeded = firestore_store.update_article_import_job(
+        "article-import-job:demo",
+        status="succeeded",
+        article_id="art:demo",
+    )
+    assert succeeded is not None
+    assert succeeded["article_id"] == "art:demo"
+
+    found = firestore_store.get_article_import_job("article-import-job:demo")
+    assert found is not None
+    assert found["owner_user_id"] == "user-1"
+    assert firestore_store.get_article_import_job("missing") is None
+
+
+def test_firestore_generation_job_roundtrip(firestore_store: AppFirestoreStore) -> None:
+    created = firestore_store.create_generation_job(
+        job_id="generation-job:demo",
+        owner_user_id="user-1",
+        job_type="example-generation",
+        request_fingerprint="example-fingerprint",
+    )
+    assert created["status"] == "queued"
+    assert created["owner_user_id"] == "user-1"
+    assert created["job_type"] == "example-generation"
+    assert created["request_fingerprint"] == "example-fingerprint"
+
+    succeeded = firestore_store.update_generation_job(
+        "generation-job:demo",
+        status="succeeded",
+        result_json='{"word_pack_id":"wp:demo","added":2}',
+    )
+    assert succeeded is not None
+    assert succeeded["result_json"] == '{"word_pack_id":"wp:demo","added":2}'
+
+    found = firestore_store.get_generation_job("generation-job:demo")
+    assert found is not None
+    assert found["job_id"] == "generation-job:demo"
+    assert firestore_store.get_generation_job("missing") is None
+
+
+def test_firestore_generation_jobs_are_created_atomically(
+    firestore_store: AppFirestoreStore,
+) -> None:
+    first = firestore_store.create_generation_job(
+        job_id="generation-job:idempotent",
+        owner_user_id="user-1",
+        job_type="wordpack-generation",
+        request_fingerprint="wordpack-alpha",
+    )
+    replay = firestore_store.create_generation_job(
+        job_id="generation-job:idempotent",
+        owner_user_id="user-2",
+        job_type="example-generation",
+        request_fingerprint="example-beta",
+    )
+
+    assert first["_created"] is True
+    assert replay["_created"] is False
+    assert replay["owner_user_id"] == "user-1"
+    assert replay["job_type"] == "wordpack-generation"
+    assert replay["request_fingerprint"] == "wordpack-alpha"
+
+
 def test_firestore_quiz_generation_job_roundtrip(firestore_store: AppFirestoreStore) -> None:
     created = firestore_store.create_quiz_generation_job(job_id="quiz-job:demo")
 

@@ -30,7 +30,7 @@ flowchart TB
     end
 
     subgraph External["外部サービス"]
-        OpenAI["OpenAI API<br/>(gpt-5.4-mini / TTS)"]
+        OpenAI["OpenAI API<br/>(gpt-5.6-luna / TTS)"]
         GoogleOAuth["Google OAuth 2.0<br/>(認証)"]
         Langfuse["Langfuse<br/>(LLM トレース)<br/>※ Optional"]
     end
@@ -56,7 +56,7 @@ flowchart TB
 | **Cloud Firestore** | ユーザー情報・WordPack・例文・インポート記事を永続化。ゲスト閲覧用のデモデータは `word_packs.metadata.guest_demo=true` で識別する。`firestore.indexes.json` で複合インデックスを管理。 |
 | **Artifact Registry** | Cloud Build でビルドした Docker イメージを保存。 |
 | **Cloud Load Balancer** | HTTPS 終端と `X-Forwarded-For` によるクライアント IP 復元。 |
-| **OpenAI API** | WordPack 生成（gpt-5.4-mini）と音声読み上げ（gpt-4o-mini-tts）。 |
+| **OpenAI API** | WordPack 生成（gpt-5.6-luna）と音声読み上げ（gpt-4o-mini-tts）。 |
 | **Google OAuth 2.0** | フロントエンドでの Google ログイン。バックエンドは `/api/config` でクライアント ID を配布し、受け取った ID トークンを検証してセッションを発行する。 |
 | **Langfuse** | LLM のプロンプト・レスポンスをトレース（任意設定）。 |
 

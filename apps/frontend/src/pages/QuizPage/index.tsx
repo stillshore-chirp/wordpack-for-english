@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../AuthContext';
 import { useNotifications } from '../../NotificationsContext';
-import { useSettings } from '../../SettingsContext';
+import {
+  DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
+  useSettings,
+} from '../../SettingsContext';
 import { GuestLock } from '../../components/GuestLock';
 import {
   SentencePairParagraphs,
@@ -13,10 +16,12 @@ import { WordPackPreviewModal } from '../../components/WordPackPreviewModal';
 import {
   composeModelRequestFields,
   createEmptyWordPackRequest,
+  createWordPackGenerationJob,
+  fetchWordPackGenerationJob,
   fetchWordPackList,
-  generateWordPackRequest,
 } from '../../features/wordpack/api';
 import type { WordPackListItem } from '../../features/wordpack/types';
+import { DEFAULT_LLM_MODEL } from '../../lib/wordpack';
 import {
   createQuizGenerationJob,
   deleteQuiz,
@@ -514,6 +519,7 @@ export const QuizPage: React.FC = () => {
   const [previewWordPackId, setPreviewWordPackId] = useState<string | null>(null);
   const [relatedLinks, setRelatedLinks] = useState<QuizWordPackLink[]>([]);
   const [detailFocusMode, setDetailFocusMode] = useState(false);
+  const [wordPackRefreshVersion, setWordPackRefreshVersion] = useState(0);
 
   const [formatProfile, setFormatProfile] = useState<QuizFormatProfile>('single_passage');
   const [generationDomain, setGenerationDomain] = useState<QuizGenerationDomain>('technical');
@@ -603,6 +609,23 @@ export const QuizPage: React.FC = () => {
   }, [loadList, loadWordPacks]);
 
   useEffect(() => {
+    const handleQuizUpdated = () => {
+      void loadList();
+    };
+    window.addEventListener(APP_EVENTS.quizUpdated, handleQuizUpdated);
+    return () => window.removeEventListener(APP_EVENTS.quizUpdated, handleQuizUpdated);
+  }, [loadList]);
+
+  useEffect(() => {
+    const handleWordPackUpdated = () => {
+      void loadWordPacks();
+      setWordPackRefreshVersion((version) => version + 1);
+    };
+    window.addEventListener(APP_EVENTS.wordPackUpdated, handleWordPackUpdated);
+    return () => window.removeEventListener(APP_EVENTS.wordPackUpdated, handleWordPackUpdated);
+  }, [loadWordPacks]);
+
+  useEffect(() => {
     if (!selectedQuizId) {
       setSelectedQuiz(null);
       setDetailFocusMode(false);
@@ -628,7 +651,7 @@ export const QuizPage: React.FC = () => {
       })
       .finally(() => setLoadingDetail(false));
     return () => ctrl.abort();
-  }, [apiBase, selectedQuizId, settings.requestTimeoutMs]);
+  }, [apiBase, selectedQuizId, settings.requestTimeoutMs, wordPackRefreshVersion]);
 
   const updateRelatedLink = useCallback((lemma: string, patch: Partial<QuizWordPackLink>) => {
     setRelatedLinks((prev) => prev.map((link) => (
@@ -659,9 +682,10 @@ export const QuizPage: React.FC = () => {
       status: 'progress',
       category: GENERATION_DOMAIN_LABELS[generationDomain],
     });
+    let acceptedJobId: string | null = null;
     try {
       const modelFields = composeModelRequestFields({
-        model: settings.model ?? 'gpt-5.4-mini',
+        model: settings.model ?? DEFAULT_LLM_MODEL,
         reasoningEffort: settings.reasoningEffort,
         textVerbosity: settings.textVerbosity,
       }) as Pick<QuizGenerateRequest, 'model' | 'reasoning' | 'text'>;
@@ -682,21 +706,57 @@ export const QuizPage: React.FC = () => {
       const job = await createQuizGenerationJob(apiBase, requestBody, {
         timeoutMs: settings.requestTimeoutMs,
       });
+      acceptedJobId = job.job_id;
+      notifications.update(notifId, {
+        jobId: job.job_id,
+        jobType: 'quiz-generation',
+        pollingOwner: 'foreground',
+      });
       let current = job;
-      for (let attemptIndex = 0; attemptIndex < 180; attemptIndex += 1) {
+      const pollingDeadline = Date.now() + Math.max(
+        1000,
+        settings.generationRequestTimeoutMs ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
+      );
+      while (Date.now() < pollingDeadline) {
         if (current.status === 'succeeded' || current.status === 'failed') break;
-        await new Promise((resolve) => window.setTimeout(resolve, 1800));
+        const remainingMs = pollingDeadline - Date.now();
+        await new Promise((resolve) => window.setTimeout(resolve, Math.min(1800, remainingMs)));
         current = await fetchQuizGenerationJob(apiBase, current.job_id, {
           timeoutMs: settings.requestTimeoutMs,
         });
       }
-      if (current.status !== 'succeeded' || !current.quiz_id) {
-        throw new Error(current.error || 'Quiz生成が完了しませんでした。時間をおいて再試行してください。');
+      if (current.status !== 'succeeded' && current.status !== 'failed') {
+        notifications.update(notifId, {
+          title: 'Quiz生成中',
+          status: 'progress',
+          message: '生成はサーバーで継続中です。生成キューで完了状態を確認できます。',
+          jobId: current.job_id,
+          jobType: 'quiz-generation',
+          pollingOwner: null,
+        });
+        setMessage({ kind: 'status', text: 'Quiz生成は継続中です。生成キューで状態を確認できます。' });
+        return;
+      }
+      if (current.status === 'failed' || !current.quiz_id) {
+        const failureText = current.error || 'Quiz生成に失敗しました。時間をおいて再試行してください。';
+        notifications.update(notifId, {
+          title: 'Quiz生成失敗',
+          status: 'error',
+          message: failureText,
+          jobId: current.job_id,
+          jobType: 'quiz-generation',
+          pollingOwner: null,
+        });
+        setMessage({ kind: 'alert', text: failureText });
+        return;
       }
       notifications.update(notifId, {
         title: 'Quiz生成完了',
         status: 'success',
         message: '一覧を更新しました。',
+        jobId: current.job_id,
+        jobType: 'quiz-generation',
+        pollingOwner: null,
       });
       setMessage({ kind: 'status', text: 'Quizを生成しました。生成結果を開いています。' });
       await loadList();
@@ -704,11 +764,21 @@ export const QuizPage: React.FC = () => {
     } catch (error) {
       const text = error instanceof Error ? error.message : 'Quiz生成に失敗しました。';
       notifications.update(notifId, {
-        title: 'Quiz生成失敗',
-        status: 'error',
-        message: text,
+        title: acceptedJobId ? 'Quiz生成中' : 'Quiz生成失敗',
+        status: acceptedJobId ? 'progress' : 'error',
+        message: acceptedJobId
+          ? 'ジョブは受理済みですが状態確認に失敗しました。生成キューが確認を再開します。'
+          : text,
+        jobId: acceptedJobId,
+        jobType: acceptedJobId ? 'quiz-generation' : undefined,
+        pollingOwner: null,
       });
-      setMessage({ kind: 'alert', text });
+      setMessage({
+        kind: acceptedJobId ? 'status' : 'alert',
+        text: acceptedJobId
+          ? 'Quiz生成ジョブは受理済みです。生成キューで完了状態を確認できます。'
+          : text,
+      });
     } finally {
       setGenerating(false);
     }
@@ -828,17 +898,69 @@ export const QuizPage: React.FC = () => {
       status: 'progress',
       lemma,
     });
+    let acceptedJobId: string | undefined;
+    const clientJobId = crypto.randomUUID();
+    const candidateJobId = `wordpack-generation-job:${clientJobId}`;
+    let confirmedJobFailure = false;
     try {
-      const response = await generateWordPackRequest(apiBase, {
+      notifications.update(notifId, {
+        message: 'WordPack生成の受付リクエストを送信しています',
+        jobId: candidateJobId,
+        jobType: 'wordpack-generation',
+        pollingOwner: 'foreground',
+      });
+      let job = await createWordPackGenerationJob(apiBase, {
         lemma,
         pronunciation_enabled: settings.pronunciationEnabled,
         regenerate_scope: settings.regenerateScope,
         ...composeModelRequestFields({
-          model: settings.model ?? 'gpt-5.4-mini',
+          model: settings.model ?? DEFAULT_LLM_MODEL,
           reasoningEffort: settings.reasoningEffort,
           textVerbosity: settings.textVerbosity,
         }),
-      }, { timeoutMs: settings.requestTimeoutMs });
+      }, clientJobId, {
+        timeoutMs: settings.requestTimeoutMs,
+      });
+      acceptedJobId = job.job_id;
+      notifications.update(notifId, {
+        jobId: job.job_id,
+        jobType: 'wordpack-generation',
+        pollingOwner: 'foreground',
+      });
+      const deadlineMs = Date.now() + (
+        settings.generationRequestTimeoutMs
+        ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS
+      );
+      while (
+        (job.status === 'queued' || job.status === 'running')
+        && Date.now() < deadlineMs
+      ) {
+        const remainingMs = deadlineMs - Date.now();
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, Math.min(1500, remainingMs));
+        });
+        job = await fetchWordPackGenerationJob(apiBase, job.job_id, {
+          timeoutMs: settings.requestTimeoutMs,
+        });
+      }
+      if (job.status === 'queued' || job.status === 'running') {
+        notifications.update(notifId, {
+          title: `【${lemma}】の生成中`,
+          message: '生成はサーバーで継続中です。生成キューが状態を再確認します。',
+          status: 'progress',
+          lemma,
+          jobId: job.job_id,
+          jobType: 'wordpack-generation',
+          pollingOwner: null,
+        });
+        setMessage({ kind: 'status', text: 'WordPack生成は継続中です。生成キューで状態を確認できます。' });
+        return;
+      }
+      if (job.status === 'failed' || !job.result) {
+        confirmedJobFailure = true;
+        throw new ApiError(job.error || 'WordPack生成に失敗しました。', 500);
+      }
+      const response = job.result;
       updateRelatedLink(lemma, { status: 'existing', word_pack_id: response.id, is_empty: false });
       notifications.update(notifId, {
         title: `【${response.lemma}】の生成完了`,
@@ -846,18 +968,49 @@ export const QuizPage: React.FC = () => {
         status: 'success',
         wordPackId: response.id ?? null,
         lemma: response.lemma,
+        jobId: job.job_id,
+        jobType: 'wordpack-generation',
+        pollingOwner: null,
       });
       dispatchAppEvent(APP_EVENTS.wordPackUpdated);
       await loadWordPacks();
       if (response.id) setPreviewWordPackId(response.id);
     } catch (error) {
       const text = error instanceof ApiError ? error.message : 'WordPack生成に失敗しました。';
+      const recoverableJobId = acceptedJobId
+        ?? (error instanceof ApiError && error.status === 0 ? candidateJobId : undefined);
+      if (recoverableJobId && !confirmedJobFailure) {
+        const submissionConfirmed = acceptedJobId !== undefined;
+        notifications.update(notifId, {
+          title: submissionConfirmed
+            ? `【${lemma}】の生成中`
+            : `【${lemma}】の受付状態を確認中`,
+          message: submissionConfirmed
+            ? 'ジョブは受理済みですが状態確認に失敗しました。生成キューが確認を再開します。'
+            : '送信結果が不明なため、同じジョブIDで自動確認します。',
+          status: 'progress',
+          lemma,
+          jobId: recoverableJobId,
+          jobType: 'wordpack-generation',
+          pollingOwner: null,
+        });
+        setMessage({
+          kind: 'status',
+          text: submissionConfirmed
+            ? 'WordPack生成ジョブは受理済みです。生成キューで状態を確認できます。'
+            : 'WordPack生成の送信結果を確認中です。生成キューが同じIDで受理状況を再確認します。',
+        });
+        return;
+      }
       updateRelatedLink(lemma, { status: 'missing' });
       notifications.update(notifId, {
         title: `【${lemma}】の生成失敗`,
         message: text,
         status: 'error',
         lemma,
+        jobId: acceptedJobId ?? null,
+        jobType: acceptedJobId ? 'wordpack-generation' : null,
+        pollingOwner: null,
       });
       setMessage({ kind: 'alert', text });
     }

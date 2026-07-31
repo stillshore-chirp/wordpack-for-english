@@ -3,8 +3,15 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import status
 
 from ...application.wordpack.errors import handle_flow_runtime_error
+from ...application.common.generation_jobs import (
+    GenerationJobResponse,
+    enqueue_generation_job,
+    fingerprint_generation_request,
+    get_generation_job,
+)
 from ...authorization.dependencies import require_user_permission
 from ...authorization.permissions import Permission
 from ...authorization.policies import ensure_user_write_allowed
@@ -22,11 +29,59 @@ from ...models.word import (
     ExampleTranscriptionTypingResponse,
 )
 from ...providers import get_llm_provider
+from ...infrastructure.runtime import AsyncioTaskScheduler, PrefixedUuidGenerator
 from .dependencies import get_store, get_word_pack_visibility
 from .error_mapping import example_error_mapping
 from .schemas import ExamplesGenerateRequest
 
 router = APIRouter()
+
+
+class EmptyExampleGenerationError(RuntimeError):
+    reason_code = "EMPTY_CONTENT"
+
+    def __init__(self, *, lemma: str, category: ExampleCategory) -> None:
+        super().__init__("LLM returned no usable examples")
+        self.diagnostics = {"lemma": lemma, "category": category.value}
+
+
+def _generate_and_append_examples(
+    *,
+    repository: object,
+    word_pack_id: str,
+    lemma: str,
+    category: ExampleCategory,
+    req: ExamplesGenerateRequest,
+) -> dict[str, Any]:
+    llm = get_llm_provider(
+        model_override=get_override_value(req, "model"),
+        reasoning_override=get_override_value(req, "reasoning"),
+        text_override=get_override_value(req, "text"),
+    )
+    llm_info = build_llm_info(req)
+    flow = WordPackFlow(chroma_client=None, llm=llm, llm_info=llm_info)
+    generated = flow.generate_examples_for_categories(lemma, {category: 2})
+    items = [
+        {
+            "en": item.en,
+            "ja": item.ja,
+            "grammar_ja": item.grammar_ja,
+            "llm_model": item.llm_model,
+            "llm_params": item.llm_params,
+        }
+        for item in generated.get(category, [])
+    ]
+    if not items:
+        raise EmptyExampleGenerationError(lemma=lemma, category=category)
+    added = repository.append_examples(word_pack_id, category.value, items)
+    return {
+        "message": "Examples generated and appended",
+        "word_pack_id": word_pack_id,
+        "lemma": lemma,
+        "added": added,
+        "category": category.value,
+        "items": items,
+    }
 
 
 @router.delete(
@@ -90,40 +145,14 @@ async def generate_examples_for_word_pack(
     lemma, _, _, _ = result
 
     req = req or ExamplesGenerateRequest()
-    llm = get_llm_provider(
-        model_override=get_override_value(req, "model"),
-        reasoning_override=get_override_value(req, "reasoning"),
-        text_override=get_override_value(req, "text"),
-    )
-
     try:
-        llm_info = build_llm_info(req)
-        flow = WordPackFlow(chroma_client=None, llm=llm, llm_info=llm_info)
-        plan = {category: 2}
-        gen = flow.generate_examples_for_categories(lemma, plan)
-        items_model = gen.get(category, [])
-        items: list[dict[str, object]] = []
-        for it in items_model:
-            items.append(
-                {
-                    "en": it.en,
-                    "ja": it.ja,
-                    "grammar_ja": it.grammar_ja,
-                    "llm_model": it.llm_model,
-                    "llm_params": it.llm_params,
-                }
-            )
-        if not items:
-            raise HTTPException(
-                status_code=502, detail="LLM returned no usable examples"
-            )
-        added = repository.append_examples(word_pack_id, category.value, items)
-        return {
-            "message": "Examples generated and appended",
-            "added": added,
-            "category": category.value,
-            "items": items,
-        }
+        return _generate_and_append_examples(
+            repository=repository,
+            word_pack_id=word_pack_id,
+            lemma=lemma,
+            category=category,
+            req=req,
+        )
     except RuntimeError as exc:
         handle_flow_runtime_error(
             exc,
@@ -132,6 +161,110 @@ async def generate_examples_for_word_pack(
             error_mapping=example_error_mapping(category.value),
         )
         raise
+
+
+@router.post(
+    "/packs/{word_pack_id}/examples/{category}/generate/jobs",
+    response_model=GenerationJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="カテゴリ別の例文追加生成ジョブを開始",
+)
+async def create_examples_generation_job(
+    word_pack_id: str,
+    category: ExampleCategory,
+    req: ExamplesGenerateRequest | None = None,
+    principal: Principal = Depends(require_user_permission(Permission.EXAMPLE_CREATE)),
+) -> GenerationJobResponse:
+    repository = get_store()
+    result = repository.get_word_pack(word_pack_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="WordPack not found")
+    visibility = get_word_pack_visibility(repository, word_pack_id) or {}
+    ensure_user_write_allowed(
+        principal,
+        owner_user_id=visibility.get("owner_user_id"),
+        not_found_detail="WordPack not found",
+    )
+    lemma, _, _, _ = result
+    request_options = req or ExamplesGenerateRequest()
+
+    try:
+        return await enqueue_generation_job(
+            owner_user_id=principal.user_id,
+            job_type="example-generation",
+            request_fingerprint=fingerprint_generation_request(
+                "example-generation",
+                {
+                    "word_pack_id": word_pack_id,
+                    "category": category.value,
+                    "options": request_options.model_dump(
+                        mode="json",
+                        exclude={"client_job_id"},
+                    ),
+                },
+            ),
+            store=repository,
+            runner=lambda: _generate_and_append_examples(
+                repository=repository,
+                word_pack_id=word_pack_id,
+                lemma=lemma,
+                category=category,
+                req=request_options,
+            ),
+            scheduler=AsyncioTaskScheduler(),
+            id_generator=PrefixedUuidGenerator("example-generation-job:"),
+            job_id=(
+                f"example-generation-job:{request_options.client_job_id}"
+                if request_options.client_job_id is not None
+                else None
+            ),
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+
+@router.get(
+    "/packs/{word_pack_id}/examples/{category}/generate/jobs/{job_id}",
+    response_model=GenerationJobResponse,
+    summary="カテゴリ別の例文追加生成ジョブの状態を取得",
+)
+async def get_examples_generation_job_status(
+    word_pack_id: str,
+    category: ExampleCategory,
+    job_id: str,
+    principal: Principal = Depends(require_user_permission(Permission.EXAMPLE_READ)),
+) -> GenerationJobResponse:
+    repository = get_store()
+    visibility = get_word_pack_visibility(repository, word_pack_id)
+    if visibility is None:
+        raise HTTPException(status_code=404, detail="WordPack not found")
+    ensure_user_write_allowed(
+        principal,
+        owner_user_id=visibility.get("owner_user_id"),
+        not_found_detail="WordPack not found",
+    )
+    job = await get_generation_job(
+        job_id,
+        owner_user_id=principal.user_id,
+        expected_job_type="example-generation",
+        store=repository,
+    )
+    result = job.result if job is not None else None
+    if (
+        job is None
+        or (
+            result is not None
+            and (
+                result.get("word_pack_id") != word_pack_id
+                or result.get("category") != category.value
+            )
+        )
+    ):
+        raise HTTPException(status_code=404, detail="Generation job not found")
+    return job
 
 
 @router.get(

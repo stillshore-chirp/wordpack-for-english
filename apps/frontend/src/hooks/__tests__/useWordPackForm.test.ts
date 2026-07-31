@@ -10,8 +10,8 @@ const baseSettings: Settings = {
   regenerateScope: 'all',
   autoAdvanceAfterGrade: false,
   requestTimeoutMs: 30000,
-  model: 'gpt-5.4-mini',
-  reasoningEffort: 'minimal',
+  model: 'gpt-5.6-luna',
+  reasoningEffort: 'high',
   textVerbosity: 'medium',
   theme: 'light',
   ttsPlaybackRate: 1,
@@ -59,11 +59,11 @@ describe('useWordPackForm', () => {
     expect(result.current.form.showAdvancedModelOptions).toBe(true);
 
     act(() => {
-      result.current.form.handleChangeModel('gpt-5.4-mini');
+      result.current.form.handleChangeModel('gpt-5.6-luna');
     });
-    expect(result.current.form.model).toBe('gpt-5.4-mini');
+    expect(result.current.form.model).toBe('gpt-5.6-luna');
     expect(result.current.form.showAdvancedModelOptions).toBe(true);
-    expect(result.current.currentSettings.model).toBe('gpt-5.4-mini');
+    expect(result.current.currentSettings.model).toBe('gpt-5.6-luna');
 
     act(() => {
       result.current.form.advancedSettings.handleChangeReasoningEffort('high');

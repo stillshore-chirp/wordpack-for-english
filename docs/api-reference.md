@@ -10,12 +10,15 @@ frontend が Google login 設定などを取得します。
 
 ```json
 {
-  "request_timeout_ms": 120000,
-  "llm_model": "gpt-5-mini",
+  "request_timeout_ms": 60000,
+  "generation_request_timeout_ms": 1500000,
+  "llm_model": "gpt-5.6-luna",
   "session_auth_disabled": false,
   "google_client_id": "12345-abcdefgh.apps.googleusercontent.com"
 }
 ```
+
+`request_timeout_ms` は一覧・詳細・更新・ジョブ状態取得など通常APIの上限で、既定は1分です。`generation_request_timeout_ms` は複数のLLM呼び出しを含む生成フロー全体の待機上限で、既定は25分です。フロントエンドは長い値を生成操作だけに使います。
 
 Cloud Run の段階リリース中は、候補 revision を本番経路から識別するため `deployment_version` も返します。このフィールドはデプロイスクリプトが `DEPLOYMENT_VERSION` を設定した環境だけに追加され、未設定時の既存レスポンスは変わりません。
 
@@ -71,39 +74,49 @@ Response:
 
 ## WordPack
 
-### `POST /api/word/pack`
+### `POST /api/word/pack/jobs`
 
-WordPack を生成し、語義、共起、対比、例文、語源、学習カード要点、発音などを返します。
+WordPack生成ジョブを開始し、`202` と `job_id` を返します。アプリUIはこの経路を使い、Firebase Hostingの同期リライト上限を越える生成でも短い状態取得リクエストへ分離します。
 
 Request:
 
 ```json
 {
   "lemma": "converge",
-  "model": "gpt-5.4-mini",
-  "reasoning": { "effort": "minimal" },
-  "text": { "verbosity": "medium" }
+  "model": "gpt-5.6-luna",
+  "reasoning": { "effort": "high" },
+  "text": { "verbosity": "medium" },
+  "client_job_id": "11111111-1111-4111-8111-111111111111"
 }
 ```
+
+`client_job_id` は任意の UUID です。同じユーザーが同じ値・同じ入力を再送すると既存ジョブを返すため、アプリUIは202応答を受け取れない場合に同じIDで1回だけ再送し、WordPackを重複生成せず状態取得を再開できます。別ユーザー、別種のジョブ、またはfingerprintが異なる別入力で同じIDを使用しようとした場合は409で拒否します。
 
 Response:
 
 ```json
 {
-  "id": "wp:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-  "lemma": "converge",
-  "senses": [],
-  "examples": {},
-  "citations": [],
-  "confidence": "medium"
+  "job_id": "wordpack-generation-job:xxxxxxxx",
+  "job_type": "wordpack-generation",
+  "status": "queued"
 }
 ```
+
+### `GET /api/word/pack/jobs/{job_id}`
+
+作成したユーザーに限り、`queued / running / succeeded / failed` を取得できます。成功時の `result` は保存済みWordPackの `id` と生成内容を含みます。画面再読込後も生成キューがこのAPIで追跡を再開します。
+
+従来の同期 `POST /api/word/pack` は互換性のため残しますが、アプリUIは非同期ジョブ経路を使用します。
 
 入力制約:
 
 - `lemma` は英数字、半角スペース、ハイフン、アポストロフィのみ
 - 1〜64 文字
 - Firestore path に使えない記号や制御文字は 422
+
+### `POST /api/word/packs`
+
+内容を生成しない空のWordPackを短い同期処理で保存します。Luna Highを待つ用途ではないためLLMは呼び出さず、`sense_title` は見出し語から決定的に初期化します。
 
 ### `GET /api/word?lemma=...`
 
@@ -135,6 +148,18 @@ Request:
 
 ## 例文
 
+### `POST /api/word/packs/{id}/examples/{category}/generate/jobs`
+
+保存済み WordPack へカテゴリ別の例文を2件追加するジョブを作り、202 とジョブIDを返します。Luna High の生成が Firebase Hosting の同期上限を越えても、受付済み処理と画面上の失敗表示が食い違わないよう、アプリUIはこちらを使用します。
+
+Request の生成オプションには任意の UUID `client_job_id` を追加できます。同じユーザー・同じジョブ種別・同じ対象WordPack・カテゴリ・生成オプションで再送した場合は既存ジョブを返し、202応答喪失後の追加例文重複を防ぎます。対象または入力が異なる再利用は409です。
+
+### `GET /api/word/packs/{id}/examples/{category}/generate/jobs/{job_id}`
+
+追加例文生成ジョブの `queued / running / succeeded / failed` と、成功時の追加件数を返します。対象 WordPack の所有者だけが取得できます。
+
+従来の同期 `POST /api/word/packs/{id}/examples/{category}/generate` は互換性のため残します。
+
 ### `GET /api/word/examples`
 
 保存済み例文を WordPack 横断で返します。ゲスト閲覧では、`guest_public=true` の WordPack に紐づく例文だけを返します。
@@ -165,9 +190,9 @@ Request:
 
 ## Article import
 
-### `POST /api/article/import`
+### `POST /api/article/import/jobs`
 
-貼り付けた文章を保存し、タイトル、翻訳、解説、関連 WordPack を生成します。
+貼り付けた文章のインポートジョブを作り、202 とジョブIDを返します。生成処理は非同期でタイトル、翻訳、解説、関連 WordPack を保存するため、Firebase Hosting の同期リライト上限を越えても最初のHTTPリクエストを保持しません。
 
 Request:
 
@@ -175,7 +200,8 @@ Request:
 {
   "text": "English article text...",
   "generation_category": "Common",
-  "model": "gpt-5.4-mini"
+  "model": "gpt-5.6-luna",
+  "client_job_id": "11111111-1111-4111-8111-111111111111"
 }
 ```
 
@@ -183,10 +209,25 @@ Request:
 
 - 1 回のインポート本文は最大 4,000 文字
 - 超過時は 413 `article_import_text_too_long`
+- `client_job_id` は任意の UUID。同じユーザーが同じ値・同じ文章インポート入力を再送した場合は既存ジョブを返し、202応答の通信断後も重複保存せず状態取得を再開できます。別入力での再利用は409です。アプリUIはPOST前に候補IDを保持し、通信結果不明時は同じIDで1回再送します。確定HTTP失敗は即時エラーとし、再送後も結果不明の場合だけ候補IDを生成キューへ渡します。
 
-### `POST /api/article/generate_and_import`
+### `GET /api/article/import/jobs/{job_id}`
 
-カテゴリから例文を生成し、記事として保存します。一部だけ記事化できた場合は成功レスポンスに警告を含め、全件失敗時は 502 を返します。
+文章インポートジョブの `queued / running / succeeded / failed` を返します。成功時は `article_id` を返し、フロントエンドは記事詳細を取得します。ジョブは作成したユーザーだけが取得できます。
+
+従来の同期 `POST /api/article/import` は互換性のため残しますが、アプリUIは非同期ジョブ経路を使用します。同期ルートはイベントループをブロックする処理を安全に取り消せないため、アプリ内 ASGI timeout の対象外です。直接利用時は Cloud Run のリクエスト期限が最終境界になります。
+
+### `POST /api/article/generate_and_import/jobs`
+
+カテゴリから関連語と例文を生成し、WordPack と Reader 記事へ保存するジョブを作り、202 とジョブIDを返します。Request には任意の UUID `client_job_id` を指定でき、同じユーザー・同じカテゴリ・同じ生成オプションでの再送は既存ジョブを返します。入力が異なる同一IDの再利用は409です。成功時の `result` には `lemma`、`word_pack_id`、`category`、`generated_examples`、`article_ids` が入ります。ジョブは作成したユーザーだけが取得できます。
+
+### `GET /api/article/generate_and_import/jobs/{job_id}`
+
+カテゴリ例文生成・記事化ジョブの `queued / running / succeeded / failed` と、成功時の保存結果を返します。画面移動や一時的な状態取得失敗の後も、生成キューはこのAPIで状態を再確認します。
+
+従来の同期 `POST /api/article/generate_and_import` は互換性のため残します。worker thread 内の保存処理を asyncio のキャンセルで停止できないため、アプリ内 ASGI timeout の対象外です。
+
+一部だけ記事化できた場合は成功結果に警告を含め、全件失敗時はジョブを `failed` にします。
 
 ### `GET /api/article`
 

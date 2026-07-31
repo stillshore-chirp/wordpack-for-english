@@ -1,4 +1,5 @@
 import { fetchJson } from '../../../shared/api/fetchJson';
+import { submitIdempotentJob } from '../../../shared/api/submitIdempotentJob';
 import {
   composeModelRequestFields,
   regenerateWordPackRequest,
@@ -64,6 +65,45 @@ export const generateWordPackRequest = (
     signal: options?.signal,
     timeoutMs: options?.timeoutMs,
   })
+);
+
+export interface WordPackGenerationJob {
+  job_id: string;
+  job_type: 'wordpack-generation';
+  status: 'queued' | 'running' | 'succeeded' | 'failed';
+  result?: WordPack | null;
+  error?: string | null;
+}
+
+export const createWordPackGenerationJob = (
+  apiBase: string,
+  body: Record<string, unknown>,
+  clientJobId: string,
+  options?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<WordPackGenerationJob> => (
+  submitIdempotentJob(
+    () => fetchJson<WordPackGenerationJob>(`${apiBase}/word/pack/jobs`, {
+      method: 'POST',
+      body: { ...body, client_job_id: clientJobId },
+      signal: options?.signal,
+      timeoutMs: options?.timeoutMs,
+    }),
+    () => !options?.signal?.aborted,
+  )
+);
+
+export const fetchWordPackGenerationJob = (
+  apiBase: string,
+  jobId: string,
+  options?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<WordPackGenerationJob> => (
+  fetchJson<WordPackGenerationJob>(
+    `${apiBase}/word/pack/jobs/${encodeURIComponent(jobId)}`,
+    {
+      signal: options?.signal,
+      timeoutMs: options?.timeoutMs,
+    },
+  )
 );
 
 export const updateGuestPublicRequest = updateGuestPublicFlag;

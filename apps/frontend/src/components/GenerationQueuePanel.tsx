@@ -1,7 +1,20 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNotifications, type NotificationItem } from '../NotificationsContext';
-import { useOptionalSettings } from '../SettingsContext';
+import {
+  DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  useOptionalSettings,
+} from '../SettingsContext';
 import { ApiError, fetchJson } from '../lib/fetcher';
+import { DEFAULT_LLM_MODEL } from '../lib/wordpack';
+import { fetchArticleImportJob } from '../features/article-import/api/articleApi';
+import { fetchQuizGenerationJob } from '../features/quiz/api';
+import {
+  fetchCategoryGenerateImportJob,
+  fetchExampleGenerationJob,
+} from '../features/generation/api';
+import { APP_EVENTS, dispatchAppEvent } from '../shared/events/appEvents';
+import { fetchWordPackGenerationJob } from '../features/wordpack/api';
 import { WordPackPreviewModal } from './WordPackPreviewModal';
 import type { WordPackListItem } from '../features/wordpack/types';
 
@@ -52,6 +65,7 @@ const buildLiveMessage = (item: NotificationItem): string => {
 
 const bracketLemmaPattern = /【(.+?)】/;
 const STALE_PROGRESS_RECONCILE_MS = 20 * 60 * 1000;
+const PERSISTED_JOB_POLL_INTERVAL_MS = 5000;
 
 const resolvePreviewLemma = (item: NotificationItem): string => {
   const storedLemma = item.lemma?.trim();
@@ -62,7 +76,10 @@ const resolvePreviewLemma = (item: NotificationItem): string => {
 };
 
 const canOpenWordPackPreview = (item: NotificationItem): boolean => (
-  item.status === 'success' && Boolean(item.wordPackId || resolvePreviewLemma(item))
+  item.jobType !== 'article-import'
+  && item.jobType !== 'quiz-generation'
+  && item.status === 'success'
+  && Boolean(item.wordPackId || resolvePreviewLemma(item))
 );
 
 const findLatestNotification = (items: NotificationItem[]): NotificationItem | null => (
@@ -117,7 +134,7 @@ const QueueItem: React.FC<{
           <p>{item.message || (item.status === 'progress' ? 'LLM応答を待機しています' : '生成履歴に保存されました')}</p>
         ) : null}
         <div className="generation-queue-item__meta">
-          <span>{item.category ? `${item.category}: ` : ''}{item.model || 'gpt-5.4-mini'}</span>
+          <span>{item.category ? `${item.category}: ` : ''}{item.model || DEFAULT_LLM_MODEL}</span>
           <span>{item.status === 'progress' ? `経過 ${formatElapsed(elapsedMs)}` : `${formatElapsed(elapsedMs)}前後`}</span>
         </div>
         {item.status === 'progress' ? (
@@ -163,7 +180,9 @@ export const GenerationQueuePanel: React.FC = () => {
   const { notifications, clearAll, remove, update } = useNotifications();
   const settingsContext = useOptionalSettings();
   const apiBase = settingsContext?.settings.apiBase ?? '/api';
-  const requestTimeoutMs = settingsContext?.settings.requestTimeoutMs ?? 360000;
+  const requestTimeoutMs = settingsContext?.settings.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const generationRequestTimeoutMs = settingsContext?.settings.generationRequestTimeoutMs
+    ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS;
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [liveMessage, setLiveMessage] = useState('');
   const [updatedItemKeys, setUpdatedItemKeys] = useState<Record<string, string>>({});
@@ -174,7 +193,8 @@ export const GenerationQueuePanel: React.FC = () => {
   const [resolvingPreviewItemId, setResolvingPreviewItemId] = useState<string | null>(null);
   const lastAnnouncementKeyRef = useRef<string>(buildUpdateKey(findLatestNotification(notifications)));
   const updateTimersRef = useRef<Record<string, number>>({});
-  const reconciliationRef = useRef<Set<string>>(new Set());
+  const reconciliationRef = useRef<Map<string, number>>(new Map());
+  const reconciliationInFlightRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -198,18 +218,264 @@ export const GenerationQueuePanel: React.FC = () => {
 
   useEffect(() => {
     progressItems.forEach((item) => {
-      if (reconciliationRef.current.has(item.id)) return;
-      if (nowMs - item.updatedAt < STALE_PROGRESS_RECONCILE_MS) return;
+      if (!item.jobId) return;
+      if (item.pollingOwner === 'foreground') return;
+      if (reconciliationInFlightRef.current.has(item.id)) return;
+      const lastCheckedAt = reconciliationRef.current.get(item.id) ?? 0;
+      const notificationWasRecentlyUpdated = nowMs - item.updatedAt
+        < PERSISTED_JOB_POLL_INTERVAL_MS;
+      if (
+        lastCheckedAt > 0
+        && nowMs - lastCheckedAt < PERSISTED_JOB_POLL_INTERVAL_MS
+      ) return;
+      if (lastCheckedAt === 0 && notificationWasRecentlyUpdated) return;
+      const staleAfterMs = Math.max(
+        STALE_PROGRESS_RECONCILE_MS,
+        generationRequestTimeoutMs + 60 * 1000,
+      );
+      const isStale = nowMs - item.createdAt >= staleAfterMs;
       const lemma = resolvePreviewLemma(item) || extractLemma(item.title);
       const wordPackId = item.wordPackId?.trim() || '';
-      reconciliationRef.current.add(item.id);
+      reconciliationInFlightRef.current.add(item.id);
 
       const reconcile = async () => {
-        if (!wordPackId || !item.jobId) {
+        if (item.jobType === 'wordpack-generation') {
+          try {
+            const job = await fetchWordPackGenerationJob(
+              apiBase,
+              item.jobId as string,
+              { timeoutMs: requestTimeoutMs },
+            );
+            if (job.status === 'succeeded' && job.result) {
+              const resultLemma = job.result.lemma || lemma;
+              dispatchAppEvent(APP_EVENTS.wordPackUpdated);
+              update(item.id, {
+                title: `【${resultLemma}】の生成完了！`,
+                status: 'success',
+                message: '新規生成が完了しました',
+                wordPackId: job.result.id ?? null,
+                lemma: resultLemma,
+                jobId: item.jobId,
+                jobType: 'wordpack-generation',
+              });
+              return;
+            }
+            if (job.status !== 'failed' && !isStale) return;
+            update(item.id, {
+              title: `【${lemma || 'WordPack'}】の生成状態を確認できません`,
+              status: 'error',
+              message: job.status === 'failed'
+                ? (job.error || 'WordPack生成ジョブが失敗しました。必要ならもう一度実行してください。')
+                : 'WordPack生成が長時間完了していません。保存済みWordPackを確認するか、時間をおいて再試行してください。',
+              lemma,
+              jobId: item.jobId,
+              jobType: 'wordpack-generation',
+            });
+          } catch {
+            if (!isStale) return;
+            update(item.id, {
+              title: `【${lemma || 'WordPack'}】の生成状態を確認できません`,
+              status: 'error',
+              message: 'WordPack生成ジョブの状態を確認できませんでした。保存済みWordPackを確認するか、必要ならもう一度実行してください。',
+              lemma,
+              jobId: item.jobId,
+              jobType: 'wordpack-generation',
+            });
+          }
+          return;
+        }
+        if (item.jobType === 'category-generate-import') {
+          try {
+            const job = await fetchCategoryGenerateImportJob(apiBase, item.jobId as string, {
+              timeoutMs: requestTimeoutMs,
+            });
+            if (job.status === 'succeeded' && job.result) {
+              const resultLemma = typeof job.result.lemma === 'string'
+                ? job.result.lemma
+                : lemma;
+              const resultWordPackId = typeof job.result.word_pack_id === 'string'
+                ? job.result.word_pack_id
+                : item.wordPackId;
+              const generatedExamples = typeof job.result.generated_examples === 'number'
+                ? job.result.generated_examples
+                : 0;
+              dispatchAppEvent(APP_EVENTS.wordPackUpdated);
+              dispatchAppEvent(APP_EVENTS.articleUpdated);
+              update(item.id, {
+                title: '例文生成・記事化完了',
+                status: 'success',
+                message: `【${resultLemma}】${generatedExamples}件の例文から記事を作成しました`,
+                wordPackId: resultWordPackId,
+                lemma: resultLemma,
+                jobId: item.jobId,
+                jobType: 'category-generate-import',
+              });
+              return;
+            }
+            if (job.status !== 'failed' && !isStale) return;
+            update(item.id, {
+              title: '例文生成・記事化の状態を確認できません',
+              status: 'error',
+              message: job.status === 'failed'
+                ? (job.error || '例文生成・記事化ジョブが失敗しました。必要ならもう一度実行してください。')
+                : '例文生成・記事化が長時間完了していません。記事一覧を確認するか、時間をおいて再試行してください。',
+              jobId: item.jobId,
+              jobType: 'category-generate-import',
+            });
+          } catch {
+            if (!isStale) return;
+            update(item.id, {
+              title: '例文生成・記事化の状態を確認できません',
+              status: 'error',
+              message: 'ジョブの状態を確認できませんでした。記事一覧を確認するか、必要ならもう一度実行してください。',
+              jobId: item.jobId,
+              jobType: 'category-generate-import',
+            });
+          }
+          return;
+        }
+        if (item.jobType === 'example-generation') {
+          if (!wordPackId || !item.category) {
+            update(item.id, {
+              title: `【${lemma || 'WordPack'}】の生成状態を確認できません`,
+              status: 'error',
+              message: 'WordPack IDまたはカテゴリが保存されていないため、完了状態を確認できません。',
+              jobId: item.jobId,
+              jobType: 'example-generation',
+            });
+            return;
+          }
+          try {
+            const job = await fetchExampleGenerationJob(
+              apiBase,
+              wordPackId,
+              item.category,
+              item.jobId as string,
+              { timeoutMs: requestTimeoutMs },
+            );
+            if (job.status === 'succeeded' && job.result) {
+              dispatchAppEvent(APP_EVENTS.wordPackUpdated);
+              update(item.id, {
+                title: `【${lemma || 'WordPack'}】の生成完了！`,
+                status: 'success',
+                message: `${item.category} に例文を2件追加しました`,
+                wordPackId,
+                lemma,
+                jobId: item.jobId,
+                jobType: 'example-generation',
+              });
+              return;
+            }
+            if (job.status !== 'failed' && !isStale) return;
+            update(item.id, {
+              title: `【${lemma || 'WordPack'}】の生成状態を確認できません`,
+              status: 'error',
+              message: job.status === 'failed'
+                ? (job.error || '例文追加生成ジョブが失敗しました。必要ならもう一度実行してください。')
+                : '例文追加生成が長時間完了していません。保存済みWordPackを確認するか、時間をおいて再試行してください。',
+              wordPackId,
+              lemma,
+              jobId: item.jobId,
+              jobType: 'example-generation',
+            });
+          } catch {
+            if (!isStale) return;
+            update(item.id, {
+              title: `【${lemma || 'WordPack'}】の生成状態を確認できません`,
+              status: 'error',
+              message: '例文追加生成ジョブの状態を確認できませんでした。保存済みWordPackを確認するか、必要ならもう一度実行してください。',
+              wordPackId,
+              lemma,
+              jobId: item.jobId,
+              jobType: 'example-generation',
+            });
+          }
+          return;
+        }
+        if (item.jobType === 'article-import') {
+          try {
+            const job = await fetchArticleImportJob(apiBase, item.jobId as string, {
+              timeoutMs: requestTimeoutMs,
+            });
+            if (job.status === 'succeeded' && job.article_id) {
+              dispatchAppEvent(APP_EVENTS.articleUpdated);
+              update(item.id, {
+                title: '文章インポート完了',
+                status: 'success',
+                message: '保存済み記事を確認しました',
+                jobId: item.jobId,
+                jobType: 'article-import',
+                articleId: job.article_id,
+              });
+              return;
+            }
+            if (job.status !== 'failed' && !isStale) return;
+            const message = job.status === 'failed'
+              ? (job.error || '文章インポートジョブが失敗しました。必要ならもう一度実行してください。')
+              : '文章インポートが長時間完了していません。記事一覧を確認するか、時間をおいて再試行してください。';
+            update(item.id, {
+              title: '文章インポートの状態を確認できません',
+              status: 'error',
+              message,
+              jobId: item.jobId,
+              jobType: 'article-import',
+            });
+          } catch {
+            if (!isStale) return;
+            update(item.id, {
+              title: '文章インポートの状態を確認できません',
+              status: 'error',
+              message: '文章インポートジョブの状態を確認できませんでした。記事一覧を確認するか、必要ならもう一度実行してください。',
+              jobId: item.jobId,
+              jobType: 'article-import',
+            });
+          }
+          return;
+        }
+        if (item.jobType === 'quiz-generation') {
+          try {
+            const job = await fetchQuizGenerationJob(apiBase, item.jobId as string, {
+              timeoutMs: requestTimeoutMs,
+            });
+            if (job.status === 'succeeded' && job.quiz_id) {
+              dispatchAppEvent(APP_EVENTS.quizUpdated);
+              update(item.id, {
+                title: 'Quiz生成完了',
+                status: 'success',
+                message: '保存済みQuizを確認しました',
+                jobId: item.jobId,
+                jobType: 'quiz-generation',
+              });
+              return;
+            }
+            if (job.status !== 'failed' && !isStale) return;
+            const message = job.status === 'failed'
+              ? (job.error || 'Quiz生成ジョブが失敗しました。必要ならもう一度実行してください。')
+              : 'Quiz生成が長時間完了していません。Quiz一覧を確認するか、時間をおいて再試行してください。';
+            update(item.id, {
+              title: 'Quiz生成の状態を確認できません',
+              status: 'error',
+              message,
+              jobId: item.jobId,
+              jobType: 'quiz-generation',
+            });
+          } catch {
+            if (!isStale) return;
+            update(item.id, {
+              title: 'Quiz生成の状態を確認できません',
+              status: 'error',
+              message: 'Quiz生成ジョブの状態を確認できませんでした。Quiz一覧を確認するか、必要ならもう一度実行してください。',
+              jobId: item.jobId,
+              jobType: 'quiz-generation',
+            });
+          }
+          return;
+        }
+        if (!wordPackId) {
           update(item.id, {
             title: `【${lemma || 'WordPack'}】の生成状態を確認できません`,
             status: 'error',
-            message: 'ジョブIDが保存されていないため、完了状態を確認できません。保存済みWordPackを一覧で確認するか、必要ならもう一度生成してください。',
+            message: 'WordPack IDが保存されていないため、完了状態を確認できません。保存済みWordPackを一覧で確認するか、必要ならもう一度生成してください。',
             wordPackId: item.wordPackId,
             lemma,
           });
@@ -232,6 +498,7 @@ export const GenerationQueuePanel: React.FC = () => {
             });
             return;
           }
+          if (job.status !== 'failed' && !isStale) return;
           const message = job.status === 'failed'
             ? (job.error || '再生成ジョブが失敗しました。必要ならもう一度生成してください。')
             : '再生成が長時間完了していません。保存済みWordPackを一覧で確認するか、時間をおいて再試行してください。';
@@ -244,6 +511,7 @@ export const GenerationQueuePanel: React.FC = () => {
             jobId: item.jobId,
           });
         } catch {
+          if (!isStale) return;
           update(item.id, {
             title: `【${lemma || 'WordPack'}】の生成状態を確認できません`,
             status: 'error',
@@ -254,9 +522,19 @@ export const GenerationQueuePanel: React.FC = () => {
           });
         }
       };
-      void reconcile();
+      void reconcile().finally(() => {
+        reconciliationInFlightRef.current.delete(item.id);
+        reconciliationRef.current.set(item.id, Date.now());
+      });
     });
-  }, [apiBase, nowMs, progressItems, requestTimeoutMs, update]);
+  }, [
+    apiBase,
+    generationRequestTimeoutMs,
+    nowMs,
+    progressItems,
+    requestTimeoutMs,
+    update,
+  ]);
 
   useEffect(() => {
     const latest = findLatestNotification(notifications);

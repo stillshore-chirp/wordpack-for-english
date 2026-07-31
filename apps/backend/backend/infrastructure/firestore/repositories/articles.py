@@ -1,7 +1,13 @@
 from __future__ import annotations
 
-from .base import Any, firestore
+from collections.abc import Mapping
+from typing import Literal
+
+from .base import AlreadyExists, Any, firestore
 from .base import FirestoreBaseRepository
+
+
+ArticleImportJobStatus = Literal["queued", "running", "succeeded", "failed"]
 
 
 class FirestoreArticleRepository(FirestoreBaseRepository):
@@ -11,6 +17,7 @@ class FirestoreArticleRepository(FirestoreBaseRepository):
         super().__init__(client)
         self._articles = client.collection("articles")
         self._article_word_packs = client.collection("article_word_packs")
+        self._article_import_jobs = client.collection("article_import_jobs")
 
     def save_article(
         self,
@@ -186,7 +193,71 @@ class FirestoreArticleRepository(FirestoreBaseRepository):
             "owner_user_id": str(owner_raw).strip() if owner_raw else None,
         }
 
+    def create_article_import_job(
+        self,
+        *,
+        job_id: str,
+        owner_user_id: str,
+        request_fingerprint: str = "",
+        status: ArticleImportJobStatus = "queued",
+    ) -> Mapping[str, Any]:
+        now = self._now_iso()
+        payload: dict[str, Any] = {
+            "job_id": job_id,
+            "owner_user_id": owner_user_id,
+            "request_fingerprint": request_fingerprint,
+            "status": status,
+            "article_id": None,
+            "error": None,
+            "created_at": now,
+            "updated_at": now,
+        }
+        doc_ref = self._article_import_jobs.document(job_id)
+        try:
+            doc_ref.create(payload)
+            return {**payload, "_created": True}
+        except AlreadyExists:
+            snapshot = doc_ref.get()
+            existing = snapshot.to_dict() if snapshot.exists else None
+            if existing is None:
+                raise
+            return {**existing, "_created": False}
+
+    def update_article_import_job(
+        self,
+        job_id: str,
+        *,
+        status: ArticleImportJobStatus,
+        article_id: str | None = None,
+        error: str | None = None,
+    ) -> Mapping[str, Any] | None:
+        doc_ref = self._article_import_jobs.document(job_id)
+        snapshot = doc_ref.get()
+        if not snapshot.exists:
+            return None
+        payload: dict[str, Any] = {
+            "status": status,
+            "updated_at": self._now_iso(),
+        }
+        if article_id is not None:
+            payload["article_id"] = article_id
+        if error is not None:
+            payload["error"] = error
+        doc_ref.update(payload)
+        updated = doc_ref.get()
+        return updated.to_dict() or None
+
+    def get_article_import_job(self, job_id: str) -> Mapping[str, Any] | None:
+        snapshot = self._article_import_jobs.document(job_id).get()
+        if not snapshot.exists:
+            return None
+        return snapshot.to_dict() or None
+
 
 FirestoreArticleStore = FirestoreArticleRepository
 
-__all__ = ["FirestoreArticleRepository", "FirestoreArticleStore"]
+__all__ = [
+    "ArticleImportJobStatus",
+    "FirestoreArticleRepository",
+    "FirestoreArticleStore",
+]

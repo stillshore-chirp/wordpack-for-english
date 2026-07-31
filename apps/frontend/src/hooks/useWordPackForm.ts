@@ -1,7 +1,13 @@
 import { useCallback, useMemo, useState } from 'react';
 import { Settings } from '../SettingsContext';
 import { validateLemmaInput } from '../lib/lemmaValidation';
-import { DEFAULT_LLM_MODEL, SUPPORTED_LLM_MODELS, normalizeLlmModel } from '../lib/wordpack';
+import {
+  DEFAULT_LLM_MODEL,
+  DEFAULT_REASONING_EFFORT,
+  DEFAULT_TEXT_VERBOSITY,
+  SUPPORTED_LLM_MODELS,
+  normalizeLlmModel,
+} from '../lib/wordpack';
 
 type AdvancedSettingsControls = {
   reasoningEffort: NonNullable<Settings['reasoningEffort']>;
@@ -57,8 +63,8 @@ export const useWordPackForm = ({ settings, setSettings }: UseWordPackFormParams
   // フォームが参照する高度設定一式をまとめ、UI側での条件分岐と依存を最小限に保つ。
   const advancedSettings: AdvancedSettingsControls = useMemo(
     () => ({
-      reasoningEffort: settings.reasoningEffort || 'minimal',
-      textVerbosity: settings.textVerbosity || 'medium',
+      reasoningEffort: settings.reasoningEffort || DEFAULT_REASONING_EFFORT,
+      textVerbosity: settings.textVerbosity || DEFAULT_TEXT_VERBOSITY,
       handleChangeReasoningEffort,
       handleChangeTextVerbosity,
     }),
