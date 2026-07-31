@@ -527,6 +527,21 @@ def test_generate_examples_uses_llm_meta(client, monkeypatch):
     assert job_body["status"] == "succeeded"
     assert job_body["result"]["word_pack_id"] == pack_id
     assert job_body["result"]["added"] == 2
+
+    monkeypatch.setattr(
+        WordPackFlow,
+        "generate_examples_for_categories",
+        lambda self, lemma, plan: {next(iter(plan.keys())): []},
+        raising=False,
+    )
+    empty_response = client.post(
+        f"/api/word/packs/{pack_id}/examples/Dev/generate",
+        json={"model": "gpt-5.6-luna"},
+    )
+    assert empty_response.status_code == 502
+    assert empty_response.json()["detail"]["reason_code"] == "EMPTY_CONTENT"
+
+
 def test_word_lookup(client: TestClient, monkeypatch: pytest.MonkeyPatch):
     from backend.models.word import WordPack
     from backend.routers import word as word_router

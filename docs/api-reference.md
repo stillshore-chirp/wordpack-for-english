@@ -201,7 +201,7 @@ Request:
 
 文章インポートジョブの `queued / running / succeeded / failed` を返します。成功時は `article_id` を返し、フロントエンドは記事詳細を取得します。ジョブは作成したユーザーだけが取得できます。
 
-従来の同期 `POST /api/article/import` は互換性のため残しますが、アプリUIは非同期ジョブ経路を使用します。
+従来の同期 `POST /api/article/import` は互換性のため残しますが、アプリUIは非同期ジョブ経路を使用します。同期ルートはイベントループをブロックする処理を安全に取り消せないため、アプリ内 ASGI timeout の対象外です。直接利用時は Cloud Run のリクエスト期限が最終境界になります。
 
 ### `POST /api/article/generate_and_import/jobs`
 
@@ -211,7 +211,7 @@ Request:
 
 カテゴリ例文生成・記事化ジョブの `queued / running / succeeded / failed` と、成功時の保存結果を返します。画面移動や一時的な状態取得失敗の後も、生成キューはこのAPIで状態を再確認します。
 
-従来の同期 `POST /api/article/generate_and_import` は互換性のため残します。
+従来の同期 `POST /api/article/generate_and_import` は互換性のため残します。worker thread 内の保存処理を asyncio のキャンセルで停止できないため、アプリ内 ASGI timeout の対象外です。
 
 一部だけ記事化できた場合は成功結果に警告を含め、全件失敗時はジョブを `failed` にします。
 

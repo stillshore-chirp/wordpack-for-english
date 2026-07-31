@@ -105,6 +105,29 @@ const overrideGenerateTimeoutHandlers = () => {
   );
 };
 
+// なぜ: 202受理後の状態確認失敗を、生成そのものの失敗と誤表示しない契約を固定するため。
+const overrideAcceptedGenerateStatusFailureHandlers = () => {
+  server.use(
+    http.get('/api/config', () => HttpResponse.json({
+      request_timeout_ms: 30,
+      generation_request_timeout_ms: 30,
+    })),
+    http.post('/api/article/generate_and_import/jobs', () => HttpResponse.json({
+      job_id: 'category-generate-import-job:accepted',
+      job_type: 'category-generate-import',
+      status: 'running',
+    }, { status: 202 })),
+    http.get('/api/article/generate_and_import/jobs/:jobId', async () => {
+      await delay(80);
+      return HttpResponse.json({
+        job_id: 'category-generate-import-job:accepted',
+        job_type: 'category-generate-import',
+        status: 'running',
+      });
+    }),
+  );
+};
+
 // なぜ: 依存する全コンテキストを本番構成に寄せ、実利用時のUI遷移をテストで再現するため。
 const renderWithProviders = () => {
   return render(
@@ -226,6 +249,33 @@ describe('ArticleImportPanel (MSW + contexts)', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '例文を生成して記事化' })).toBeInTheDocument();
     });
+  });
+
+  it('202受理後の状態確認失敗は失敗表示にせず生成キューへ引き継ぐ', async () => {
+    overrideAcceptedGenerateStatusFailureHandlers();
+    renderWithProviders();
+    const user = userEvent.setup();
+
+    await user.click(await screen.findByRole('button', { name: '例文を生成して記事化' }));
+
+    const status = await screen.findByRole('status', {}, { timeout: 3000 });
+    expect(status).toHaveTextContent(
+      '1カテゴリの例文生成・記事化をバックグラウンドで継続しています。生成キューから状態を確認できます。',
+    );
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    await waitFor(() => {
+      const notifications = JSON.parse(
+        screen.getByTestId('notification-probe').textContent || '[]',
+      );
+      expect(notifications).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          status: 'progress',
+          jobId: 'category-generate-import-job:accepted',
+          jobType: 'category-generate-import',
+        }),
+      ]));
+    });
+    expect(screen.getByRole('button', { name: '例文を生成して記事化' })).toBeInTheDocument();
   });
 
   it('モデル切替で reasoning/text UI が表示される', async () => {

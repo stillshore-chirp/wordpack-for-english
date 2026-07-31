@@ -25,6 +25,13 @@ _PROXY_MIDDLEWARE_PARAM = (
     else "trusted_hosts"
 )
 
+_NON_CANCELLABLE_SYNC_GENERATION_PATHS = frozenset(
+    {
+        "/api/article/import",
+        "/api/article/generate_and_import",
+    }
+)
+
 
 def _maybe_add_timeout_middleware(app: FastAPI, app_settings: Any) -> None:
     request_timeout_ms = getattr(
@@ -39,10 +46,10 @@ def _maybe_add_timeout_middleware(app: FastAPI, app_settings: Any) -> None:
     app.add_middleware(
         RequestTimeoutMiddleware,
         timeout=http_timeout_sec,
-        # この同期フローは worker thread へオフロードされ、asyncio のキャンセルでは
-        # thread 内の保存処理を停止できない。504 を返した後も書き込みが続くという
-        # 誤った完了通知を避け、Cloud Run 側のリクエスト期限を最終境界にする。
-        excluded_paths={"/api/article/generate_and_import"},
+        # 互換用の同期フローは、イベントループをブロックするか worker thread 内で
+        # 保存処理を続けるため、asyncio の期限では安全に停止できない。アプリUIは
+        # 非同期ジョブを使い、同期互換ルートは Cloud Run の期限を最終境界にする。
+        excluded_paths=_NON_CANCELLABLE_SYNC_GENERATION_PATHS,
     )
 
 

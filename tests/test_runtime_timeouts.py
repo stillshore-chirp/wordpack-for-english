@@ -35,7 +35,12 @@ def test_http_middleware_uses_the_multi_call_flow_timeout(monkeypatch):
             middleware_stack.RequestTimeoutMiddleware,
             {
                 "timeout": 1505,
-                "excluded_paths": {"/api/article/generate_and_import"},
+                "excluded_paths": frozenset(
+                    {
+                        "/api/article/import",
+                        "/api/article/generate_and_import",
+                    }
+                ),
             },
         )
     ]
@@ -79,8 +84,8 @@ def test_request_timeout_middleware_returns_504() -> None:
     asyncio.run(_assert_timeout())
 
 
-def test_request_timeout_middleware_skips_non_cancellable_worker_route() -> None:
-    async def _assert_excluded_route() -> None:
+def test_request_timeout_middleware_skips_non_cancellable_sync_routes() -> None:
+    async def _assert_excluded_route(path: str) -> None:
         messages: list[dict[str, object]] = []
 
         async def slow_app(scope, receive, send) -> None:
@@ -103,7 +108,10 @@ def test_request_timeout_middleware_skips_non_cancellable_worker_route() -> None
         middleware = middleware_stack.RequestTimeoutMiddleware(
             slow_app,
             timeout=0.001,
-            excluded_paths={"/api/article/generate_and_import"},
+            excluded_paths={
+                "/api/article/import",
+                "/api/article/generate_and_import",
+            },
         )
         await middleware(
             {
@@ -112,8 +120,8 @@ def test_request_timeout_middleware_skips_non_cancellable_worker_route() -> None
                 "http_version": "1.1",
                 "method": "POST",
                 "scheme": "http",
-                "path": "/api/article/generate_and_import",
-                "raw_path": b"/api/article/generate_and_import",
+                "path": path,
+                "raw_path": path.encode(),
                 "query_string": b"",
                 "headers": [],
                 "client": ("127.0.0.1", 1234),
@@ -126,7 +134,8 @@ def test_request_timeout_middleware_skips_non_cancellable_worker_route() -> None
         assert messages[0]["type"] == "http.response.start"
         assert messages[0]["status"] == 200
 
-    asyncio.run(_assert_excluded_route())
+    for path in ("/api/article/import", "/api/article/generate_and_import"):
+        asyncio.run(_assert_excluded_route(path))
 
 
 def test_runtime_config_separates_general_and_multi_call_flow_timeouts(monkeypatch):

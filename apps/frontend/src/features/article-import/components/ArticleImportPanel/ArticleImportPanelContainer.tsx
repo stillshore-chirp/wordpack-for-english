@@ -309,6 +309,7 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
               jobId: acceptedJobId,
               jobType: 'category-generate-import',
             });
+            return { category: selectedCategory, pending: true as const };
           } else {
             updateNotification(notifId, { title: '例文生成・記事化失敗', status: 'error', message, model: selectedModel, category: selectedCategory });
           }
@@ -319,7 +320,12 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
       }),
     );
 
-    const successCount = results.filter((result) => result.status === 'fulfilled').length;
+    const successCount = results.filter(
+      (result) => result.status === 'fulfilled' && !('pending' in result.value),
+    ).length;
+    const pendingCount = results.filter(
+      (result) => result.status === 'fulfilled' && 'pending' in result.value,
+    ).length;
     const failures = results
       .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
       .map((result) => result.reason)
@@ -337,6 +343,14 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
         ? `${successCount}カテゴリで例文生成・記事化を実行しましたが、一部失敗しました`
         : '例文生成・記事化に失敗しました';
       setMsg({ kind: 'alert', text: `${prefix}: ${failures.join(' / ')}` });
+      return;
+    }
+    if (pendingCount > 0) {
+      const completed = successCount > 0 ? `${successCount}カテゴリは完了し、` : '';
+      setMsg({
+        kind: 'status',
+        text: `${completed}${pendingCount}カテゴリの例文生成・記事化をバックグラウンドで継続しています。生成キューから状態を確認できます。`,
+      });
       return;
     }
     setMsg({ kind: 'status', text: `${successCount}カテゴリで例文生成・記事化を実行しました` });

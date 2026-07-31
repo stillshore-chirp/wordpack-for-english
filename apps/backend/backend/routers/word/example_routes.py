@@ -36,6 +36,14 @@ from .schemas import ExamplesGenerateRequest
 router = APIRouter()
 
 
+class EmptyExampleGenerationError(RuntimeError):
+    reason_code = "EMPTY_CONTENT"
+
+    def __init__(self, *, lemma: str, category: ExampleCategory) -> None:
+        super().__init__("LLM returned no usable examples")
+        self.diagnostics = {"lemma": lemma, "category": category.value}
+
+
 def _generate_and_append_examples(
     *,
     repository: object,
@@ -63,7 +71,7 @@ def _generate_and_append_examples(
         for item in generated.get(category, [])
     ]
     if not items:
-        raise RuntimeError("LLM returned no usable examples")
+        raise EmptyExampleGenerationError(lemma=lemma, category=category)
     added = repository.append_examples(word_pack_id, category.value, items)
     return {
         "message": "Examples generated and appended",
