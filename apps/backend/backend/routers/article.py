@@ -162,19 +162,35 @@ async def create_article_import_job(
 ) -> ArticleImportJobResponse:
     """Firebase Hosting の同期上限を避け、文章インポートを非同期実行する。"""
 
-    req = _validate_import_request(payload)
-    return await enqueue_article_import_job(
-        req,
-        owner_user_id=principal.user_id,
-        store=store,
-        runner=partial(
-            _run_article_import,
+    request_payload = dict(payload)
+    client_job_id = request_payload.pop("client_job_id", None)
+    resolved_job_id: str | None = None
+    if client_job_id is not None:
+        try:
+            resolved_job_id = f"article-import-job:{uuid.UUID(str(client_job_id))}"
+        except (ValueError, TypeError, AttributeError) as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
+                detail="client_job_id must be a UUID",
+            ) from exc
+
+    req = _validate_import_request(request_payload)
+    try:
+        return await enqueue_article_import_job(
+            req,
             owner_user_id=principal.user_id,
-            endpoint="/api/article/import/jobs",
-        ),
-        scheduler=AsyncioTaskScheduler(),
-        id_generator=PrefixedUuidGenerator("article-import-job:"),
-    )
+            store=store,
+            runner=partial(
+                _run_article_import,
+                owner_user_id=principal.user_id,
+                endpoint="/api/article/import/jobs",
+            ),
+            scheduler=AsyncioTaskScheduler(),
+            id_generator=PrefixedUuidGenerator("article-import-job:"),
+            job_id=resolved_job_id,
+        )
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(exc)) from exc
 
 
 @router.get(

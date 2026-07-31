@@ -3,7 +3,7 @@
 ## 1. 概要
 
 - 対象PR / 作業: Issue #563
-- 変更した画面・コンポーネント: Lexicon の WordPack 作成欄、Reader の文章インポート欄、共通モデル設定
+- 変更した画面・コンポーネント: Lexicon の WordPack 作成欄、Reader の文章インポート欄、Quiz の関連WordPack表示、生成キュー、共通モデル設定
 - 判定: Pass
 - P0件数: 0
 - P1件数: 0
@@ -42,6 +42,9 @@
 | loading / empty / error | 既存状態を維持 | 既存の更新・再試行 | 既存導線 | Pass |
 | 再読込後の生成ジョブ | 保存済みジョブIDから5秒以内に状態確認を再開 | 待機を継続 | 成功・失敗へ自動補正 | Pass |
 | ジョブ受付後の一時的な追跡失敗 | 「バックグラウンドで継続」「自動で再確認」と表示 | 同一入力を即時再送しない | 生成キューが状態APIを再照合 | Pass |
+| ジョブ作成の202応答喪失 | POST前にクライアント採番IDを進行通知へ保存 | 確定失敗と表示しない | 同一IDの冪等な状態取得・再送 | Pass |
+| 長時間poll | 同じ進行内容は表示を維持 | 待機を継続 | `updatedAt` を変えずライブ通知を再発火しない | Pass |
+| Quiz起点ジョブの再読込後完了 | 生成キューの完了と選択中Quizの関連語を同期 | WordPackを開く | 更新イベントでQuiz詳細を再取得 | Pass |
 
 ## 5. アクセシビリティ確認
 
@@ -51,7 +54,7 @@
 - 見出し・構造: Lexicon / Reader の見出し、main、navigation、region を維持
 - コントラスト: 色・スタイル変更なし
 - ターゲットサイズ: サイズ変更なし
-- エラー・ステータス: ゲスト無効理由、空状態、生成キューを DOM snapshot で確認
+- エラー・ステータス: ゲスト無効理由、空状態、生成キューを DOM snapshot で確認。同一poll内容では `updatedAt` を維持し、スクリーンリーダーへ同じ進行文を毎秒再通知しない
 - 自動検査: frontend typecheck、Vitest、Playwright smoke
 - 手動確認: desktop 1280x720 と narrow 390x844
 
@@ -84,7 +87,7 @@
 
 ## 9. 満足感・信頼感
 
-- 待機中: Reader文章インポート、カテゴリ例文生成・記事化、追加例文生成は202で非同期ジョブへ登録し、生成キューにジョブIDと進行状態を保持
+- 待機中: Reader文章インポート、カテゴリ例文生成・記事化、追加例文生成は202で非同期ジョブへ登録し、生成キューにジョブIDと進行状態を保持。文章インポートはPOST前にIDを保存するため202応答喪失も回復可能
 - 成功時: 既存の完了通知と生成メタ情報を維持
 - 失敗時: 非対応値は API 境界で拒否する。確定ジョブ失敗と追跡APIの一時失敗を分け、後者を誤って完了済みエラーにしない
 - 危険操作: 破壊的操作なし
@@ -98,6 +101,9 @@
 - 最終自動レビューで見つけた問題: Luna High の待機上限を25分へ伸ばしても、Firebase Hosting の同期リライトは約60秒で切れる。Reader文章インポートを所有者スコープ付き非同期ジョブへ変更し、通常API1分と生成全体25分を分離した
 - 状態回復: 文章インポート、カテゴリ例文生成・記事化、追加例文生成、WordPack再生成のジョブIDと種別を通知へ永続化し、再読込後は5秒以内に状態確認を再開する。非終端状態は生成上限内で失敗扱いせず、成功・失敗だけを補正する
 - 重複防止: ジョブ受付後の状態取得または記事詳細取得が一時失敗しても通知を `progress` のまま保持し、生成キューが再照合できるようにする
+- 送信曖昧性: 文章インポートはクライアント採番UUIDをAPIへ渡し、同一ユーザー・同一IDの再送では既存ジョブを返して処理を二重起動しない
+- ライブ通知: 同一内容の通知更新をno-opにし、長時間poll中に同じ進行文を毎秒読み上げない
+- Quiz復旧: WordPack完了イベントで選択中Quiz詳細を再取得し、生成キューが成功でも本文側に再生成操作が残る不一致を解消
 - 最終自動レビューで追加検出した問題: Quiz本文からのWordPack生成だけ通常60秒を使っていたため生成25分へ統一した。WordPack能動ポーリングの15分下限も25分へ統一し、存在しないStarlette timeout middlewareは実動するASGI middlewareへ置換した
 - P0候補: 旧環境変数が残りバックエンド起動または生成が失敗する可能性。env 例、ローカル env、既定値、設定文書を同時更新して解消
 - 証跡不足: 実 OpenAI API への課金を伴う Luna 生成は未実行
@@ -118,6 +124,9 @@
 | P1 | Reader / 例文からの記事化 | ジョブ受付後の一時的な状態・記事取得失敗を確定失敗にする | 完了済み記事を失敗表示し、再試行で重複作成し得る | 両導線でジョブID付き進行通知を維持し、生成キューで自動再照合 | 対応済 |
 | P1 | Reader / カテゴリ生成・記事化 | 同期HTTPの切断後も保存処理だけが継続する | 失敗表示後にWordPackと記事が保存され、再試行で重複し得る | 所有者スコープ付き202ジョブと生成キュー再照合へ変更 | 対応済 |
 | P1 | WordPack / 追加例文生成 | 同期HTTPの切断後も例文保存だけが継続する | 失敗表示と保存結果が食い違い、再試行で例文が重複し得る | 所有者スコープ付き202ジョブと生成キュー再照合へ変更 | 対応済 |
+| P1 | Reader文章インポート | ジョブ作成後に202応答を失うとIDが分からない | 確定失敗表示と再送で記事が重複し得る | POST前のクライアント採番と同一IDの冪等受付 | 対応済 |
+| P1 | 生成キュー / ライブリージョン | 同じ進行状態を毎秒更新 | スクリーンリーダーが同じ文を長時間反復 | 同一内容の通知更新をno-op化 | 対応済 |
+| P2 | Quiz関連WordPack | 再読込後のジョブ完了で選択中Quizが古い | 完了済みの語に再生成操作が残る | WordPack更新時にQuiz詳細を再取得 | 対応済 |
 | P2 | HTTP上限 | インストール済みStarletteにtimeout middlewareが存在しない | サーバー側の全体上限が適用されない | 実動ASGI middlewareと504回帰テストを追加 | 対応済 |
 | P2 | UI | 単一選択肢でもモデル欄が残る | 一見すると冗長 | 将来拡張という明示要件に従い維持 | 対応済 |
 
@@ -125,7 +134,7 @@
 
 - 変更前: [Lexicon desktop](../evidence/issue-563/before-lexicon-desktop.jpg)、[Reader desktop](../evidence/issue-563/before-reader-desktop.jpg)
 - 変更後: [Lexicon desktop](../evidence/issue-563/after-lexicon-desktop.jpg)、[Reader desktop](../evidence/issue-563/after-reader-desktop.jpg)、[Reader narrow](../evidence/issue-563/after-reader-narrow.jpg)
-- テスト結果: backend 319 passed / 1 skipped、frontend 204 passed / 1 skipped、Playwright smoke 9 passed、visual regression 6 passed
+- テスト結果: backend 326 passed / 1 skipped、frontend 218 passed / 1 skipped、Playwright smoke 9 passed、visual regression 6 passed
 - 手動確認: Luna 1選択肢、High 既定、6段階 effort、desktop / narrow、ゲスト無効理由、semantic labels
 - 取得できなかった証跡と理由: 実 OpenAI API 生成は課金と外部状態変更を避け、mock Responses API の request-shape テストで代替
 

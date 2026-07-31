@@ -136,3 +136,41 @@ async def _assert_article_import_job_records_failure() -> None:
     assert job is not None
     assert job.status == "failed"
     assert job.error == "provider timeout"
+
+
+def test_article_import_job_submission_is_idempotent() -> None:
+    asyncio.run(_assert_article_import_job_submission_is_idempotent())
+
+
+async def _assert_article_import_job_submission_is_idempotent() -> None:
+    store = _Store()
+    calls = 0
+
+    def _run(_req: ArticleImportRequest) -> ArticleDetailResponse:
+        nonlocal calls
+        calls += 1
+        return _article()
+
+    first = await enqueue_article_import_job(
+        ArticleImportRequest(text="hello"),
+        owner_user_id="user-1",
+        store=store,
+        runner=_run,
+        scheduler=None,
+        id_generator=_IdGenerator(),
+        job_id="article-import-job:client-generated",
+    )
+    second = await enqueue_article_import_job(
+        ArticleImportRequest(text="hello"),
+        owner_user_id="user-1",
+        store=store,
+        runner=_run,
+        scheduler=None,
+        id_generator=_IdGenerator(),
+        job_id="article-import-job:client-generated",
+    )
+
+    assert first.job_id == second.job_id == "article-import-job:client-generated"
+    assert first.status == "queued"
+    assert second.status == "succeeded"
+    assert calls == 1

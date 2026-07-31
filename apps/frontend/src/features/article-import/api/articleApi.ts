@@ -12,12 +12,13 @@ export interface ArticleImportJobResponse {
 
 export const createArticleImportJob = (
   apiBase: string,
-  body: unknown,
+  body: Record<string, unknown>,
+  clientJobId: string,
   options?: { signal?: AbortSignal; timeoutMs?: number },
 ): Promise<ArticleImportJobResponse> => (
   fetchJson<ArticleImportJobResponse>(`${apiBase}/article/import/jobs`, {
     method: 'POST',
-    body,
+    body: { ...body, client_job_id: clientJobId },
     signal: options?.signal,
     timeoutMs: options?.timeoutMs,
   })

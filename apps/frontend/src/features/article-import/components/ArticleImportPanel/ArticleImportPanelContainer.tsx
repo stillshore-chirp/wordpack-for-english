@@ -114,7 +114,15 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
       body.model = selectedModel;
       body.reasoning = { effort: settings.reasoningEffort || DEFAULT_REASONING_EFFORT };
       body.text_opts = { verbosity: settings.textVerbosity || DEFAULT_TEXT_VERBOSITY };
-      let job: ArticleImportJobResponse = await createArticleImportJob(settings.apiBase, body, {
+      const clientJobId = crypto.randomUUID();
+      acceptedJobId = `article-import-job:${clientJobId}`;
+      updateNotification(notifId, {
+        message: 'バックグラウンド処理を受け付けています',
+        jobId: acceptedJobId,
+        jobType: 'article-import',
+        pollingOwner: 'foreground',
+      });
+      let job: ArticleImportJobResponse = await createArticleImportJob(settings.apiBase, body, clientJobId, {
         signal: ctrl.signal,
         timeoutMs: settings.requestTimeoutMs,
       });
@@ -143,12 +151,6 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
         job = await fetchArticleImportJob(settings.apiBase, job.job_id, {
           signal: ctrl.signal,
           timeoutMs: settings.requestTimeoutMs,
-        });
-        updateNotification(notifId, {
-          message: 'バックグラウンドで文章を処理しています',
-          jobId: job.job_id,
-          jobType: 'article-import',
-          pollingOwner: 'foreground',
         });
       }
       if (job.status === 'failed') {
@@ -191,7 +193,7 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
       const m = e instanceof ApiError ? e.message : '文章インポートに失敗しました';
       if (acceptedJobId && !confirmedJobFailure) {
         setMsg({
-          kind: 'alert',
+          kind: 'status',
           text: '文章インポートはバックグラウンドで継続しています。生成キューから状態を確認してください。',
         });
         updateNotification(notifId, {

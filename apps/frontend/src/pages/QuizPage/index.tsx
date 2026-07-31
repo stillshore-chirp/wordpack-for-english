@@ -519,6 +519,7 @@ export const QuizPage: React.FC = () => {
   const [previewWordPackId, setPreviewWordPackId] = useState<string | null>(null);
   const [relatedLinks, setRelatedLinks] = useState<QuizWordPackLink[]>([]);
   const [detailFocusMode, setDetailFocusMode] = useState(false);
+  const [wordPackRefreshVersion, setWordPackRefreshVersion] = useState(0);
 
   const [formatProfile, setFormatProfile] = useState<QuizFormatProfile>('single_passage');
   const [generationDomain, setGenerationDomain] = useState<QuizGenerationDomain>('technical');
@@ -616,6 +617,15 @@ export const QuizPage: React.FC = () => {
   }, [loadList]);
 
   useEffect(() => {
+    const handleWordPackUpdated = () => {
+      void loadWordPacks();
+      setWordPackRefreshVersion((version) => version + 1);
+    };
+    window.addEventListener(APP_EVENTS.wordPackUpdated, handleWordPackUpdated);
+    return () => window.removeEventListener(APP_EVENTS.wordPackUpdated, handleWordPackUpdated);
+  }, [loadWordPacks]);
+
+  useEffect(() => {
     if (!selectedQuizId) {
       setSelectedQuiz(null);
       setDetailFocusMode(false);
@@ -641,7 +651,7 @@ export const QuizPage: React.FC = () => {
       })
       .finally(() => setLoadingDetail(false));
     return () => ctrl.abort();
-  }, [apiBase, selectedQuizId, settings.requestTimeoutMs]);
+  }, [apiBase, selectedQuizId, settings.requestTimeoutMs, wordPackRefreshVersion]);
 
   const updateRelatedLink = useCallback((lemma: string, patch: Partial<QuizWordPackLink>) => {
     setRelatedLinks((prev) => prev.map((link) => (

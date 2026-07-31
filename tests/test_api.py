@@ -196,6 +196,29 @@ def test_word_pack_generation_job_persists_result(client):
     assert saved.status_code == 200
 
 
+def test_article_import_job_accepts_idempotent_client_job_id(client):
+    client_job_id = "11111111-1111-4111-8111-111111111111"
+    payload = {
+        "text": "A resilient queue prevents duplicate imports.",
+        "client_job_id": client_job_id,
+    }
+    with client as job_client:
+        first = job_client.post("/api/article/import/jobs", json=payload)
+        second = job_client.post("/api/article/import/jobs", json=payload)
+
+    assert first.status_code == 202
+    assert second.status_code == 202
+    assert first.json()["job_id"] == second.json()["job_id"] == (
+        f"article-import-job:{client_job_id}"
+    )
+
+    invalid = client.post(
+        "/api/article/import/jobs",
+        json={"text": "invalid id", "client_job_id": "not-a-uuid"},
+    )
+    assert invalid.status_code == 422
+
+
 @pytest.mark.parametrize(
     "endpoint,payload",
     [

@@ -195,7 +195,8 @@ Request:
 {
   "text": "English article text...",
   "generation_category": "Common",
-  "model": "gpt-5.6-luna"
+  "model": "gpt-5.6-luna",
+  "client_job_id": "11111111-1111-4111-8111-111111111111"
 }
 ```
 
@@ -203,6 +204,7 @@ Request:
 
 - 1 回のインポート本文は最大 4,000 文字
 - 超過時は 413 `article_import_text_too_long`
+- `client_job_id` は任意の UUID。同じユーザーが同じ値を再送した場合は既存ジョブを返し、202応答の通信断後も重複保存せず状態取得を再開できます。アプリUIはPOST前にこの値と対応するジョブIDを生成キューへ保存します。
 
 ### `GET /api/article/import/jobs/{job_id}`
 

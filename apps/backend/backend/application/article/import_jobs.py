@@ -165,14 +165,20 @@ async def enqueue_article_import_job(
     runner: ArticleImportRunner,
     scheduler: TaskScheduler | None,
     id_generator: IdGenerator,
+    job_id: str | None = None,
 ) -> ArticleImportJobResponse:
-    job_id = id_generator.new_id()
-    job = _create_job_record(store, job_id, owner_user_id)
+    resolved_job_id = job_id or id_generator.new_id()
     async with _article_import_lock:
-        _article_import_jobs[job_id] = job
+        existing = _get_job_record(store, resolved_job_id)
+        if existing is not None:
+            if existing.owner_user_id != owner_user_id:
+                raise PermissionError("Article import job ID is already in use")
+            return existing.to_response()
+        job = _create_job_record(store, resolved_job_id, owner_user_id)
+        _article_import_jobs[resolved_job_id] = job
     if scheduler is None:
         await _run_article_import_job(
-            job_id,
+            resolved_job_id,
             req,
             store=store,
             runner=runner,
@@ -180,7 +186,7 @@ async def enqueue_article_import_job(
     else:
         scheduler.spawn(
             _run_article_import_job(
-                job_id,
+                resolved_job_id,
                 req,
                 store=store,
                 runner=runner,

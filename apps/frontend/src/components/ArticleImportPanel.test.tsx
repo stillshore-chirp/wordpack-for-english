@@ -180,7 +180,7 @@ describe('ArticleImportPanel (MSW + contexts)', () => {
     expect(dialog).toBeInTheDocument();
   });
 
-  it('インポート失敗時にエラー表示とボタン再有効化が行われる', async () => {
+  it('ジョブID採番後の500応答は確定失敗にせず生成キューへ引き継ぐ', async () => {
     overrideImportFailureHandlers();
     renderWithProviders();
     const user = userEvent.setup();
@@ -191,8 +191,11 @@ describe('ArticleImportPanel (MSW + contexts)', () => {
     const importButton = screen.getByRole('button', { name: '文章をインポート' });
     await user.click(importButton);
 
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('インポート処理でサーバーエラーが発生しました');
+    const status = await screen.findByRole('status');
+    expect(status).toHaveTextContent(
+      '文章インポートはバックグラウンドで継続しています。生成キューから状態を確認してください。',
+    );
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
 
     await waitFor(() => {
       expect(importButton).toBeEnabled();
@@ -213,8 +216,8 @@ describe('ArticleImportPanel (MSW + contexts)', () => {
     await user.type(textarea, 'recoverable import');
     await user.click(screen.getByRole('button', { name: '文章をインポート' }));
 
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent(
+    const status = await screen.findByRole('status');
+    expect(status).toHaveTextContent(
       '文章インポートはバックグラウンドで継続しています。生成キューから状態を確認してください。',
     );
     await waitFor(() => {
@@ -227,6 +230,42 @@ describe('ArticleImportPanel (MSW + contexts)', () => {
           jobId: 'article-import-job:test',
           jobType: 'article-import',
           articleId: 'art:abcd1234',
+        }),
+      ]));
+    });
+  });
+
+  it('202応答が失われても送信前に採番したジョブIDで再照合できる', async () => {
+    let clientJobId = '';
+    server.use(
+      http.post('/api/article/import/jobs', async ({ request }) => {
+        const body = await request.json() as { client_job_id?: string };
+        clientJobId = body.client_job_id ?? '';
+        return HttpResponse.error();
+      }),
+    );
+    renderWithProviders();
+    const user = userEvent.setup();
+
+    await user.type(
+      await screen.findByPlaceholderText('文章を貼り付け（日本語/英語）'),
+      'response lost after submission',
+    );
+    await user.click(screen.getByRole('button', { name: '文章をインポート' }));
+
+    expect(await screen.findByRole('status')).toHaveTextContent(
+      '文章インポートはバックグラウンドで継続しています。生成キューから状態を確認してください。',
+    );
+    expect(clientJobId).toMatch(/^[0-9a-f-]{36}$/);
+    await waitFor(() => {
+      const notifications = JSON.parse(
+        screen.getByTestId('notification-probe').textContent || '[]',
+      );
+      expect(notifications).toEqual(expect.arrayContaining([
+        expect.objectContaining({
+          status: 'progress',
+          jobId: `article-import-job:${clientJobId}`,
+          jobType: 'article-import',
         }),
       ]));
     });

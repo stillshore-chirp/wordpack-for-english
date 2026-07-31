@@ -95,7 +95,15 @@ export const NotificationsProvider: React.FC<{ children: React.ReactNode } & { p
   }, []);
 
   const update: NotificationsContextValue['update'] = useCallback((id, patch) => {
-    setNotifications((prev) => prev.map((n) => (n.id === id ? { ...n, ...patch, updatedAt: Date.now() } : n)));
+    setNotifications((prev) => prev.map((notification) => {
+      if (notification.id !== id) return notification;
+      const changed = Object.entries(patch).some(([key, value]) => (
+        notification[key as keyof NotificationItem] !== value
+      ));
+      return changed
+        ? { ...notification, ...patch, updatedAt: Date.now() }
+        : notification;
+    }));
   }, []);
 
   const remove: NotificationsContextValue['remove'] = useCallback((id) => {

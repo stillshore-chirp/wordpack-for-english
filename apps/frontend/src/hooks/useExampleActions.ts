@@ -261,7 +261,15 @@ export const useExampleActions = ({
       let confirmedJobFailure = false;
 
       try {
-        let job = await createArticleImportJob(apiBase, { text: ex.en }, {
+        const clientJobId = crypto.randomUUID();
+        acceptedJobId = `article-import-job:${clientJobId}`;
+        notify.update(notifId, {
+          message: 'バックグラウンド処理を受け付けています',
+          jobId: acceptedJobId,
+          jobType: 'article-import',
+          pollingOwner: 'foreground',
+        });
+        let job = await createArticleImportJob(apiBase, { text: ex.en }, clientJobId, {
           signal: ctrl.signal,
           timeoutMs: requestTimeoutMs,
         });
@@ -285,12 +293,6 @@ export const useExampleActions = ({
           job = await fetchArticleImportJob(apiBase, job.job_id, {
             signal: ctrl.signal,
             timeoutMs: requestTimeoutMs,
-          });
-          notify.update(notifId, {
-            message: 'バックグラウンドで文章を処理しています',
-            jobId: job.job_id,
-            jobType: 'article-import',
-            pollingOwner: 'foreground',
           });
         }
         if (job.status === 'failed') {
