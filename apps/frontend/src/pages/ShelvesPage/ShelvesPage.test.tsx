@@ -7,16 +7,19 @@ import type { WordPackListItem } from '../../features/wordpack/types';
 import { ShelvesPage } from './index';
 
 vi.mock('../../SettingsContext', () => ({
+  DEFAULT_GENERATION_REQUEST_TIMEOUT_MS: 1_500_000,
   useSettings: () => ({
     settings: {
       apiBase: '/api',
       requestTimeoutMs: 60000,
+      generationRequestTimeoutMs: 1_500_000,
     },
   }),
   useOptionalSettings: () => ({
     settings: {
       apiBase: '/api',
       requestTimeoutMs: 60000,
+      generationRequestTimeoutMs: 1_500_000,
     },
   }),
 }));

@@ -193,6 +193,13 @@ class Settings(BaseSettings):
     )
 
     # --- LLM 呼出しのタイムアウト/リトライ ---
+    request_timeout_ms: int = Field(
+        default=60000,
+        description=(
+            "Timeout for ordinary frontend API requests (ms) / "
+            "通常のフロントエンドAPIリクエストのタイムアウト(ms)"
+        ),
+    )
     llm_timeout_ms: int = Field(
         default=300000,
         description="Per-attempt timeout for LLM calls (ms) / LLM呼出しの試行毎タイムアウト(ms)",

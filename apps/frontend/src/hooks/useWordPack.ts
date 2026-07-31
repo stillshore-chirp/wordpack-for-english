@@ -1,6 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNotifications } from '../NotificationsContext';
-import { useSettings } from '../SettingsContext';
+import {
+  DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
+  useSettings,
+} from '../SettingsContext';
 import { ApiError, fetchJson } from '../lib/fetcher';
 import { validateLemmaInput } from '../lib/lemmaValidation';
 import { APP_EVENTS, dispatchAppEvent } from '../shared/events/appEvents';
@@ -55,7 +58,17 @@ export const useWordPack = ({
 }: UseWordPackOptions): UseWordPackResult => {
   const { settings } = useSettings();
   const { add: addNotification, update: updateNotification } = useNotifications();
-  const { apiBase, pronunciationEnabled, regenerateScope, requestTimeoutMs, reasoningEffort, textVerbosity } = settings;
+  const {
+    apiBase,
+    generationRequestTimeoutMs,
+    pronunciationEnabled,
+    regenerateScope,
+    requestTimeoutMs,
+    reasoningEffort,
+    textVerbosity,
+  } = settings;
+  const generationTimeoutMs = generationRequestTimeoutMs
+    ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS;
 
   const [data, setData] = useState<WordPack | null>(null);
   const [currentWordPackId, setCurrentWordPackId] = useState<string | null>(null);
@@ -179,7 +192,7 @@ export const useWordPack = ({
             regenerate_scope: regenerateScope,
           }),
           signal: ctrl.signal,
-          timeoutMs: requestTimeoutMs,
+          timeoutMs: generationTimeoutMs,
         });
         const normalized = normalizeWordPack(res);
         const generatedWordPackId = res.id?.trim() || null;
@@ -217,7 +230,7 @@ export const useWordPack = ({
         }
       }
     },
-    [addNotification, apiBase, applyModelRequestFields, extractAiMeta, normalizeWordPack, onWordPackGenerated, pronunciationEnabled, regenerateScope, requestTimeoutMs, updateNotification],
+    [addNotification, apiBase, applyModelRequestFields, extractAiMeta, generationTimeoutMs, normalizeWordPack, onWordPackGenerated, pronunciationEnabled, regenerateScope, updateNotification],
   );
 
   const generateDetachedWordPack = useCallback(
@@ -242,7 +255,7 @@ export const useWordPack = ({
             pronunciation_enabled: pronunciationEnabled,
             regenerate_scope: regenerateScope,
           }),
-          timeoutMs: requestTimeoutMs,
+          timeoutMs: generationTimeoutMs,
         });
         const normalized = normalizeWordPack(res);
         const generatedWordPackId = res.id?.trim() || null;
@@ -275,7 +288,7 @@ export const useWordPack = ({
         return null;
       }
     },
-    [addNotification, apiBase, applyModelRequestFields, normalizeWordPack, pronunciationEnabled, regenerateScope, requestTimeoutMs, updateNotification],
+    [addNotification, apiBase, applyModelRequestFields, generationTimeoutMs, normalizeWordPack, pronunciationEnabled, regenerateScope, updateNotification],
   );
 
   const createEmptyWordPack = useCallback(

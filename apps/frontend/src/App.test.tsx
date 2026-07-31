@@ -8,6 +8,7 @@ import { App } from './App';
 import { AppProviders } from './main';
 import {
   AUTO_RETRY_INTERVAL_MS,
+  DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
   DEFAULT_REQUEST_TIMEOUT_MS,
 } from './SettingsContext';
 import type { FC, ReactNode } from 'react';
@@ -182,8 +183,9 @@ beforeEach(() => {
 });
 
 describe('App navigation', () => {
-  it('keeps the initial client timeout large enough for multi-call LLM flows', () => {
-    expect(DEFAULT_REQUEST_TIMEOUT_MS).toBe(1_500_000);
+  it('uses separate request deadlines for ordinary calls and multi-call LLM flows', () => {
+    expect(DEFAULT_REQUEST_TIMEOUT_MS).toBe(60_000);
+    expect(DEFAULT_GENERATION_REQUEST_TIMEOUT_MS).toBe(1_500_000);
   });
 
   it('shows login card when user has not authenticated yet', async () => {

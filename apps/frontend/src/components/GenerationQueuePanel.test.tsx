@@ -68,6 +68,16 @@ const setupFetchMocks = () => {
         headers: { 'Content-Type': 'application/json' },
       });
     }
+    if (url.endsWith('/api/article/import/jobs/article-import-job%3Aalpha')) {
+      return new Response(JSON.stringify({
+        job_id: 'article-import-job:alpha',
+        status: 'succeeded',
+        article_id: 'art:alpha',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     if (url.endsWith('/api/word/lemma/alpha')) {
       return new Response(JSON.stringify({ found: true, id: 'wp:alpha', lemma: 'alpha', sense_title: 'alpha概説' }), {
         status: 200,
@@ -225,7 +235,7 @@ describe('GenerationQueuePanel', () => {
     expect(requestedUrls.some((url) => url.endsWith('/api/word/packs/wp:alpha/regenerate/jobs/job-alpha'))).toBe(true);
   });
 
-  it('ジョブIDがない古い進行中カードは完了扱いしない', async () => {
+  it('ジョブIDがない進行中カードは同期処理として期限切れ補正しない', async () => {
     const staleAt = Date.now() - 21 * 60 * 1000;
     localStorage.setItem(
       'wpfe.notifications.v1',
@@ -245,9 +255,35 @@ describe('GenerationQueuePanel', () => {
     );
     renderQueue();
 
-    await waitFor(() => {
-      expect(screen.getAllByText(/ジョブIDが保存されていないため/).length).toBeGreaterThan(0);
-    });
+    expect(await screen.findByRole('button', { name: 'キューから隠す' })).toBeInTheDocument();
+    expect(screen.queryByText(/ジョブIDが保存されていないため/)).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'alpha の生成結果プレビューを開く' })).not.toBeInTheDocument();
+  });
+
+  it('全体上限を越えた文章インポートジョブは状態APIから完了へ補正する', async () => {
+    const staleAt = Date.now() - 27 * 60 * 1000;
+    localStorage.setItem(
+      'wpfe.notifications.v1',
+      JSON.stringify([
+        {
+          id: 'n-stale-article',
+          title: '文章インポート中...',
+          message: 'バックグラウンドで文章を処理しています',
+          status: 'progress',
+          createdAt: staleAt,
+          updatedAt: staleAt,
+          model: 'gpt-5.6-luna',
+          jobId: 'article-import-job:alpha',
+          jobType: 'article-import',
+        },
+      ]),
+    );
+    renderQueue();
+
+    expect(await screen.findByText('文章インポート完了')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('保存済み記事を確認しました');
+    expect(
+      requestedUrls.some((url) => url.endsWith('/api/article/import/jobs/article-import-job%3Aalpha')),
+    ).toBe(true);
   });
 });

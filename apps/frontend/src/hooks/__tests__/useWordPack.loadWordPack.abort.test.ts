@@ -29,6 +29,7 @@ const mockNotifications = vi.hoisted(() => ({
 }));
 
 vi.mock('../../SettingsContext', () => ({
+  DEFAULT_GENERATION_REQUEST_TIMEOUT_MS: 1_500_000,
   useSettings: () => mockSettings,
 }));
 
@@ -170,4 +171,3 @@ describe('useWordPack.loadWordPack', () => {
     });
   });
 });
-

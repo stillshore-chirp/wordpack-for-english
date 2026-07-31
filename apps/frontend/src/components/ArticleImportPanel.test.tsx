@@ -21,9 +21,13 @@ const createSidebarPortalContainer = () => {
 
 const setupArticleImportHandlers = () => {
   server.use(
-    http.post('/api/article/import', async () => {
+    http.post('/api/article/import/jobs', async () => {
       await delay(80);
-      return HttpResponse.json({ id: 'art:abcd1234' });
+      return HttpResponse.json({
+        job_id: 'article-import-job:test',
+        status: 'succeeded',
+        article_id: 'art:abcd1234',
+      }, { status: 202 });
     }),
     http.post('/api/article/generate_and_import', async () => {
       await delay(40);
@@ -55,7 +59,7 @@ const setupArticleImportHandlers = () => {
 // なぜ: 500/タイムアウトを明示的に再現し、エラー時のUI復帰を安定検証するため。
 const overrideImportFailureHandlers = () => {
   server.use(
-    http.post('/api/article/import', async () => {
+    http.post('/api/article/import/jobs', async () => {
       await delay(30);
       return HttpResponse.json(
         { detail: { message: 'インポート処理でサーバーエラーが発生しました' } },
@@ -68,7 +72,10 @@ const overrideImportFailureHandlers = () => {
 // なぜ: 短いタイムアウト設定で例文生成・記事化失敗を素早く再現するため。
 const overrideGenerateTimeoutHandlers = () => {
   server.use(
-    http.get('/api/config', () => HttpResponse.json({ request_timeout_ms: 30 })),
+    http.get('/api/config', () => HttpResponse.json({
+      request_timeout_ms: 60000,
+      generation_request_timeout_ms: 30,
+    })),
     http.post('/api/article/generate_and_import', async () => {
       await delay(80);
       return HttpResponse.json({

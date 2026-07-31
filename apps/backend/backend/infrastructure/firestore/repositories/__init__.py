@@ -1,7 +1,11 @@
 from __future__ import annotations
 
 from .app_store import AppFirestoreRepository, AppFirestoreStore
-from .articles import FirestoreArticleRepository, FirestoreArticleStore
+from .articles import (
+    ArticleImportJobStatus,
+    FirestoreArticleRepository,
+    FirestoreArticleStore,
+)
 from .base import FirestoreBaseRepository, FirestoreBaseStore
 from .examples import FirestoreExampleRepository, FirestoreExampleStore
 from .quizzes import FirestoreQuizRepository, FirestoreQuizStore, QuizGenerationJobStatus
@@ -11,6 +15,7 @@ from .wordpacks import FirestoreWordPackRepository, FirestoreWordPackStore
 
 __all__ = [
     "AppFirestoreRepository",
+    "ArticleImportJobStatus",
     "AppFirestoreStore",
     "FirestoreArticleRepository",
     "FirestoreArticleStore",

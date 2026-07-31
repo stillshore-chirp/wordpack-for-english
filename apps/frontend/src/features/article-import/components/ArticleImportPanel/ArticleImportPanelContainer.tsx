@@ -1,5 +1,8 @@
 import React, { useMemo, useRef, useState } from 'react';
-import { useSettings } from '../../../../SettingsContext';
+import {
+  DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
+  useSettings,
+} from '../../../../SettingsContext';
 import { useModal } from '../../../../ModalContext';
 import { useConfirmDialog } from '../../../../ConfirmDialogContext';
 import { useNotifications } from '../../../../NotificationsContext';
@@ -23,8 +26,11 @@ import {
   type TextVerbosity,
 } from '../../../../lib/wordpack';
 import {
+  createArticleImportJob,
   deleteWordPackFromArticle,
   fetchArticleDetail,
+  fetchArticleImportJob,
+  type ArticleImportJobResponse,
   type ArticleDetailResponse,
 } from '../../api/articleApi';
 import { APP_EVENTS, dispatchAppEvent } from '../../../../shared/events/appEvents';
@@ -37,6 +43,7 @@ interface ArticleImportPanelProps {
 type ControlPlacement = 'inline' | 'sidebar';
 const EXAMPLE_CATEGORIES = ['Dev', 'CS', 'LLM', 'Business', 'Common'] as const;
 type ExampleCategory = (typeof EXAMPLE_CATEGORIES)[number];
+const ARTICLE_IMPORT_POLL_INTERVAL_MS = 1000;
 
 export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
   showInlineControls = true,
@@ -100,20 +107,62 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
       body.model = selectedModel;
       body.reasoning = { effort: settings.reasoningEffort || DEFAULT_REASONING_EFFORT };
       body.text_opts = { verbosity: settings.textVerbosity || DEFAULT_TEXT_VERBOSITY };
-      const res = await fetchJson<ArticleDetailResponse>(`${settings.apiBase}/article/import`, {
-        method: 'POST',
-        body,
+      let job: ArticleImportJobResponse = await createArticleImportJob(settings.apiBase, body, {
         signal: ctrl.signal,
         timeoutMs: settings.requestTimeoutMs,
       });
+      updateNotification(notifId, {
+        message: 'バックグラウンドで文章を処理しています',
+        jobId: job.job_id,
+        jobType: 'article-import',
+      });
+      const deadlineMs = Date.now()
+        + (settings.generationRequestTimeoutMs ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS);
+      while (job.status === 'queued' || job.status === 'running') {
+        if (Date.now() >= deadlineMs) {
+          throw new ApiError(
+            '文章インポートが制限時間内に完了しませんでした。生成キューから状態を確認してください。',
+            0,
+          );
+        }
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, ARTICLE_IMPORT_POLL_INTERVAL_MS);
+        });
+        if (ctrl.signal.aborted) {
+          throw new ApiError('Request aborted or timed out', 0);
+        }
+        job = await fetchArticleImportJob(settings.apiBase, job.job_id, {
+          signal: ctrl.signal,
+          timeoutMs: settings.requestTimeoutMs,
+        });
+        updateNotification(notifId, {
+          message: 'バックグラウンドで文章を処理しています',
+          jobId: job.job_id,
+          jobType: 'article-import',
+        });
+      }
+      if (job.status === 'failed') {
+        throw new ApiError(job.error || '文章インポートに失敗しました', 500);
+      }
+      if (!job.article_id) {
+        throw new ApiError('文章インポート結果を確認できませんでした', 500);
+      }
       // 一覧カードと同じ導線: GET の結果のみで表示（フォールバックしない）
-      const refreshed = await fetchArticleDetail(settings.apiBase, res.id, {
+      const refreshed = await fetchArticleDetail(settings.apiBase, job.article_id, {
         signal: ctrl.signal,
         timeoutMs: settings.requestTimeoutMs,
       });
       setArticle(refreshed);
       setMsg({ kind: 'status', text: '文章をインポートしました' });
-      updateNotification(notifId, { title: '文章インポート完了', status: 'success', message: '詳細を表示します', model: selectedModel });
+      updateNotification(notifId, {
+        title: '文章インポート完了',
+        status: 'success',
+        message: '詳細を表示します',
+        model: selectedModel,
+        jobId: job.job_id,
+        jobType: 'article-import',
+        articleId: job.article_id,
+      });
       // グローバルに記事更新イベントを通知（一覧の自動更新用）
       dispatchAppEvent(APP_EVENTS.articleUpdated);
       setDetailOpen(true);
@@ -163,7 +212,7 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
           const res = await fetchJson<{ lemma: string; word_pack_id: string; category: string; generated_examples: number; article_ids: string[] }>(`${settings.apiBase}/article/generate_and_import`, {
             method: 'POST',
             body: reqBody,
-            timeoutMs: settings.requestTimeoutMs,
+            timeoutMs: settings.generationRequestTimeoutMs ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
           });
           updateNotification(notifId, { title: '例文生成・記事化完了', status: 'success', message: `【${res.lemma}】${res.generated_examples}件の例文から記事を作成しました`, model: selectedModel, category: (res.category as string | undefined) || selectedCategory, wordPackId: res.word_pack_id, lemma: res.lemma });
           return { category: selectedCategory, result: res };

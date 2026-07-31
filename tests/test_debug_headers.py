@@ -61,4 +61,5 @@ def test_debug_headers_shares_same_application(debug_client: TestClient) -> None
     assert cfg.status_code == 200
     body = cfg.json()
     assert "request_timeout_ms" in body
+    assert "generation_request_timeout_ms" in body
     assert "google_client_id" in body

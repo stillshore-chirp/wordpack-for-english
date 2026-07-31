@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ..llm_models import (
@@ -94,6 +96,15 @@ class ArticleDetailResponse(Article):
     warnings: list[str] | None = Field(
         default=None, description="インポート時に発生した警告メッセージの一覧"
     )
+
+
+class ArticleImportJobResponse(BaseModel):
+    """非同期文章インポートの状態。"""
+
+    job_id: str
+    status: Literal["queued", "running", "succeeded", "failed"]
+    article_id: str | None = None
+    error: str | None = None
 
 
 class ArticleListItem(BaseModel):

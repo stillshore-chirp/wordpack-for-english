@@ -1,8 +1,13 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNotifications, type NotificationItem } from '../NotificationsContext';
-import { DEFAULT_REQUEST_TIMEOUT_MS, useOptionalSettings } from '../SettingsContext';
+import {
+  DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+  useOptionalSettings,
+} from '../SettingsContext';
 import { ApiError, fetchJson } from '../lib/fetcher';
 import { DEFAULT_LLM_MODEL } from '../lib/wordpack';
+import { fetchArticleImportJob } from '../features/article-import/api/articleApi';
 import { WordPackPreviewModal } from './WordPackPreviewModal';
 import type { WordPackListItem } from '../features/wordpack/types';
 
@@ -63,7 +68,9 @@ const resolvePreviewLemma = (item: NotificationItem): string => {
 };
 
 const canOpenWordPackPreview = (item: NotificationItem): boolean => (
-  item.status === 'success' && Boolean(item.wordPackId || resolvePreviewLemma(item))
+  item.jobType !== 'article-import'
+  && item.status === 'success'
+  && Boolean(item.wordPackId || resolvePreviewLemma(item))
 );
 
 const findLatestNotification = (items: NotificationItem[]): NotificationItem | null => (
@@ -165,6 +172,8 @@ export const GenerationQueuePanel: React.FC = () => {
   const settingsContext = useOptionalSettings();
   const apiBase = settingsContext?.settings.apiBase ?? '/api';
   const requestTimeoutMs = settingsContext?.settings.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
+  const generationRequestTimeoutMs = settingsContext?.settings.generationRequestTimeoutMs
+    ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS;
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [liveMessage, setLiveMessage] = useState('');
   const [updatedItemKeys, setUpdatedItemKeys] = useState<Record<string, string>>({});
@@ -200,17 +209,61 @@ export const GenerationQueuePanel: React.FC = () => {
   useEffect(() => {
     progressItems.forEach((item) => {
       if (reconciliationRef.current.has(item.id)) return;
-      if (nowMs - item.updatedAt < STALE_PROGRESS_RECONCILE_MS) return;
+      if (!item.jobId) return;
+      const staleAfterMs = item.jobType === 'article-import'
+        ? Math.max(
+          STALE_PROGRESS_RECONCILE_MS,
+          generationRequestTimeoutMs + 60 * 1000,
+        )
+        : STALE_PROGRESS_RECONCILE_MS;
+      if (nowMs - item.updatedAt < staleAfterMs) return;
       const lemma = resolvePreviewLemma(item) || extractLemma(item.title);
       const wordPackId = item.wordPackId?.trim() || '';
       reconciliationRef.current.add(item.id);
 
       const reconcile = async () => {
-        if (!wordPackId || !item.jobId) {
+        if (item.jobType === 'article-import') {
+          try {
+            const job = await fetchArticleImportJob(apiBase, item.jobId as string, {
+              timeoutMs: requestTimeoutMs,
+            });
+            if (job.status === 'succeeded' && job.article_id) {
+              update(item.id, {
+                title: '文章インポート完了',
+                status: 'success',
+                message: '保存済み記事を確認しました',
+                jobId: item.jobId,
+                jobType: 'article-import',
+                articleId: job.article_id,
+              });
+              return;
+            }
+            const message = job.status === 'failed'
+              ? (job.error || '文章インポートジョブが失敗しました。必要ならもう一度実行してください。')
+              : '文章インポートが長時間完了していません。記事一覧を確認するか、時間をおいて再試行してください。';
+            update(item.id, {
+              title: '文章インポートの状態を確認できません',
+              status: 'error',
+              message,
+              jobId: item.jobId,
+              jobType: 'article-import',
+            });
+          } catch {
+            update(item.id, {
+              title: '文章インポートの状態を確認できません',
+              status: 'error',
+              message: '文章インポートジョブの状態を確認できませんでした。記事一覧を確認するか、必要ならもう一度実行してください。',
+              jobId: item.jobId,
+              jobType: 'article-import',
+            });
+          }
+          return;
+        }
+        if (!wordPackId) {
           update(item.id, {
             title: `【${lemma || 'WordPack'}】の生成状態を確認できません`,
             status: 'error',
-            message: 'ジョブIDが保存されていないため、完了状態を確認できません。保存済みWordPackを一覧で確認するか、必要ならもう一度生成してください。',
+            message: 'WordPack IDが保存されていないため、完了状態を確認できません。保存済みWordPackを一覧で確認するか、必要ならもう一度生成してください。',
             wordPackId: item.wordPackId,
             lemma,
           });
@@ -257,7 +310,14 @@ export const GenerationQueuePanel: React.FC = () => {
       };
       void reconcile();
     });
-  }, [apiBase, nowMs, progressItems, requestTimeoutMs, update]);
+  }, [
+    apiBase,
+    generationRequestTimeoutMs,
+    nowMs,
+    progressItems,
+    requestTimeoutMs,
+    update,
+  ]);
 
   useEffect(() => {
     const latest = findLatestNotification(notifications);

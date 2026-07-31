@@ -122,6 +122,38 @@ def test_firestore_regenerate_job_roundtrip(firestore_store: AppFirestoreStore) 
     assert firestore_store.get_regenerate_job("missing") is None
 
 
+def test_firestore_article_import_job_roundtrip(firestore_store: AppFirestoreStore) -> None:
+    created = firestore_store.create_article_import_job(
+        job_id="article-import-job:demo",
+        owner_user_id="user-1",
+    )
+
+    assert created["job_id"] == "article-import-job:demo"
+    assert created["owner_user_id"] == "user-1"
+    assert created["status"] == "queued"
+    assert created["article_id"] is None
+
+    running = firestore_store.update_article_import_job(
+        "article-import-job:demo",
+        status="running",
+    )
+    assert running is not None
+    assert running["status"] == "running"
+
+    succeeded = firestore_store.update_article_import_job(
+        "article-import-job:demo",
+        status="succeeded",
+        article_id="art:demo",
+    )
+    assert succeeded is not None
+    assert succeeded["article_id"] == "art:demo"
+
+    found = firestore_store.get_article_import_job("article-import-job:demo")
+    assert found is not None
+    assert found["owner_user_id"] == "user-1"
+    assert firestore_store.get_article_import_job("missing") is None
+
+
 def test_firestore_quiz_generation_job_roundtrip(firestore_store: AppFirestoreStore) -> None:
     created = firestore_store.create_quiz_generation_job(job_id="quiz-job:demo")
 

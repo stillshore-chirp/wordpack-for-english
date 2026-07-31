@@ -10,14 +10,15 @@ frontend が Google login 設定などを取得します。
 
 ```json
 {
-  "request_timeout_ms": 1500000,
+  "request_timeout_ms": 60000,
+  "generation_request_timeout_ms": 1500000,
   "llm_model": "gpt-5.6-luna",
   "session_auth_disabled": false,
   "google_client_id": "12345-abcdefgh.apps.googleusercontent.com"
 }
 ```
 
-`request_timeout_ms` は1回のLLM呼び出し上限ではなく、Reader取り込みなど複数のLLM呼び出しを含むフロー全体の上限です。既定は25分で、フロントエンドのabortとバックエンドのHTTP middlewareを同じ値へ揃えます。
+`request_timeout_ms` は一覧・詳細・更新・ジョブ状態取得など通常APIの上限で、既定は1分です。`generation_request_timeout_ms` は複数のLLM呼び出しを含む生成フロー全体の待機上限で、既定は25分です。フロントエンドは長い値を生成操作だけに使います。
 
 Cloud Run の段階リリース中は、候補 revision を本番経路から識別するため `deployment_version` も返します。このフィールドはデプロイスクリプトが `DEPLOYMENT_VERSION` を設定した環境だけに追加され、未設定時の既存レスポンスは変わりません。
 
@@ -167,9 +168,9 @@ Request:
 
 ## Article import
 
-### `POST /api/article/import`
+### `POST /api/article/import/jobs`
 
-貼り付けた文章を保存し、タイトル、翻訳、解説、関連 WordPack を生成します。
+貼り付けた文章のインポートジョブを作り、202 とジョブIDを返します。生成処理は非同期でタイトル、翻訳、解説、関連 WordPack を保存するため、Firebase Hosting の同期リライト上限を越えても最初のHTTPリクエストを保持しません。
 
 Request:
 
@@ -185,6 +186,12 @@ Request:
 
 - 1 回のインポート本文は最大 4,000 文字
 - 超過時は 413 `article_import_text_too_long`
+
+### `GET /api/article/import/jobs/{job_id}`
+
+文章インポートジョブの `queued / running / succeeded / failed` を返します。成功時は `article_id` を返し、フロントエンドは記事詳細を取得します。ジョブは作成したユーザーだけが取得できます。
+
+従来の同期 `POST /api/article/import` は互換性のため残しますが、アプリUIは非同期ジョブ経路を使用します。
 
 ### `POST /api/article/generate_and_import`
 

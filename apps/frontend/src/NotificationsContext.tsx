@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 export type NotificationStatus = 'progress' | 'success' | 'error';
+export type NotificationJobType = 'wordpack-regeneration' | 'article-import';
 
 export interface NotificationItem {
   id: string;
@@ -14,12 +15,14 @@ export interface NotificationItem {
   wordPackId?: string | null; // 任意: 完了カードからWordPackプレビューを開くためのID
   lemma?: string | null; // 任意: IDがない古い通知や生成直後のlookup用
   jobId?: string | null; // 任意: 非同期再生成ジョブの状態確認用
+  jobType?: NotificationJobType | null; // 任意: ジョブ状態APIの判別用
+  articleId?: string | null; // 任意: 文章インポート完了結果の参照用
 }
 
 interface NotificationsContextValue {
   notifications: NotificationItem[];
-  add: (input: { title: string; message?: string; status?: NotificationStatus; id?: string; model?: string; category?: string; wordPackId?: string | null; lemma?: string | null; jobId?: string | null }) => string;
-  update: (id: string, patch: Partial<Pick<NotificationItem, 'title' | 'message' | 'status' | 'model' | 'category' | 'wordPackId' | 'lemma' | 'jobId'>>) => void;
+  add: (input: { title: string; message?: string; status?: NotificationStatus; id?: string; model?: string; category?: string; wordPackId?: string | null; lemma?: string | null; jobId?: string | null; jobType?: NotificationJobType | null; articleId?: string | null }) => string;
+  update: (id: string, patch: Partial<Pick<NotificationItem, 'title' | 'message' | 'status' | 'model' | 'category' | 'wordPackId' | 'lemma' | 'jobId' | 'jobType' | 'articleId'>>) => void;
   remove: (id: string) => void;
   clearAll: () => void;
 }
@@ -71,6 +74,8 @@ export const NotificationsProvider: React.FC<{ children: React.ReactNode } & { p
       wordPackId: input.wordPackId,
       lemma: input.lemma,
       jobId: input.jobId,
+      jobType: input.jobType,
+      articleId: input.articleId,
     };
     setNotifications((prev) => {
       const next = [...prev, item];

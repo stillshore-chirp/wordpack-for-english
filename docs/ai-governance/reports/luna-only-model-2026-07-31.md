@@ -82,7 +82,7 @@
 
 ## 9. 満足感・信頼感
 
-- 待機中: 既存の生成キューと進行通知を維持
+- 待機中: Reader文章インポートは202で非同期ジョブへ登録し、生成キューにジョブIDと進行状態を保持
 - 成功時: 既存の完了通知と生成メタ情報を維持
 - 失敗時: 非対応値を暗黙変換せず API 境界で拒否
 - 危険操作: 破壊的操作なし
@@ -93,9 +93,11 @@
 ## 10. 反証レビュー
 
 - 実装を落とす観点で見つけた問題: 旧 `minimal` を型だけから除外しても任意 dict の API 入力から通る可能性があったため、全生成リクエスト境界へ validator を追加した
+- 最終自動レビューで見つけた問題: Luna High の待機上限を25分へ伸ばしても、Firebase Hosting の同期リライトは約60秒で切れる。Reader文章インポートを所有者スコープ付き非同期ジョブへ変更し、通常API1分と生成全体25分を分離した
+- 状態回復: 文章インポートのジョブIDと種別を通知へ永続化し、画面移動後や長時間経過後も状態APIから成功・失敗を補正できる
 - P0候補: 旧環境変数が残りバックエンド起動または生成が失敗する可能性。env 例、ローカル env、既定値、設定文書を同時更新して解消
 - 証跡不足: 実 OpenAI API への課金を伴う Luna 生成は未実行
-- 残リスク: 本番 Cloud Run の既存 `LLM_MODEL` 実値はこのローカル変更では更新されない。デプロイ時の環境反映と実生成品質は運用確認が必要
+- 残リスク: 本番 Cloud Run の既存 `LLM_MODEL` 実値はこのローカル変更では更新されない。デプロイ時の環境反映と実生成品質は運用確認が必要。非同期ジョブ状態は Firestore に残るが、実行中インスタンスが強制終了した場合の自動再実行基盤までは今回の範囲に含めていない
 
 ## 11. 指摘一覧
 
@@ -103,13 +105,16 @@
 |---|---|---|---|---|---|
 | P1 | API 入力 | 旧 `minimal` が任意 dict から送信可能 | Luna でリクエスト失敗 | 対応 effort を validator で制限 | 対応済 |
 | P1 | 環境設定 | 旧モデル名が env 例と既定値に残る | 起動時または生成時の不整合 | Luna に統一 | 対応済 |
+| P1 | Reader | Firebase Hosting 経由の同期インポートが約60秒で切れる | 失敗表示後に記事だけ保存され、結果が曖昧になる | 202非同期ジョブと短い状態ポーリングへ変更 | 対応済 |
+| P2 | タイムアウト | 通常APIにも25分の値を適用 | 一覧・削除・更新が長時間停止し得る | 通常1分と生成全体25分を分離 | 対応済 |
+| P2 | 生成キュー | 20分で同期処理まで期限切れ扱い | 有効な25分処理を失敗表示 | ジョブID付きだけを補正し、文章ジョブは全体上限+1分後に照合 | 対応済 |
 | P2 | UI | 単一選択肢でもモデル欄が残る | 一見すると冗長 | 将来拡張という明示要件に従い維持 | 対応済 |
 
 ## 12. 証跡
 
 - 変更前: [Lexicon desktop](../evidence/issue-563/before-lexicon-desktop.jpg)、[Reader desktop](../evidence/issue-563/before-reader-desktop.jpg)
 - 変更後: [Lexicon desktop](../evidence/issue-563/after-lexicon-desktop.jpg)、[Reader desktop](../evidence/issue-563/after-reader-desktop.jpg)、[Reader narrow](../evidence/issue-563/after-reader-narrow.jpg)
-- テスト結果: backend 309 passed / 1 skipped、frontend 200 passed / 1 skipped、Playwright smoke 9 passed
+- テスト結果: backend 318 passed / 1 skipped、frontend 202 passed / 1 skipped、Playwright smoke 9 passed、visual regression 6 passed
 - 手動確認: Luna 1選択肢、High 既定、6段階 effort、desktop / narrow、ゲスト無効理由、semantic labels
 - 取得できなかった証跡と理由: 実 OpenAI API 生成は課金と外部状態変更を避け、mock Responses API の request-shape テストで代替
 
@@ -130,3 +135,4 @@
 |---|---|---|---|
 | 実 OpenAI API 生成 | 課金と外部 API 呼び出しを伴う | 実タスク品質、レイテンシ、総コストは未確認 | デプロイ後の限定スモークで確認 |
 | 本番環境変数確認 | 本番調査依頼ではなくローカル実装 | 既存 `LLM_MODEL` override が残る可能性 | デプロイ時に Luna を明示し `/api/config` と生成メタ情報を確認 |
+| Cloud Run インスタンス強制終了時のジョブ自動再実行 | Cloud Tasks 等の外部キュー導入は今回のモデル移行範囲を超える | 実行中ジョブが `running` のまま残る可能性 | 状態監視で検知し、必要なら外部キュー化を後続 Issue で行う |

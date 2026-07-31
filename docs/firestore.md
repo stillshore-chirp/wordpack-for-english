@@ -29,6 +29,7 @@ Cloud Firestore を使う場合は、プロジェクト ID と認証情報を明
 - `word_packs`: 作成日時、更新日時、lemma 重複チェック、guest 公開フィルタ
 - `examples`: `word_pack_id` / `category` / `position` / `example_id`
 - `articles`: Reader 記事本文、関連 WordPack link、`guest_public`
+- `article_import_jobs`: 所有者、進行状態、完了した `article_id`、エラー要約
 - `quizzes`: Quiz 本文、設問、Attempt link、`guest_public`
 - 横断例文一覧: `created_at` / `pack_updated_at` / `lemma` / `category`
 - 検索: `search_en` / `search_en_reversed` / `search_terms`

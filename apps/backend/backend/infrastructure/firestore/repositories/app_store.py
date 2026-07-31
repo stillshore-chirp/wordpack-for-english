@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from .base import Any, Iterable, Mapping, Sequence, datetime, firestore
-from .articles import FirestoreArticleRepository
+from .articles import ArticleImportJobStatus, FirestoreArticleRepository
 from .examples import FirestoreExampleRepository
 from .quizzes import FirestoreQuizRepository, QuizGenerationJobStatus
 from .regenerate_jobs import FirestoreRegenerateJobRepository, RegenerateJobStatus
@@ -174,6 +174,38 @@ class AppFirestoreRepository:
 
     def get_regenerate_job(self, job_id: str) -> Mapping[str, Any] | None:
         return self.regenerate_jobs.get_regenerate_job(job_id)
+
+    # --- Article import jobs ---
+    def create_article_import_job(
+        self,
+        *,
+        job_id: str,
+        owner_user_id: str,
+        status: ArticleImportJobStatus = "queued",
+    ) -> Mapping[str, Any]:
+        return self.articles.create_article_import_job(
+            job_id=job_id,
+            owner_user_id=owner_user_id,
+            status=status,
+        )
+
+    def update_article_import_job(
+        self,
+        job_id: str,
+        *,
+        status: ArticleImportJobStatus,
+        article_id: str | None = None,
+        error: str | None = None,
+    ) -> Mapping[str, Any] | None:
+        return self.articles.update_article_import_job(
+            job_id,
+            status=status,
+            article_id=article_id,
+            error=error,
+        )
+
+    def get_article_import_job(self, job_id: str) -> Mapping[str, Any] | None:
+        return self.articles.get_article_import_job(job_id)
 
     # --- Examples ---
     def update_example_study_progress(

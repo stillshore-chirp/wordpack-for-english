@@ -8,10 +8,16 @@ import {
 } from '../lib/wordpack';
 import { Examples, WordPack, WordPackMessage } from './useWordPack';
 import type { useNotifications } from '../NotificationsContext';
+import {
+  createArticleImportJob,
+  fetchArticleImportJob,
+} from '../features/article-import/api/articleApi';
+import { DEFAULT_GENERATION_REQUEST_TIMEOUT_MS } from '../SettingsContext';
 
 interface UseExampleActionsParams {
   apiBase: string;
   requestTimeoutMs: number;
+  generationRequestTimeoutMs?: number;
   currentWordPackId: string | null;
   data: WordPack | null;
   model: string;
@@ -37,6 +43,7 @@ interface UseExampleActionsResult {
 export const useExampleActions = ({
   apiBase,
   requestTimeoutMs,
+  generationRequestTimeoutMs,
   currentWordPackId,
   data,
   model,
@@ -139,7 +146,7 @@ export const useExampleActions = ({
           method: 'POST',
           body: requestBody,
           signal: ctrl.signal,
-          timeoutMs: requestTimeoutMs,
+          timeoutMs: generationRequestTimeoutMs ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
         });
         setStatusMessage({ kind: 'status', text: `${category} に例文を2件追加しました` });
         notify.update(notifId, { title: `【${lemmaText}】の生成完了！`, status: 'success', message: `${category} に例文を2件追加しました`, model, category, wordPackId, lemma: lemmaText });
@@ -165,7 +172,7 @@ export const useExampleActions = ({
         setExamplesLoading(false);
       }
     },
-    [apiBase, buildModelRequest, currentWordPackId, data?.lemma, ensureSavedWordPack, loadWordPack, model, notify, onWordPackGenerated, requestTimeoutMs, resolveErrorMessage, setStatusMessage],
+    [apiBase, buildModelRequest, currentWordPackId, data?.lemma, ensureSavedWordPack, generationRequestTimeoutMs, loadWordPack, model, notify, onWordPackGenerated, requestTimeoutMs, resolveErrorMessage, setStatusMessage],
   );
 
   const importArticleFromExample = useCallback(
@@ -187,13 +194,49 @@ export const useExampleActions = ({
       });
 
       try {
-        await fetchJson<{ id: string }>(`${apiBase}/article/import`, {
-          method: 'POST',
-          body: { text: ex.en },
+        let job = await createArticleImportJob(apiBase, { text: ex.en }, {
           signal: ctrl.signal,
           timeoutMs: requestTimeoutMs,
         });
-        notify.update(notifId, { title: '文章インポート完了', status: 'success', message: '記事一覧を更新しました' });
+        notify.update(notifId, {
+          message: 'バックグラウンドで文章を処理しています',
+          jobId: job.job_id,
+          jobType: 'article-import',
+        });
+        const deadlineMs = Date.now()
+          + (generationRequestTimeoutMs ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS);
+        while (job.status === 'queued' || job.status === 'running') {
+          if (Date.now() >= deadlineMs) {
+            throw new ApiError(
+              '文章インポートが制限時間内に完了しませんでした。生成キューから状態を確認してください。',
+              0,
+            );
+          }
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 1000));
+          job = await fetchArticleImportJob(apiBase, job.job_id, {
+            signal: ctrl.signal,
+            timeoutMs: requestTimeoutMs,
+          });
+          notify.update(notifId, {
+            message: 'バックグラウンドで文章を処理しています',
+            jobId: job.job_id,
+            jobType: 'article-import',
+          });
+        }
+        if (job.status === 'failed') {
+          throw new ApiError(job.error || '文章インポートに失敗しました', 500);
+        }
+        if (!job.article_id) {
+          throw new ApiError('文章インポート結果を確認できませんでした', 500);
+        }
+        notify.update(notifId, {
+          title: '文章インポート完了',
+          status: 'success',
+          message: '記事一覧を更新しました',
+          jobId: job.job_id,
+          jobType: 'article-import',
+          articleId: job.article_id,
+        });
         dispatchAppEvent(APP_EVENTS.articleUpdated);
         setStatusMessage({ kind: 'status', text: '例文から文章インポートを実行しました' });
       } catch (error) {
@@ -208,7 +251,7 @@ export const useExampleActions = ({
         setExamplesLoading(false);
       }
     },
-    [apiBase, currentWordPackId, data?.lemma, ensureSavedWordPack, getExample, notify, requestTimeoutMs, resolveErrorMessage, setStatusMessage],
+    [apiBase, currentWordPackId, data?.lemma, ensureSavedWordPack, generationRequestTimeoutMs, getExample, notify, requestTimeoutMs, resolveErrorMessage, setStatusMessage],
   );
 
   const copyExampleText = useCallback(

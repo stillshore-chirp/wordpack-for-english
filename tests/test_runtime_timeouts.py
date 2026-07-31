@@ -34,11 +34,18 @@ def test_http_middleware_uses_the_multi_call_flow_timeout(monkeypatch):
     assert app.calls == [(marker, {"timeout": 1505})]
 
 
-def test_runtime_config_exposes_the_multi_call_flow_timeout(monkeypatch):
+def test_runtime_config_separates_general_and_multi_call_flow_timeouts(monkeypatch):
+    monkeypatch.setattr(
+        config_router.settings,
+        "request_timeout_ms",
+        60_000,
+    )
     monkeypatch.setattr(
         config_router.settings,
         "llm_request_timeout_ms",
         1_500_000,
     )
 
-    assert config_router.get_runtime_config()["request_timeout_ms"] == 1_500_000
+    config = config_router.get_runtime_config()
+    assert config["request_timeout_ms"] == 60_000
+    assert config["generation_request_timeout_ms"] == 1_500_000

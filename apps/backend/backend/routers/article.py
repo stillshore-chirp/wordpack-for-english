@@ -12,6 +12,10 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request, sta
 from fastapi.exceptions import RequestValidationError
 from pydantic import BaseModel, Field, ValidationError, field_validator
 
+from ..application.article.import_jobs import (
+    enqueue_article_import_job,
+    get_article_import_job,
+)
 from ..auth import principal_from_request
 from ..authorization.dependencies import require_user_permission
 from ..authorization.permissions import Permission
@@ -37,10 +41,12 @@ from ..models.article import (
     ArticleGuestPublicUpdateRequest,
     ArticleGuestPublicUpdateResponse,
     ArticleImportRequest,
+    ArticleImportJobResponse,
     ArticleListItem,
     ArticleListResponse,
     ArticleWordPackLink,
 )
+from ..infrastructure.runtime import AsyncioTaskScheduler, PrefixedUuidGenerator
 from ..models.word import ExampleCategory
 from ..observability import request_trace, span
 from ..store import store as _default_store
@@ -115,18 +121,74 @@ async def import_article(
     """文章インポートを受け付け、文字数超過は 413 で通知する。"""
 
     req = _validate_import_request(payload)
-    flow = ArticleImportFlow(owner_user_id=principal.user_id)
-    # ルータ層は薄く、Langfuse の親スパンを貼ってフローを呼び出す
-    from ..observability import request_trace
+    return _run_article_import(
+        req,
+        owner_user_id=principal.user_id,
+        endpoint="/api/article/import",
+    )
 
+
+def _run_article_import(
+    req: ArticleImportRequest,
+    *,
+    owner_user_id: str,
+    endpoint: str,
+) -> ArticleDetailResponse:
+    flow = ArticleImportFlow(owner_user_id=owner_user_id)
     with request_trace(
-        name="ArticleImportFlow", metadata={"endpoint": "/api/article/import"}
+        name="ArticleImportFlow", metadata={"endpoint": endpoint}
     ) as ctx:
         tr = ctx.get("trace") if isinstance(ctx, dict) else None  # type: ignore[assignment]
         with span(
             trace=tr, name="article.flow.run", input={"text_chars": len(req.text or "")}
         ) as _:
             return flow.run(req)
+
+
+@router.post(
+    "/import/jobs",
+    response_model=ArticleImportJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="文章インポートジョブを開始",
+)
+async def create_article_import_job(
+    payload: dict[str, Any] = Body(...),
+    principal: Principal = Depends(require_user_permission(Permission.ARTICLE_CREATE)),
+) -> ArticleImportJobResponse:
+    """Firebase Hosting の同期上限を避け、文章インポートを非同期実行する。"""
+
+    req = _validate_import_request(payload)
+    return await enqueue_article_import_job(
+        req,
+        owner_user_id=principal.user_id,
+        store=store,
+        runner=partial(
+            _run_article_import,
+            owner_user_id=principal.user_id,
+            endpoint="/api/article/import/jobs",
+        ),
+        scheduler=AsyncioTaskScheduler(),
+        id_generator=PrefixedUuidGenerator("article-import-job:"),
+    )
+
+
+@router.get(
+    "/import/jobs/{job_id}",
+    response_model=ArticleImportJobResponse,
+    summary="文章インポートジョブの状態を取得",
+)
+async def get_article_import_job_status(
+    job_id: str,
+    principal: Principal = Depends(require_user_permission(Permission.ARTICLE_READ)),
+) -> ArticleImportJobResponse:
+    job = await get_article_import_job(
+        job_id,
+        owner_user_id=principal.user_id,
+        store=store,
+    )
+    if job is None:
+        raise HTTPException(status_code=404, detail="Article import job not found")
+    return job
 
 
 @router.get("/", response_model=ArticleListResponse)

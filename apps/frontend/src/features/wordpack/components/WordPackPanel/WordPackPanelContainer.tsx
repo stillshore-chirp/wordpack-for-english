@@ -77,7 +77,12 @@ export const WordPackPanel: React.FC<Props> = ({
   const { setModalOpen } = useModal();
   const { add: addNotification, update: updateNotification } = useNotifications();
   const confirmDialog = useConfirmDialog();
-  const { apiBase, pronunciationEnabled, requestTimeoutMs } = settings;
+  const {
+    apiBase,
+    generationRequestTimeoutMs,
+    pronunciationEnabled,
+    requestTimeoutMs,
+  } = settings;
   const { lemma, setLemma, lemmaValidation, model, showAdvancedModelOptions, handleChangeModel, advancedSettings } = useWordPackForm({ settings, setSettings });
   const [detailOpen, setDetailOpen] = useState(false);
   const panelInstanceId = useId();
@@ -115,6 +120,7 @@ export const WordPackPanel: React.FC<Props> = ({
   const { examplesLoading, deleteExample, generateExamples, importArticleFromExample, copyExampleText } = useExampleActions({
     apiBase,
     requestTimeoutMs,
+    generationRequestTimeoutMs,
     currentWordPackId,
     data,
     model,
