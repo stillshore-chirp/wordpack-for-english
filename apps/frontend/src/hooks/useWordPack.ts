@@ -408,6 +408,7 @@ export const useWordPack = ({
       setLoading(true);
       setMessage(null);
       let notifId: string | null = null;
+      let acceptedJobId: string | null = null;
       try {
         notifId = addNotification({
           title: `【${lemma}】の再生成ジョブ開始`,
@@ -433,6 +434,7 @@ export const useWordPack = ({
           lemma,
           abortSignal: ctrl.signal,
         });
+        acceptedJobId = job.job_id;
         updateNotification(notifId, {
           jobId: job.job_id,
           model: model || undefined,
@@ -440,12 +442,13 @@ export const useWordPack = ({
           lemma,
         });
 
-        const maxPolls = Math.max(3, Math.ceil(generationTimeoutMs / 2000));
+        const pollingDeadline = Date.now() + Math.max(1000, generationTimeoutMs);
         let latest = job;
-        for (let i = 0; i < maxPolls; i += 1) {
+        while (Date.now() < pollingDeadline) {
           if (ctrl.signal.aborted) break;
           if (latest.status === 'succeeded' || latest.status === 'failed') break;
-          await new Promise((resolve) => setTimeout(resolve, 1500));
+          const remainingMs = pollingDeadline - Date.now();
+          await new Promise((resolve) => setTimeout(resolve, Math.min(1500, remainingMs)));
           latest = await fetchRegenerateJobStatus({
             apiBase,
             wordPackId,
@@ -473,13 +476,25 @@ export const useWordPack = ({
             jobId: job.job_id,
           });
           try { onWordPackGenerated?.(wordPackId); } catch {}
-        } else {
+        } else if (latest.status === 'failed') {
           const errText = latest.error || '再生成が完了しませんでした（時間をおいて再試行してください）';
           if (mountedRef.current) setMessage({ kind: 'alert', text: errText });
           updateNotification(notifId, {
             title: `【${lemma}】の再生成失敗`,
             status: 'error',
             message: errText,
+            model: model || undefined,
+            wordPackId,
+            lemma,
+            jobId: job.job_id,
+          });
+        } else {
+          const progressText = '再生成はサーバーで継続中です。生成キューで完了状態を確認できます。';
+          if (mountedRef.current) setMessage({ kind: 'status', text: progressText });
+          updateNotification(notifId, {
+            title: `【${lemma}】の再生成中`,
+            status: 'progress',
+            message: progressText,
             model: model || undefined,
             wordPackId,
             lemma,
@@ -492,15 +507,28 @@ export const useWordPack = ({
         if (error instanceof ApiError && error.status === 0 && /aborted|timed out/i.test(error.message)) {
           text = '再生成がタイムアウトしました（サーバ側で処理継続の可能性）。時間をおいて再試行してください。';
         }
-        if (mountedRef.current) setMessage({ kind: 'alert', text });
+        const followUpUnknown = Boolean(acceptedJobId);
+        if (mountedRef.current) {
+          setMessage({
+            kind: followUpUnknown ? 'status' : 'alert',
+            text: followUpUnknown
+              ? '再生成ジョブは受理済みです。生成キューで完了状態を確認できます。'
+              : text,
+          });
+        }
         if (notifId) {
           updateNotification(notifId, {
-            title: `【${lemma}】の再生成状態を確認できません`,
-            status: 'error',
-            message: `${text}。保存済みWordPackを確認するか、時間をおいて再試行してください。`,
+            title: followUpUnknown
+              ? `【${lemma}】の再生成中`
+              : `【${lemma}】の再生成状態を確認できません`,
+            status: followUpUnknown ? 'progress' : 'error',
+            message: followUpUnknown
+              ? 'ジョブは受理済みですが状態確認に失敗しました。生成キューが確認を再開します。'
+              : `${text}。保存済みWordPackを確認するか、時間をおいて再試行してください。`,
             model: model || undefined,
             wordPackId,
             lemma,
+            jobId: acceptedJobId,
           });
         }
       } finally {
@@ -513,6 +541,7 @@ export const useWordPack = ({
       addNotification,
       apiBase,
       extractAiMeta,
+      generationTimeoutMs,
       model,
       normalizeWordPack,
       onWordPackGenerated,

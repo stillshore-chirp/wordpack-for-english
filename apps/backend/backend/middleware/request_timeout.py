@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Collection
 
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
@@ -9,12 +10,19 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 class RequestTimeoutMiddleware:
     """Cancel an HTTP request that exceeds the configured end-to-end deadline."""
 
-    def __init__(self, app: ASGIApp, *, timeout: float) -> None:
+    def __init__(
+        self,
+        app: ASGIApp,
+        *,
+        timeout: float,
+        excluded_paths: Collection[str] = (),
+    ) -> None:
         self.app = app
         self.timeout = max(0.001, float(timeout))
+        self.excluded_paths = frozenset(excluded_paths)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] != "http":
+        if scope["type"] != "http" or scope.get("path") in self.excluded_paths:
             await self.app(scope, receive, send)
             return
 

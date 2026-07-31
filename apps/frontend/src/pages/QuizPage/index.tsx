@@ -607,6 +607,14 @@ export const QuizPage: React.FC = () => {
   }, [loadList, loadWordPacks]);
 
   useEffect(() => {
+    const handleQuizUpdated = () => {
+      void loadList();
+    };
+    window.addEventListener(APP_EVENTS.quizUpdated, handleQuizUpdated);
+    return () => window.removeEventListener(APP_EVENTS.quizUpdated, handleQuizUpdated);
+  }, [loadList]);
+
+  useEffect(() => {
     if (!selectedQuizId) {
       setSelectedQuiz(null);
       setDetailFocusMode(false);
@@ -663,6 +671,7 @@ export const QuizPage: React.FC = () => {
       status: 'progress',
       category: GENERATION_DOMAIN_LABELS[generationDomain],
     });
+    let acceptedJobId: string | null = null;
     try {
       const modelFields = composeModelRequestFields({
         model: settings.model ?? DEFAULT_LLM_MODEL,
@@ -686,21 +695,53 @@ export const QuizPage: React.FC = () => {
       const job = await createQuizGenerationJob(apiBase, requestBody, {
         timeoutMs: settings.requestTimeoutMs,
       });
+      acceptedJobId = job.job_id;
+      notifications.update(notifId, {
+        jobId: job.job_id,
+        jobType: 'quiz-generation',
+      });
       let current = job;
-      for (let attemptIndex = 0; attemptIndex < 180; attemptIndex += 1) {
+      const pollingDeadline = Date.now() + Math.max(
+        1000,
+        settings.generationRequestTimeoutMs ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
+      );
+      while (Date.now() < pollingDeadline) {
         if (current.status === 'succeeded' || current.status === 'failed') break;
-        await new Promise((resolve) => window.setTimeout(resolve, 1800));
+        const remainingMs = pollingDeadline - Date.now();
+        await new Promise((resolve) => window.setTimeout(resolve, Math.min(1800, remainingMs)));
         current = await fetchQuizGenerationJob(apiBase, current.job_id, {
           timeoutMs: settings.requestTimeoutMs,
         });
       }
-      if (current.status !== 'succeeded' || !current.quiz_id) {
-        throw new Error(current.error || 'Quiz生成が完了しませんでした。時間をおいて再試行してください。');
+      if (current.status !== 'succeeded' && current.status !== 'failed') {
+        notifications.update(notifId, {
+          title: 'Quiz生成中',
+          status: 'progress',
+          message: '生成はサーバーで継続中です。生成キューで完了状態を確認できます。',
+          jobId: current.job_id,
+          jobType: 'quiz-generation',
+        });
+        setMessage({ kind: 'status', text: 'Quiz生成は継続中です。生成キューで状態を確認できます。' });
+        return;
+      }
+      if (current.status === 'failed' || !current.quiz_id) {
+        const failureText = current.error || 'Quiz生成に失敗しました。時間をおいて再試行してください。';
+        notifications.update(notifId, {
+          title: 'Quiz生成失敗',
+          status: 'error',
+          message: failureText,
+          jobId: current.job_id,
+          jobType: 'quiz-generation',
+        });
+        setMessage({ kind: 'alert', text: failureText });
+        return;
       }
       notifications.update(notifId, {
         title: 'Quiz生成完了',
         status: 'success',
         message: '一覧を更新しました。',
+        jobId: current.job_id,
+        jobType: 'quiz-generation',
       });
       setMessage({ kind: 'status', text: 'Quizを生成しました。生成結果を開いています。' });
       await loadList();
@@ -708,11 +749,20 @@ export const QuizPage: React.FC = () => {
     } catch (error) {
       const text = error instanceof Error ? error.message : 'Quiz生成に失敗しました。';
       notifications.update(notifId, {
-        title: 'Quiz生成失敗',
-        status: 'error',
-        message: text,
+        title: acceptedJobId ? 'Quiz生成中' : 'Quiz生成失敗',
+        status: acceptedJobId ? 'progress' : 'error',
+        message: acceptedJobId
+          ? 'ジョブは受理済みですが状態確認に失敗しました。生成キューが確認を再開します。'
+          : text,
+        jobId: acceptedJobId,
+        jobType: acceptedJobId ? 'quiz-generation' : undefined,
       });
-      setMessage({ kind: 'alert', text });
+      setMessage({
+        kind: acceptedJobId ? 'status' : 'alert',
+        text: acceptedJobId
+          ? 'Quiz生成ジョブは受理済みです。生成キューで完了状態を確認できます。'
+          : text,
+      });
     } finally {
       setGenerating(false);
     }

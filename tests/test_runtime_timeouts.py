@@ -31,7 +31,13 @@ def test_http_middleware_uses_the_multi_call_flow_timeout(monkeypatch):
     )
 
     assert app.calls == [
-        (middleware_stack.RequestTimeoutMiddleware, {"timeout": 1505})
+        (
+            middleware_stack.RequestTimeoutMiddleware,
+            {
+                "timeout": 1505,
+                "excluded_paths": {"/api/article/generate_and_import"},
+            },
+        )
     ]
 
 
@@ -71,6 +77,56 @@ def test_request_timeout_middleware_returns_504() -> None:
         assert messages[0]["status"] == 504
 
     asyncio.run(_assert_timeout())
+
+
+def test_request_timeout_middleware_skips_non_cancellable_worker_route() -> None:
+    async def _assert_excluded_route() -> None:
+        messages: list[dict[str, object]] = []
+
+        async def slow_app(scope, receive, send) -> None:
+            await asyncio.sleep(0.01)
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [],
+                }
+            )
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        async def receive() -> dict[str, object]:
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message: dict[str, object]) -> None:
+            messages.append(message)
+
+        middleware = middleware_stack.RequestTimeoutMiddleware(
+            slow_app,
+            timeout=0.001,
+            excluded_paths={"/api/article/generate_and_import"},
+        )
+        await middleware(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "POST",
+                "scheme": "http",
+                "path": "/api/article/generate_and_import",
+                "raw_path": b"/api/article/generate_and_import",
+                "query_string": b"",
+                "headers": [],
+                "client": ("127.0.0.1", 1234),
+                "server": ("testserver", 80),
+                "root_path": "",
+            },
+            receive,
+            send,
+        )
+        assert messages[0]["type"] == "http.response.start"
+        assert messages[0]["status"] == 200
+
+    asyncio.run(_assert_excluded_route())
 
 
 def test_runtime_config_separates_general_and_multi_call_flow_timeouts(monkeypatch):

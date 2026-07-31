@@ -87,6 +87,16 @@ const setupFetchMocks = () => {
         headers: { 'Content-Type': 'application/json' },
       });
     }
+    if (url.endsWith('/api/quiz/generate/jobs/quiz-job%3Aalpha')) {
+      return new Response(JSON.stringify({
+        job_id: 'quiz-job:alpha',
+        status: 'succeeded',
+        quiz_id: 'quiz:alpha',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     if (url.endsWith('/api/word/lemma/alpha')) {
       return new Response(JSON.stringify({ found: true, id: 'wp:alpha', lemma: 'alpha', sense_title: 'alpha概説' }), {
         status: 200,
@@ -270,6 +280,8 @@ describe('GenerationQueuePanel', () => {
   });
 
   it('全体上限を越えた文章インポートジョブは状態APIから完了へ補正する', async () => {
+    const articleUpdated = vi.fn();
+    window.addEventListener('article:updated', articleUpdated);
     const staleAt = Date.now() - 27 * 60 * 1000;
     localStorage.setItem(
       'wpfe.notifications.v1',
@@ -296,6 +308,8 @@ describe('GenerationQueuePanel', () => {
     expect(
       requestedUrls.some((url) => url.endsWith('/api/article/import/jobs/article-import-job%3Aalpha')),
     ).toBe(true);
+    expect(articleUpdated).toHaveBeenCalledOnce();
+    window.removeEventListener('article:updated', articleUpdated);
   });
 
   it('再読込後の文章インポートジョブは全体上限を待たずに状態確認を再開する', async () => {
@@ -322,6 +336,36 @@ describe('GenerationQueuePanel', () => {
     expect(
       requestedUrls.some((url) => url.endsWith('/api/article/import/jobs/article-import-job%3Aalpha')),
     ).toBe(true);
+  });
+
+  it('再読込後のQuiz生成ジョブは状態APIから完了へ補正する', async () => {
+    const quizUpdated = vi.fn();
+    window.addEventListener('quiz:updated', quizUpdated);
+    const persistedAt = Date.now() - 10 * 1000;
+    localStorage.setItem(
+      'wpfe.notifications.v1',
+      JSON.stringify([
+        {
+          id: 'n-restored-quiz',
+          title: 'Quiz生成中',
+          message: '生成はサーバーで継続中です',
+          status: 'progress',
+          createdAt: persistedAt,
+          updatedAt: persistedAt,
+          model: 'gpt-5.6-luna',
+          jobId: 'quiz-job:alpha',
+          jobType: 'quiz-generation',
+        },
+      ]),
+    );
+    renderQueue();
+
+    expect(await screen.findByText('Quiz生成完了')).toBeInTheDocument();
+    expect(
+      requestedUrls.some((url) => url.endsWith('/api/quiz/generate/jobs/quiz-job%3Aalpha')),
+    ).toBe(true);
+    expect(quizUpdated).toHaveBeenCalledOnce();
+    window.removeEventListener('quiz:updated', quizUpdated);
   });
 
   it('生成上限内でrunningのWordPackジョブは失敗扱いにしない', async () => {

@@ -36,7 +36,14 @@ def _maybe_add_timeout_middleware(app: FastAPI, app_settings: Any) -> None:
         1,
         int((request_timeout_ms + 5000) / 1000),
     )
-    app.add_middleware(RequestTimeoutMiddleware, timeout=http_timeout_sec)
+    app.add_middleware(
+        RequestTimeoutMiddleware,
+        timeout=http_timeout_sec,
+        # この同期フローは worker thread へオフロードされ、asyncio のキャンセルでは
+        # thread 内の保存処理を停止できない。504 を返した後も書き込みが続くという
+        # 誤った完了通知を避け、Cloud Run 側のリクエスト期限を最終境界にする。
+        excluded_paths={"/api/article/generate_and_import"},
+    )
 
 
 def configure_middleware(app: FastAPI, app_settings: Any) -> None:

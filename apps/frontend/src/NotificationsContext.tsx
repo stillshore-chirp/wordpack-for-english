@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 export type NotificationStatus = 'progress' | 'success' | 'error';
-export type NotificationJobType = 'wordpack-regeneration' | 'article-import';
+export type NotificationJobType = 'wordpack-regeneration' | 'article-import' | 'quiz-generation';
 
 export interface NotificationItem {
   id: string;

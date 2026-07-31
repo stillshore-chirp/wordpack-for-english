@@ -8,6 +8,8 @@ import {
 import { ApiError, fetchJson } from '../lib/fetcher';
 import { DEFAULT_LLM_MODEL } from '../lib/wordpack';
 import { fetchArticleImportJob } from '../features/article-import/api/articleApi';
+import { fetchQuizGenerationJob } from '../features/quiz/api';
+import { APP_EVENTS, dispatchAppEvent } from '../shared/events/appEvents';
 import { WordPackPreviewModal } from './WordPackPreviewModal';
 import type { WordPackListItem } from '../features/wordpack/types';
 
@@ -70,6 +72,7 @@ const resolvePreviewLemma = (item: NotificationItem): string => {
 
 const canOpenWordPackPreview = (item: NotificationItem): boolean => (
   item.jobType !== 'article-import'
+  && item.jobType !== 'quiz-generation'
   && item.status === 'success'
   && Boolean(item.wordPackId || resolvePreviewLemma(item))
 );
@@ -234,6 +237,7 @@ export const GenerationQueuePanel: React.FC = () => {
               timeoutMs: requestTimeoutMs,
             });
             if (job.status === 'succeeded' && job.article_id) {
+              dispatchAppEvent(APP_EVENTS.articleUpdated);
               update(item.id, {
                 title: '文章インポート完了',
                 status: 'success',
@@ -263,6 +267,45 @@ export const GenerationQueuePanel: React.FC = () => {
               message: '文章インポートジョブの状態を確認できませんでした。記事一覧を確認するか、必要ならもう一度実行してください。',
               jobId: item.jobId,
               jobType: 'article-import',
+            });
+          }
+          return;
+        }
+        if (item.jobType === 'quiz-generation') {
+          try {
+            const job = await fetchQuizGenerationJob(apiBase, item.jobId as string, {
+              timeoutMs: requestTimeoutMs,
+            });
+            if (job.status === 'succeeded' && job.quiz_id) {
+              dispatchAppEvent(APP_EVENTS.quizUpdated);
+              update(item.id, {
+                title: 'Quiz生成完了',
+                status: 'success',
+                message: '保存済みQuizを確認しました',
+                jobId: item.jobId,
+                jobType: 'quiz-generation',
+              });
+              return;
+            }
+            if (job.status !== 'failed' && !isStale) return;
+            const message = job.status === 'failed'
+              ? (job.error || 'Quiz生成ジョブが失敗しました。必要ならもう一度実行してください。')
+              : 'Quiz生成が長時間完了していません。Quiz一覧を確認するか、時間をおいて再試行してください。';
+            update(item.id, {
+              title: 'Quiz生成の状態を確認できません',
+              status: 'error',
+              message,
+              jobId: item.jobId,
+              jobType: 'quiz-generation',
+            });
+          } catch {
+            if (!isStale) return;
+            update(item.id, {
+              title: 'Quiz生成の状態を確認できません',
+              status: 'error',
+              message: 'Quiz生成ジョブの状態を確認できませんでした。Quiz一覧を確認するか、必要ならもう一度実行してください。',
+              jobId: item.jobId,
+              jobType: 'quiz-generation',
             });
           }
           return;
