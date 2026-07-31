@@ -290,7 +290,9 @@ describe('GenerationQueuePanel', () => {
     renderQueue();
 
     expect(await screen.findByText('文章インポート完了')).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveTextContent('保存済み記事を確認しました');
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent('保存済み記事を確認しました');
+    });
     expect(
       requestedUrls.some((url) => url.endsWith('/api/article/import/jobs/article-import-job%3Aalpha')),
     ).toBe(true);
