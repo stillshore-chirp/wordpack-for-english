@@ -58,6 +58,7 @@ const buildLiveMessage = (item: NotificationItem): string => {
 
 const bracketLemmaPattern = /【(.+?)】/;
 const STALE_PROGRESS_RECONCILE_MS = 20 * 60 * 1000;
+const PERSISTED_JOB_POLL_INTERVAL_MS = 5000;
 
 const resolvePreviewLemma = (item: NotificationItem): string => {
   const storedLemma = item.lemma?.trim();
@@ -184,7 +185,7 @@ export const GenerationQueuePanel: React.FC = () => {
   const [resolvingPreviewItemId, setResolvingPreviewItemId] = useState<string | null>(null);
   const lastAnnouncementKeyRef = useRef<string>(buildUpdateKey(findLatestNotification(notifications)));
   const updateTimersRef = useRef<Record<string, number>>({});
-  const reconciliationRef = useRef<Set<string>>(new Set());
+  const reconciliationRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -208,18 +209,23 @@ export const GenerationQueuePanel: React.FC = () => {
 
   useEffect(() => {
     progressItems.forEach((item) => {
-      if (reconciliationRef.current.has(item.id)) return;
       if (!item.jobId) return;
-      const staleAfterMs = item.jobType === 'article-import'
-        ? Math.max(
-          STALE_PROGRESS_RECONCILE_MS,
-          generationRequestTimeoutMs + 60 * 1000,
-        )
-        : STALE_PROGRESS_RECONCILE_MS;
-      if (nowMs - item.updatedAt < staleAfterMs) return;
+      const lastCheckedAt = reconciliationRef.current.get(item.id) ?? 0;
+      const notificationWasRecentlyUpdated = nowMs - item.updatedAt
+        < PERSISTED_JOB_POLL_INTERVAL_MS;
+      if (
+        lastCheckedAt > 0
+        && nowMs - lastCheckedAt < PERSISTED_JOB_POLL_INTERVAL_MS
+      ) return;
+      if (lastCheckedAt === 0 && notificationWasRecentlyUpdated) return;
+      const staleAfterMs = Math.max(
+        STALE_PROGRESS_RECONCILE_MS,
+        generationRequestTimeoutMs + 60 * 1000,
+      );
+      const isStale = nowMs - item.createdAt >= staleAfterMs;
       const lemma = resolvePreviewLemma(item) || extractLemma(item.title);
       const wordPackId = item.wordPackId?.trim() || '';
-      reconciliationRef.current.add(item.id);
+      reconciliationRef.current.set(item.id, nowMs);
 
       const reconcile = async () => {
         if (item.jobType === 'article-import') {
@@ -238,6 +244,7 @@ export const GenerationQueuePanel: React.FC = () => {
               });
               return;
             }
+            if (job.status !== 'failed' && !isStale) return;
             const message = job.status === 'failed'
               ? (job.error || '文章インポートジョブが失敗しました。必要ならもう一度実行してください。')
               : '文章インポートが長時間完了していません。記事一覧を確認するか、時間をおいて再試行してください。';
@@ -249,6 +256,7 @@ export const GenerationQueuePanel: React.FC = () => {
               jobType: 'article-import',
             });
           } catch {
+            if (!isStale) return;
             update(item.id, {
               title: '文章インポートの状態を確認できません',
               status: 'error',
@@ -286,6 +294,7 @@ export const GenerationQueuePanel: React.FC = () => {
             });
             return;
           }
+          if (job.status !== 'failed' && !isStale) return;
           const message = job.status === 'failed'
             ? (job.error || '再生成ジョブが失敗しました。必要ならもう一度生成してください。')
             : '再生成が長時間完了していません。保存済みWordPackを一覧で確認するか、時間をおいて再試行してください。';
@@ -298,6 +307,7 @@ export const GenerationQueuePanel: React.FC = () => {
             jobId: item.jobId,
           });
         } catch {
+          if (!isStale) return;
           update(item.id, {
             title: `【${lemma || 'WordPack'}】の生成状態を確認できません`,
             status: 'error',

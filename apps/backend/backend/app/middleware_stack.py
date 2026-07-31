@@ -15,12 +15,8 @@ from ..middleware import (
     SecurityHeadersMiddleware,
 )
 from ..middleware.host import ForwardedHostTrustedHostMiddleware
+from ..middleware.request_timeout import RequestTimeoutMiddleware
 from ..observability import AccessLogAndMetricsMiddleware
-
-try:  # FastAPI/Starlette のバージョンにより存在しない場合がある
-    from starlette.middleware.timeout import TimeoutMiddleware  # type: ignore
-except Exception:  # pragma: no cover - 互換目的のフォールバック
-    TimeoutMiddleware = None  # type: ignore[assignment]
 
 _PROXY_MIDDLEWARE_PARAM = (
     "forwarded_allow_ips"
@@ -31,13 +27,16 @@ _PROXY_MIDDLEWARE_PARAM = (
 
 
 def _maybe_add_timeout_middleware(app: FastAPI, app_settings: Any) -> None:
-    if TimeoutMiddleware is None:
-        return
+    request_timeout_ms = getattr(
+        app_settings,
+        "llm_request_timeout_ms",
+        1_500_000,
+    )
     http_timeout_sec = max(
         1,
-        int((app_settings.llm_request_timeout_ms + 5000) / 1000),
+        int((request_timeout_ms + 5000) / 1000),
     )
-    app.add_middleware(TimeoutMiddleware, timeout=http_timeout_sec)
+    app.add_middleware(RequestTimeoutMiddleware, timeout=http_timeout_sec)
 
 
 def configure_middleware(app: FastAPI, app_settings: Any) -> None:

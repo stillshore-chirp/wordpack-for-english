@@ -425,6 +425,7 @@ export const useWordPack = ({
             pronunciationEnabled,
             regenerateScope,
             requestTimeoutMs,
+            generationRequestTimeoutMs: generationTimeoutMs,
             reasoningEffort,
             textVerbosity,
           },
@@ -439,9 +440,7 @@ export const useWordPack = ({
           lemma,
         });
 
-        // requestTimeoutMs が短くても（例: 60_000）再生成は数分かかり得るため、
-        // ここでは最低 15 分相当までポーリングを継続する。
-        const maxPolls = Math.max(3, Math.ceil(Math.max(requestTimeoutMs, 15 * 60 * 1000) / 2000));
+        const maxPolls = Math.max(3, Math.ceil(generationTimeoutMs / 2000));
         let latest = job;
         for (let i = 0; i < maxPolls; i += 1) {
           if (ctrl.signal.aborted) break;

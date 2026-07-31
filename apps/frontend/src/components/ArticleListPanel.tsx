@@ -217,6 +217,7 @@ export const ArticleListPanel: React.FC = () => {
           pronunciationEnabled: settings.pronunciationEnabled,
           regenerateScope: settings.regenerateScope,
           requestTimeoutMs: settings.requestTimeoutMs,
+          generationRequestTimeoutMs: settings.generationRequestTimeoutMs,
           reasoningEffort: settings.reasoningEffort,
           textVerbosity: settings.textVerbosity,
         },

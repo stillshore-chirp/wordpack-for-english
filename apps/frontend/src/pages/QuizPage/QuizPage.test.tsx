@@ -19,6 +19,7 @@ vi.mock('../../SettingsContext', () => ({
     settings: {
       apiBase: '/api',
       requestTimeoutMs: 60000,
+      generationRequestTimeoutMs: 1_500_000,
       model: 'gpt-5.6-luna',
       reasoningEffort: 'high',
       textVerbosity: 'medium',

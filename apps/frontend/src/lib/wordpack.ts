@@ -12,6 +12,7 @@ export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'high';
 export const SUPPORTED_TEXT_VERBOSITIES = ['low', 'medium', 'high'] as const;
 export type TextVerbosity = (typeof SUPPORTED_TEXT_VERBOSITIES)[number];
 export const DEFAULT_TEXT_VERBOSITY: TextVerbosity = 'medium';
+const DEFAULT_GENERATION_JOB_TIMEOUT_MS = 25 * 60 * 1000;
 
 export const normalizeLlmModel = (model?: string | null): SupportedLlmModel => {
   const selected = (model || '').trim();
@@ -43,6 +44,7 @@ export interface RegenerateSettings {
   pronunciationEnabled: boolean;
   regenerateScope: 'all' | 'examples' | 'collocations';
   requestTimeoutMs: number;
+  generationRequestTimeoutMs?: number;
   reasoningEffort?: ReasoningEffort;
   textVerbosity?: TextVerbosity;
 }
@@ -98,9 +100,9 @@ export async function regenerateWordPackRequest(params: {
     let latest = job;
     const startedAt = Date.now();
     // 目的: Hosting/CDN 経由でも完了まで「待てる」ようにする。
-    // settings.requestTimeoutMs が 60_000 等の短い値でも、ジョブ自体は数分かかり得るため、
-    // ここは最低でも 15 分はポーリングを継続する（1回のHTTPは短いので60秒制限を跨がない）。
-    const deadlineMs = startedAt + Math.max(settings.requestTimeoutMs, 15 * 60 * 1000);
+    // 1回の状態取得は通常API上限を使い、ジョブ全体は生成専用上限まで待つ。
+    const deadlineMs = startedAt
+      + (settings.generationRequestTimeoutMs ?? DEFAULT_GENERATION_JOB_TIMEOUT_MS);
     while (Date.now() < deadlineMs) {
       if (abortSignal?.aborted) break;
       if (latest.status === 'succeeded' || latest.status === 'failed') break;

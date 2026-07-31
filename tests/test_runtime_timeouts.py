@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -22,8 +23,6 @@ class _RecordingApp:
 
 
 def test_http_middleware_uses_the_multi_call_flow_timeout(monkeypatch):
-    marker = object()
-    monkeypatch.setattr(middleware_stack, "TimeoutMiddleware", marker)
     app = _RecordingApp()
 
     middleware_stack._maybe_add_timeout_middleware(
@@ -31,7 +30,47 @@ def test_http_middleware_uses_the_multi_call_flow_timeout(monkeypatch):
         SimpleNamespace(llm_request_timeout_ms=1_500_000),
     )
 
-    assert app.calls == [(marker, {"timeout": 1505})]
+    assert app.calls == [
+        (middleware_stack.RequestTimeoutMiddleware, {"timeout": 1505})
+    ]
+
+
+def test_request_timeout_middleware_returns_504() -> None:
+    async def _assert_timeout() -> None:
+        messages: list[dict[str, object]] = []
+
+        async def slow_app(scope, receive, send) -> None:
+            await asyncio.sleep(0.02)
+
+        async def receive() -> dict[str, object]:
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(message: dict[str, object]) -> None:
+            messages.append(message)
+
+        middleware = middleware_stack.RequestTimeoutMiddleware(slow_app, timeout=0.001)
+        await middleware(
+            {
+                "type": "http",
+                "asgi": {"version": "3.0"},
+                "http_version": "1.1",
+                "method": "GET",
+                "scheme": "http",
+                "path": "/api/test",
+                "raw_path": b"/api/test",
+                "query_string": b"",
+                "headers": [],
+                "client": ("127.0.0.1", 1234),
+                "server": ("testserver", 80),
+                "root_path": "",
+            },
+            receive,
+            send,
+        )
+        assert messages[0]["type"] == "http.response.start"
+        assert messages[0]["status"] == 504
+
+    asyncio.run(_assert_timeout())
 
 
 def test_runtime_config_separates_general_and_multi_call_flow_timeouts(monkeypatch):

@@ -68,6 +68,15 @@ const setupFetchMocks = () => {
         headers: { 'Content-Type': 'application/json' },
       });
     }
+    if (url.endsWith('/api/word/packs/wp:alpha/regenerate/jobs/job-running')) {
+      return new Response(JSON.stringify({
+        job_id: 'job-running',
+        status: 'running',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     if (url.endsWith('/api/article/import/jobs/article-import-job%3Aalpha')) {
       return new Response(JSON.stringify({
         job_id: 'article-import-job:alpha',
@@ -285,5 +294,61 @@ describe('GenerationQueuePanel', () => {
     expect(
       requestedUrls.some((url) => url.endsWith('/api/article/import/jobs/article-import-job%3Aalpha')),
     ).toBe(true);
+  });
+
+  it('再読込後の文章インポートジョブは全体上限を待たずに状態確認を再開する', async () => {
+    const persistedAt = Date.now() - 10 * 1000;
+    localStorage.setItem(
+      'wpfe.notifications.v1',
+      JSON.stringify([
+        {
+          id: 'n-restored-article',
+          title: '文章インポート中...',
+          message: 'バックグラウンドで文章を処理しています',
+          status: 'progress',
+          createdAt: persistedAt,
+          updatedAt: persistedAt,
+          model: 'gpt-5.6-luna',
+          jobId: 'article-import-job:alpha',
+          jobType: 'article-import',
+        },
+      ]),
+    );
+    renderQueue();
+
+    expect(await screen.findByText('文章インポート完了')).toBeInTheDocument();
+    expect(
+      requestedUrls.some((url) => url.endsWith('/api/article/import/jobs/article-import-job%3Aalpha')),
+    ).toBe(true);
+  });
+
+  it('生成上限内でrunningのWordPackジョブは失敗扱いにしない', async () => {
+    const startedAt = Date.now() - 21 * 60 * 1000;
+    localStorage.setItem(
+      'wpfe.notifications.v1',
+      JSON.stringify([
+        {
+          id: 'n-running-alpha',
+          title: '【alpha】の再生成ジョブ開始',
+          message: 'バックグラウンドで再生成しています',
+          status: 'progress',
+          createdAt: startedAt,
+          updatedAt: startedAt,
+          model: 'gpt-5.6-luna',
+          wordPackId: 'wp:alpha',
+          lemma: 'alpha',
+          jobId: 'job-running',
+        },
+      ]),
+    );
+    renderQueue();
+
+    await waitFor(() => {
+      expect(
+        requestedUrls.some((url) => url.endsWith('/api/word/packs/wp:alpha/regenerate/jobs/job-running')),
+      ).toBe(true);
+    });
+    expect(screen.getByRole('button', { name: 'キューから隠す' })).toBeInTheDocument();
+    expect(screen.queryByText(/生成状態を確認できません/)).not.toBeInTheDocument();
   });
 });

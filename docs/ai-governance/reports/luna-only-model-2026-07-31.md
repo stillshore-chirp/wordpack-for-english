@@ -40,6 +40,7 @@
 | ゲスト | Luna / High を表示し、AI 操作は無効 | 実行不可 | ログイン案内 | Pass |
 | 狭幅 | モデルと詳細設定を縦方向に表示 | 既存のモバイル操作 | スクロール可能 | Pass |
 | loading / empty / error | 既存状態を維持 | 既存の更新・再試行 | 既存導線 | Pass |
+| 再読込後の生成ジョブ | 保存済みジョブIDから5秒以内に状態確認を再開 | 待機を継続 | 成功・失敗へ自動補正 | Pass |
 
 ## 5. アクセシビリティ確認
 
@@ -94,7 +95,8 @@
 
 - 実装を落とす観点で見つけた問題: 旧 `minimal` を型だけから除外しても任意 dict の API 入力から通る可能性があったため、全生成リクエスト境界へ validator を追加した
 - 最終自動レビューで見つけた問題: Luna High の待機上限を25分へ伸ばしても、Firebase Hosting の同期リライトは約60秒で切れる。Reader文章インポートを所有者スコープ付き非同期ジョブへ変更し、通常API1分と生成全体25分を分離した
-- 状態回復: 文章インポートのジョブIDと種別を通知へ永続化し、画面移動後や長時間経過後も状態APIから成功・失敗を補正できる
+- 状態回復: 文章インポートとWordPack再生成のジョブIDと種別を通知へ永続化し、再読込後は5秒以内に状態確認を再開する。非終端状態は生成上限内で失敗扱いせず、成功・失敗だけを補正する
+- 最終自動レビューで追加検出した問題: Quiz本文からのWordPack生成だけ通常60秒を使っていたため生成25分へ統一した。WordPack能動ポーリングの15分下限も25分へ統一し、存在しないStarlette timeout middlewareは実動するASGI middlewareへ置換した
 - P0候補: 旧環境変数が残りバックエンド起動または生成が失敗する可能性。env 例、ローカル env、既定値、設定文書を同時更新して解消
 - 証跡不足: 実 OpenAI API への課金を伴う Luna 生成は未実行
 - 残リスク: 本番 Cloud Run の既存 `LLM_MODEL` 実値はこのローカル変更では更新されない。デプロイ時の環境反映と実生成品質は運用確認が必要。非同期ジョブ状態は Firestore に残るが、実行中インスタンスが強制終了した場合の自動再実行基盤までは今回の範囲に含めていない
@@ -107,14 +109,18 @@
 | P1 | 環境設定 | 旧モデル名が env 例と既定値に残る | 起動時または生成時の不整合 | Luna に統一 | 対応済 |
 | P1 | Reader | Firebase Hosting 経由の同期インポートが約60秒で切れる | 失敗表示後に記事だけ保存され、結果が曖昧になる | 202非同期ジョブと短い状態ポーリングへ変更 | 対応済 |
 | P2 | タイムアウト | 通常APIにも25分の値を適用 | 一覧・削除・更新が長時間停止し得る | 通常1分と生成全体25分を分離 | 対応済 |
-| P2 | 生成キュー | 20分で同期処理まで期限切れ扱い | 有効な25分処理を失敗表示 | ジョブID付きだけを補正し、文章ジョブは全体上限+1分後に照合 | 対応済 |
+| P2 | 生成キュー | 20分で同期処理まで期限切れ扱い | 有効な25分処理を失敗表示 | ジョブID付きだけを補正し、全ジョブを全体上限+1分後にstale判定 | 対応済 |
+| P1 | Quiz生成 | Quiz本文からのWordPack生成だけ通常60秒を使用 | 有効なLuna High生成を途中失敗表示 | 生成専用25分上限を使用 | 対応済 |
+| P1 | 生成キュー | 再読込後のジョブ状態確認が26分まで再開しない | 完了済みでも進行中表示が残る | 5秒更新がなければ状態取得を再開 | 対応済 |
+| P1 | WordPack再生成 | 能動ポーリング15分・期限照合20分 | 25分上限内の処理を早期失敗表示 | 能動待機25分・stale判定26分へ統一 | 対応済 |
+| P2 | HTTP上限 | インストール済みStarletteにtimeout middlewareが存在しない | サーバー側の全体上限が適用されない | 実動ASGI middlewareと504回帰テストを追加 | 対応済 |
 | P2 | UI | 単一選択肢でもモデル欄が残る | 一見すると冗長 | 将来拡張という明示要件に従い維持 | 対応済 |
 
 ## 12. 証跡
 
 - 変更前: [Lexicon desktop](../evidence/issue-563/before-lexicon-desktop.jpg)、[Reader desktop](../evidence/issue-563/before-reader-desktop.jpg)
 - 変更後: [Lexicon desktop](../evidence/issue-563/after-lexicon-desktop.jpg)、[Reader desktop](../evidence/issue-563/after-reader-desktop.jpg)、[Reader narrow](../evidence/issue-563/after-reader-narrow.jpg)
-- テスト結果: backend 318 passed / 1 skipped、frontend 202 passed / 1 skipped、Playwright smoke 9 passed、visual regression 6 passed
+- テスト結果: backend 319 passed / 1 skipped、frontend 204 passed / 1 skipped、Playwright smoke 9 passed、visual regression 6 passed
 - 手動確認: Luna 1選択肢、High 既定、6段階 effort、desktop / narrow、ゲスト無効理由、semantic labels
 - 取得できなかった証跡と理由: 実 OpenAI API 生成は課金と外部状態変更を避け、mock Responses API の request-shape テストで代替
 

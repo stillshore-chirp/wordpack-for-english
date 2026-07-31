@@ -1,7 +1,10 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuth } from '../../AuthContext';
 import { useNotifications } from '../../NotificationsContext';
-import { useSettings } from '../../SettingsContext';
+import {
+  DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
+  useSettings,
+} from '../../SettingsContext';
 import { GuestLock } from '../../components/GuestLock';
 import {
   SentencePairParagraphs,
@@ -839,7 +842,10 @@ export const QuizPage: React.FC = () => {
           reasoningEffort: settings.reasoningEffort,
           textVerbosity: settings.textVerbosity,
         }),
-      }, { timeoutMs: settings.requestTimeoutMs });
+      }, {
+        timeoutMs: settings.generationRequestTimeoutMs
+          ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
+      });
       updateRelatedLink(lemma, { status: 'existing', word_pack_id: response.id, is_empty: false });
       notifications.update(notifId, {
         title: `【${response.lemma}】の生成完了`,
