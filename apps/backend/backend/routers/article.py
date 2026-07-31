@@ -19,6 +19,7 @@ from ..application.article.import_jobs import (
 from ..application.common.generation_jobs import (
     GenerationJobResponse,
     enqueue_generation_job,
+    fingerprint_generation_request,
     get_generation_job,
 )
 from ..auth import principal_from_request
@@ -481,6 +482,10 @@ async def create_generate_and_import_job(
         return await enqueue_generation_job(
             owner_user_id=principal.user_id,
             job_type="category-generate-import",
+            request_fingerprint=fingerprint_generation_request(
+                "category-generate-import",
+                req.model_dump(mode="json", exclude={"client_job_id"}),
+            ),
             store=store,
             runner=runner,
             scheduler=AsyncioTaskScheduler(),

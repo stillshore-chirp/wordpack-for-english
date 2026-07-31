@@ -14,6 +14,7 @@ from ...models.article import (
     ArticleImportRequest,
 )
 from ..common.ports import IdGenerator, TaskScheduler
+from ..common.generation_jobs import fingerprint_generation_request
 
 
 ArticleImportRunner = Callable[[ArticleImportRequest], ArticleDetailResponse]
@@ -23,6 +24,7 @@ ArticleImportRunner = Callable[[ArticleImportRequest], ArticleDetailResponse]
 class ArticleImportJob:
     job_id: str
     owner_user_id: str
+    request_fingerprint: str
     status: Literal["queued", "running", "succeeded", "failed"]
     article_id: str | None = None
     error: str | None = None
@@ -59,6 +61,7 @@ def _job_from_record(record: Mapping[str, object]) -> ArticleImportJob:
     return ArticleImportJob(
         job_id=str(record.get("job_id") or ""),
         owner_user_id=str(record.get("owner_user_id") or ""),
+        request_fingerprint=str(record.get("request_fingerprint") or ""),
         status=status,  # type: ignore[arg-type]
         article_id=str(record.get("article_id") or "") or None,
         error=str(error) if error is not None else None,
@@ -69,11 +72,13 @@ def _create_job_record(
     store: object,
     job_id: str,
     owner_user_id: str,
+    request_fingerprint: str,
 ) -> tuple[ArticleImportJob, bool]:
     if _store_supports_persistent_jobs(store):
         record = store.create_article_import_job(
             job_id=job_id,
             owner_user_id=owner_user_id,
+            request_fingerprint=request_fingerprint,
             status="queued",
         )
         return _job_from_record(record), bool(record.get("_created", True))
@@ -81,6 +86,7 @@ def _create_job_record(
         ArticleImportJob(
             job_id=job_id,
             owner_user_id=owner_user_id,
+            request_fingerprint=request_fingerprint,
             status="queued",
         ),
         True,
@@ -170,14 +176,29 @@ async def enqueue_article_import_job(
     job_id: str | None = None,
 ) -> ArticleImportJobResponse:
     resolved_job_id = job_id or id_generator.new_id()
+    request_fingerprint = fingerprint_generation_request(
+        "article-import",
+        req.model_dump(mode="json"),
+    )
     async with _article_import_lock:
         existing = _get_job_record(store, resolved_job_id)
         if existing is not None:
-            if existing.owner_user_id != owner_user_id:
+            if (
+                existing.owner_user_id != owner_user_id
+                or existing.request_fingerprint != request_fingerprint
+            ):
                 raise PermissionError("Article import job ID is already in use")
             return existing.to_response()
-        job, created = _create_job_record(store, resolved_job_id, owner_user_id)
-        if job.owner_user_id != owner_user_id:
+        job, created = _create_job_record(
+            store,
+            resolved_job_id,
+            owner_user_id,
+            request_fingerprint,
+        )
+        if (
+            job.owner_user_id != owner_user_id
+            or job.request_fingerprint != request_fingerprint
+        ):
             raise PermissionError("Article import job ID is already in use")
         _article_import_jobs[resolved_job_id] = job
         if not created:

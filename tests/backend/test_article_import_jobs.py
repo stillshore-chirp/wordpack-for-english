@@ -28,11 +28,13 @@ class _Store:
         *,
         job_id: str,
         owner_user_id: str,
+        request_fingerprint: str,
         status: str,
     ) -> dict[str, Any]:
         record = {
             "job_id": job_id,
             "owner_user_id": owner_user_id,
+            "request_fingerprint": request_fingerprint,
             "status": status,
             "article_id": None,
             "error": None,
@@ -174,3 +176,18 @@ async def _assert_article_import_job_submission_is_idempotent() -> None:
     assert first.status == "queued"
     assert second.status == "succeeded"
     assert calls == 1
+
+    try:
+        await enqueue_article_import_job(
+            ArticleImportRequest(text="different article"),
+            owner_user_id="user-1",
+            store=store,
+            runner=_run,
+            scheduler=None,
+            id_generator=_IdGenerator(),
+            job_id="article-import-job:client-generated",
+        )
+    except PermissionError:
+        pass
+    else:  # pragma: no cover - assertion guard
+        raise AssertionError("another article import must not reuse the job ID")

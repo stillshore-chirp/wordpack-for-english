@@ -9,6 +9,7 @@ from ...application.wordpack.errors import handle_flow_runtime_error
 from ...application.common.generation_jobs import (
     GenerationJobResponse,
     enqueue_generation_job,
+    fingerprint_generation_request,
     get_generation_job,
 )
 from ...authorization.dependencies import require_user_permission
@@ -191,6 +192,17 @@ async def create_examples_generation_job(
         return await enqueue_generation_job(
             owner_user_id=principal.user_id,
             job_type="example-generation",
+            request_fingerprint=fingerprint_generation_request(
+                "example-generation",
+                {
+                    "word_pack_id": word_pack_id,
+                    "category": category.value,
+                    "options": request_options.model_dump(
+                        mode="json",
+                        exclude={"client_job_id"},
+                    ),
+                },
+            ),
             store=repository,
             runner=lambda: _generate_and_append_examples(
                 repository=repository,

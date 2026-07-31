@@ -198,12 +198,14 @@ class FirestoreArticleRepository(FirestoreBaseRepository):
         *,
         job_id: str,
         owner_user_id: str,
+        request_fingerprint: str = "",
         status: ArticleImportJobStatus = "queued",
     ) -> Mapping[str, Any]:
         now = self._now_iso()
         payload: dict[str, Any] = {
             "job_id": job_id,
             "owner_user_id": owner_user_id,
+            "request_fingerprint": request_fingerprint,
             "status": status,
             "article_id": None,
             "error": None,

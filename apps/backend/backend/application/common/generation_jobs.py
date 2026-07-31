@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
@@ -35,6 +36,7 @@ class GenerationJob:
     job_id: str
     owner_user_id: str
     job_type: GenerationJobType
+    request_fingerprint: str
     status: GenerationJobStatus
     result: dict[str, Any] | None = None
     error: str | None = None
@@ -51,6 +53,19 @@ class GenerationJob:
 
 _generation_jobs: dict[str, GenerationJob] = {}
 _generation_jobs_lock = asyncio.Lock()
+
+
+def fingerprint_generation_request(
+    operation: str,
+    payload: Mapping[str, Any],
+) -> str:
+    canonical = json.dumps(
+        {"operation": operation, "payload": dict(payload)},
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _supports_persistent_jobs(store: object) -> bool:
@@ -86,6 +101,7 @@ def _job_from_record(record: Mapping[str, object]) -> GenerationJob:
         job_id=str(record.get("job_id") or ""),
         owner_user_id=str(record.get("owner_user_id") or ""),
         job_type=job_type,  # type: ignore[arg-type]
+        request_fingerprint=str(record.get("request_fingerprint") or ""),
         status=status,  # type: ignore[arg-type]
         result=result,
         error=str(error) if error is not None else None,
@@ -98,16 +114,27 @@ def _create_job(
     job_id: str,
     owner_user_id: str,
     job_type: GenerationJobType,
+    request_fingerprint: str,
 ) -> tuple[GenerationJob, bool]:
     if _supports_persistent_jobs(store):
         record = store.create_generation_job(
             job_id=job_id,
             owner_user_id=owner_user_id,
             job_type=job_type,
+            request_fingerprint=request_fingerprint,
             status="queued",
         )
         return _job_from_record(record), bool(record.get("_created", True))
-    return GenerationJob(job_id, owner_user_id, job_type, "queued"), True
+    return (
+        GenerationJob(
+            job_id,
+            owner_user_id,
+            job_type,
+            request_fingerprint,
+            "queued",
+        ),
+        True,
+    )
 
 
 def _update_job(
@@ -184,6 +211,7 @@ async def enqueue_generation_job(
     *,
     owner_user_id: str,
     job_type: GenerationJobType,
+    request_fingerprint: str,
     store: object,
     runner: GenerationRunner | None = None,
     async_runner: AsyncGenerationRunner | None = None,
@@ -200,6 +228,7 @@ async def enqueue_generation_job(
             if (
                 existing.owner_user_id != owner_user_id
                 or existing.job_type != job_type
+                or existing.request_fingerprint != request_fingerprint
             ):
                 raise PermissionError("Generation job ID is already in use")
             return existing.to_response()
@@ -208,10 +237,12 @@ async def enqueue_generation_job(
             job_id=resolved_job_id,
             owner_user_id=owner_user_id,
             job_type=job_type,
+            request_fingerprint=request_fingerprint,
         )
         if (
             job.owner_user_id != owner_user_id
             or job.job_type != job_type
+            or job.request_fingerprint != request_fingerprint
         ):
             raise PermissionError("Generation job ID is already in use")
         _generation_jobs[resolved_job_id] = job

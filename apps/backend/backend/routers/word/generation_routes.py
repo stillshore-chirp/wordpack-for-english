@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from ...application.common.generation_jobs import (
     GenerationJobResponse,
     enqueue_generation_job,
+    fingerprint_generation_request,
     get_generation_job,
 )
 from ...authorization.dependencies import require_user_permission
@@ -57,6 +58,10 @@ async def enqueue_word_pack_generation(
         return await enqueue_generation_job(
             owner_user_id=principal.user_id,
             job_type="wordpack-generation",
+            request_fingerprint=fingerprint_generation_request(
+                "wordpack-generation",
+                req.model_dump(mode="json", exclude={"client_job_id"}),
+            ),
             store=get_store(),
             async_runner=lambda: _generate_and_save_word_pack(
                 req,

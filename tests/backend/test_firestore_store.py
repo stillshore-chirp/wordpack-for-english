@@ -126,12 +126,14 @@ def test_firestore_article_import_job_roundtrip(firestore_store: AppFirestoreSto
     created = firestore_store.create_article_import_job(
         job_id="article-import-job:demo",
         owner_user_id="user-1",
+        request_fingerprint="article-fingerprint",
     )
 
     assert created["job_id"] == "article-import-job:demo"
     assert created["owner_user_id"] == "user-1"
     assert created["status"] == "queued"
     assert created["article_id"] is None
+    assert created["request_fingerprint"] == "article-fingerprint"
     replay = firestore_store.create_article_import_job(
         job_id="article-import-job:demo",
         owner_user_id="user-2",
@@ -165,10 +167,12 @@ def test_firestore_generation_job_roundtrip(firestore_store: AppFirestoreStore) 
         job_id="generation-job:demo",
         owner_user_id="user-1",
         job_type="example-generation",
+        request_fingerprint="example-fingerprint",
     )
     assert created["status"] == "queued"
     assert created["owner_user_id"] == "user-1"
     assert created["job_type"] == "example-generation"
+    assert created["request_fingerprint"] == "example-fingerprint"
 
     succeeded = firestore_store.update_generation_job(
         "generation-job:demo",
@@ -191,17 +195,20 @@ def test_firestore_generation_jobs_are_created_atomically(
         job_id="generation-job:idempotent",
         owner_user_id="user-1",
         job_type="wordpack-generation",
+        request_fingerprint="wordpack-alpha",
     )
     replay = firestore_store.create_generation_job(
         job_id="generation-job:idempotent",
         owner_user_id="user-2",
         job_type="example-generation",
+        request_fingerprint="example-beta",
     )
 
     assert first["_created"] is True
     assert replay["_created"] is False
     assert replay["owner_user_id"] == "user-1"
     assert replay["job_type"] == "wordpack-generation"
+    assert replay["request_fingerprint"] == "wordpack-alpha"
 
 
 def test_firestore_quiz_generation_job_roundtrip(firestore_store: AppFirestoreStore) -> None:

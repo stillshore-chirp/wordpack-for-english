@@ -21,6 +21,7 @@ class FirestoreGenerationJobRepository(FirestoreBaseRepository):
         job_id: str,
         owner_user_id: str,
         job_type: str,
+        request_fingerprint: str = "",
         status: GenerationJobStatus = "queued",
     ) -> Mapping[str, Any]:
         now = self._now_iso()
@@ -28,6 +29,7 @@ class FirestoreGenerationJobRepository(FirestoreBaseRepository):
             "job_id": job_id,
             "owner_user_id": owner_user_id,
             "job_type": job_type,
+            "request_fingerprint": request_fingerprint,
             "status": status,
             "result_json": None,
             "error": None,

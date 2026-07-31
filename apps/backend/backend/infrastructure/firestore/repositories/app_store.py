@@ -184,11 +184,13 @@ class AppFirestoreRepository:
         *,
         job_id: str,
         owner_user_id: str,
+        request_fingerprint: str = "",
         status: ArticleImportJobStatus = "queued",
     ) -> Mapping[str, Any]:
         return self.articles.create_article_import_job(
             job_id=job_id,
             owner_user_id=owner_user_id,
+            request_fingerprint=request_fingerprint,
             status=status,
         )
 
@@ -217,12 +219,14 @@ class AppFirestoreRepository:
         job_id: str,
         owner_user_id: str,
         job_type: str,
+        request_fingerprint: str = "",
         status: GenerationJobStatus = "queued",
     ) -> Mapping[str, Any]:
         return self.generation_jobs.create_generation_job(
             job_id=job_id,
             owner_user_id=owner_user_id,
             job_type=job_type,
+            request_fingerprint=request_fingerprint,
             status=status,
         )
 

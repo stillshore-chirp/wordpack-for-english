@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "apps" / "backend")
 
 from backend.application.common.generation_jobs import (  # noqa: E402
     enqueue_generation_job,
+    fingerprint_generation_request,
     get_generation_job,
 )
 
@@ -28,12 +29,14 @@ class _Store:
         job_id: str,
         owner_user_id: str,
         job_type: str,
+        request_fingerprint: str,
         status: str,
     ) -> dict[str, Any]:
         record = {
             "job_id": job_id,
             "owner_user_id": owner_user_id,
             "job_type": job_type,
+            "request_fingerprint": request_fingerprint,
             "status": status,
             "result_json": None,
             "error": None,
@@ -73,6 +76,10 @@ async def _assert_generation_job_persists_result_and_enforces_scope() -> None:
     await enqueue_generation_job(
         owner_user_id="user-1",
         job_type="example-generation",
+        request_fingerprint=fingerprint_generation_request(
+            "example-generation",
+            {"word_pack_id": "wp:test", "category": "Dev"},
+        ),
         store=store,
         runner=lambda: {"word_pack_id": "wp:test", "category": "Dev", "added": 2},
         scheduler=None,
@@ -121,6 +128,10 @@ async def _assert_generation_job_records_runner_failure() -> None:
     await enqueue_generation_job(
         owner_user_id="user-1",
         job_type="category-generate-import",
+        request_fingerprint=fingerprint_generation_request(
+            "category-generate-import",
+            {"category": "Common"},
+        ),
         store=store,
         runner=fail,
         scheduler=None,
@@ -150,9 +161,14 @@ async def _assert_generation_job_replay_is_idempotent_and_owner_scoped() -> None
         run_count += 1
         return {"word_pack_id": "wp:test"}
 
+    request_fingerprint = fingerprint_generation_request(
+        "wordpack-generation",
+        {"lemma": "alpha"},
+    )
     first = await enqueue_generation_job(
         owner_user_id="user-1",
         job_type="wordpack-generation",
+        request_fingerprint=request_fingerprint,
         store=store,
         runner=run,
         scheduler=None,
@@ -162,6 +178,7 @@ async def _assert_generation_job_replay_is_idempotent_and_owner_scoped() -> None
     replay = await enqueue_generation_job(
         owner_user_id="user-1",
         job_type="wordpack-generation",
+        request_fingerprint=request_fingerprint,
         store=store,
         runner=run,
         scheduler=None,
@@ -178,6 +195,7 @@ async def _assert_generation_job_replay_is_idempotent_and_owner_scoped() -> None
         await enqueue_generation_job(
             owner_user_id="user-2",
             job_type="wordpack-generation",
+            request_fingerprint=request_fingerprint,
             store=store,
             runner=run,
             scheduler=None,
@@ -193,6 +211,7 @@ async def _assert_generation_job_replay_is_idempotent_and_owner_scoped() -> None
         await enqueue_generation_job(
             owner_user_id="user-1",
             job_type="example-generation",
+            request_fingerprint=request_fingerprint,
             store=store,
             runner=run,
             scheduler=None,
@@ -203,3 +222,22 @@ async def _assert_generation_job_replay_is_idempotent_and_owner_scoped() -> None
         pass
     else:  # pragma: no cover - assertion guard
         raise AssertionError("another job type must not reuse a generation job ID")
+
+    try:
+        await enqueue_generation_job(
+            owner_user_id="user-1",
+            job_type="wordpack-generation",
+            request_fingerprint=fingerprint_generation_request(
+                "wordpack-generation",
+                {"lemma": "beta"},
+            ),
+            store=store,
+            runner=run,
+            scheduler=None,
+            id_generator=_IdGenerator(),
+            job_id="wordpack-generation-job:client-id",
+        )
+    except PermissionError:
+        pass
+    else:  # pragma: no cover - assertion guard
+        raise AssertionError("another request must not reuse a generation job ID")
