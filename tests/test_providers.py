@@ -122,6 +122,7 @@ def test_openai_request_uses_reasoning_text_params(monkeypatch):
     monkeypatch.setenv("STRICT_MODE", "false")
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("LLM_MODEL", "gpt-5.6-luna")
+    monkeypatch.setenv("LLM_MAX_TOKENS", "25000")
     monkeypatch.setenv("OPENAI_API_KEY", "dummy-realistic-key")
 
     from importlib import reload
@@ -171,7 +172,7 @@ def test_openai_request_uses_reasoning_text_params(monkeypatch):
         "verbosity": "high",
         "format": {"type": "json_object"},
     }
-    assert first["max_output_tokens"] > 0
+    assert first["max_output_tokens"] == 25000
     assert "response_format" not in first
     assert "temperature" not in first
     assert "max_tokens" not in first
@@ -183,6 +184,7 @@ def test_openai_request_defaults_to_luna_high(monkeypatch):
     monkeypatch.setenv("STRICT_MODE", "false")
     monkeypatch.setenv("LLM_PROVIDER", "openai")
     monkeypatch.setenv("LLM_MODEL", "gpt-5.6-luna")
+    monkeypatch.setenv("LLM_MAX_TOKENS", "25000")
     monkeypatch.setenv("OPENAI_API_KEY", "dummy-realistic-key")
 
     from importlib import reload
@@ -226,6 +228,7 @@ def test_openai_request_defaults_to_luna_high(monkeypatch):
         "verbosity": "medium",
         "format": {"type": "json_object"},
     }
+    assert calls[0]["max_output_tokens"] == 25000
     assert "response_format" not in calls[0]
     assert "temperature" not in calls[0]
 

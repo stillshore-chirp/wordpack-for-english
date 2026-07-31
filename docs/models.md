@@ -27,7 +27,8 @@ JSON 生成を強制したい呼び出しでは、Responses API の `text.format
 - 性能条件を満たす運用基準として `reasoning.effort=high` を既定にします。処理単位で必要な場合だけ UI から別の対応値へ変更できます。
 - 旧 `gpt-5.4-mini` / `gpt-5.4-nano` や旧 `minimal` は新規リクエストで拒否します。保存済みデータの生成メタ情報は履歴として書き換えません。
 - 出力のまとまりや一貫性は `reasoning.effort`、文量や詳細度は `text.verbosity` で調整します。
-- JSON 途中切れが疑われる場合は `LLM_MAX_TOKENS` を増やします。
+- `reasoning.effort=high` では可視出力の前に推論トークンを消費します。`max_output_tokens` は推論・可視出力・非表示の整形トークンを合わせた上限であるため、OpenAI の初期検証時の推奨余裕に合わせて `LLM_MAX_TOKENS=25000` を既定にします。これは予約枠ではなく上限で、実際に生成したトークンだけが課金対象です。
+- 応答が `status=incomplete` かつ `incomplete_details.reason=max_output_tokens` になった場合は、使用量を確認して `LLM_MAX_TOKENS` を調整します。コスト管理のため、根拠なくモデル上限の 128,000 まで引き上げません。
 - モデル側が `reasoning` や `text.verbosity` を拒否した場合、バックエンドは JSON 形式指定だけを残して再試行し、それも拒否された場合はプロンプト内の JSON 指示に委ねて再試行します。
 
-仕様は 2026-07-31 時点の [GPT-5.6 Luna モデルページ](https://developers.openai.com/api/docs/models/gpt-5.6-luna) と [モデル選択・移行ガイド](https://developers.openai.com/api/docs/guides/model-guidance?model=gpt-5.6-luna) を基準にしています。
+仕様は 2026-07-31 時点の [GPT-5.6 Luna モデルページ](https://developers.openai.com/api/docs/models/gpt-5.6-luna)、[モデル選択・移行ガイド](https://developers.openai.com/api/docs/guides/model-guidance?model=gpt-5.6-luna)、[Reasoning models ガイド](https://developers.openai.com/api/docs/guides/reasoning) を基準にしています。

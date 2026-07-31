@@ -170,7 +170,7 @@ class _OpenAILLM(_LLMBase):  # pragma: no cover - オンライン利用が前提
         kwargs: dict[str, Any] = {
             "model": self._model,
             "input": prompt,
-            "max_output_tokens": int(getattr(settings, "llm_max_tokens", 900)),
+            "max_output_tokens": int(getattr(settings, "llm_max_tokens", 25000)),
             "timeout": settings.llm_timeout_ms / 1000.0,
         }
         if include_reasoning and self._reasoning:

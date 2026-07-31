@@ -202,8 +202,11 @@ class Settings(BaseSettings):
         description="Max retries for LLM calls / LLM呼出しの最大リトライ回数",
     )
     llm_max_tokens: int = Field(
-        default=900,
-        description="Max tokens for LLM completion output / LLM出力の最大トークン数",
+        default=25000,
+        description=(
+            "Max generated tokens including reasoning and visible output / "
+            "推論と可視出力を含む生成トークン上限"
+        ),
     )
 
     # （削除済み）
