@@ -504,23 +504,26 @@ def test_generate_examples_uses_llm_meta(client, monkeypatch):
     assert examples[-1]["llm_model"] == "gpt-5.6-luna"
     assert examples[-1]["transcription_typing_count"] == 0
 
-    job_response = client.post(
-        f"/api/word/packs/{pack_id}/examples/Dev/generate/jobs",
-        json={"model": "gpt-5.6-luna", "reasoning": {"effort": "high"}},
-    )
-    assert job_response.status_code == 202
-    job_id = job_response.json()["job_id"]
-    job_body = job_response.json()
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        poll = client.get(
-            f"/api/word/packs/{pack_id}/examples/Dev/generate/jobs/{job_id}"
+    # TestClient を context manager として維持し、実運用の ASGI event loop と同様に
+    # 202 応答後も background task が完了するまで同じ portal を存続させる。
+    with client as job_client:
+        job_response = job_client.post(
+            f"/api/word/packs/{pack_id}/examples/Dev/generate/jobs",
+            json={"model": "gpt-5.6-luna", "reasoning": {"effort": "high"}},
         )
-        assert poll.status_code == 200
-        job_body = poll.json()
-        if job_body["status"] in {"succeeded", "failed"}:
-            break
-        time.sleep(0.05)
+        assert job_response.status_code == 202
+        job_id = job_response.json()["job_id"]
+        job_body = job_response.json()
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            poll = job_client.get(
+                f"/api/word/packs/{pack_id}/examples/Dev/generate/jobs/{job_id}"
+            )
+            assert poll.status_code == 200
+            job_body = poll.json()
+            if job_body["status"] in {"succeeded", "failed"}:
+                break
+            time.sleep(0.05)
     assert job_body["status"] == "succeeded"
     assert job_body["result"]["word_pack_id"] == pack_id
     assert job_body["result"]["added"] == 2
@@ -1168,21 +1171,24 @@ def test_category_generate_and_import_endpoint(client, monkeypatch):
     )
     assert isinstance(body.get("article_ids"), list) and len(body["article_ids"]) >= 1
 
-    job_response = client.post(
-        "/api/article/generate_and_import/jobs",
-        json={"category": "Dev"},
-    )
-    assert job_response.status_code == 202
-    job_id = job_response.json()["job_id"]
-    job_body = job_response.json()
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        poll = client.get(f"/api/article/generate_and_import/jobs/{job_id}")
-        assert poll.status_code == 200
-        job_body = poll.json()
-        if job_body["status"] in {"succeeded", "failed"}:
-            break
-        time.sleep(0.05)
+    # TestClient を context manager として維持し、実運用の ASGI event loop と同様に
+    # 202 応答後も background task が完了するまで同じ portal を存続させる。
+    with client as job_client:
+        job_response = job_client.post(
+            "/api/article/generate_and_import/jobs",
+            json={"category": "Dev"},
+        )
+        assert job_response.status_code == 202
+        job_id = job_response.json()["job_id"]
+        job_body = job_response.json()
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            poll = job_client.get(f"/api/article/generate_and_import/jobs/{job_id}")
+            assert poll.status_code == 200
+            job_body = poll.json()
+            if job_body["status"] in {"succeeded", "failed"}:
+                break
+            time.sleep(0.05)
     assert job_body["status"] == "succeeded"
     assert isinstance(job_body["result"]["lemma"], str)
     assert job_body["result"]["word_pack_id"].startswith("wp:")
