@@ -83,6 +83,8 @@ export async function regenerateWordPackRequest(params: {
     wordPackId,
     lemma,
   });
+  let acceptedJobId: string | null = null;
+  let confirmedJobFailure = false;
 
   try {
     // Firebase Hosting / CDN 経路の 60s 制限を回避するため、再生成は非同期ジョブを起動してポーリングする。
@@ -94,6 +96,7 @@ export async function regenerateWordPackRequest(params: {
       lemma,
       abortSignal,
     });
+    acceptedJobId = job.job_id;
 
     notify.update(notifId, { jobId: job.job_id, model: model || undefined, wordPackId, lemma });
 
@@ -107,7 +110,8 @@ export async function regenerateWordPackRequest(params: {
       if (abortSignal?.aborted) break;
       if (latest.status === 'succeeded' || latest.status === 'failed') break;
       // 1回のリクエストは短く、60s を跨がないようにする
-      await new Promise((r) => setTimeout(r, 1500));
+      const remainingMs = deadlineMs - Date.now();
+      await new Promise((r) => setTimeout(r, Math.min(1500, remainingMs)));
       latest = await fetchRegenerateJobStatus({
         apiBase,
         wordPackId,
@@ -117,17 +121,42 @@ export async function regenerateWordPackRequest(params: {
       });
     }
 
-    if (latest.status !== 'succeeded') {
+    if (latest.status === 'failed') {
       const errMsg = latest.error || messages?.failure || '処理に失敗しました';
       notify.update(notifId, { title: `【${lemma}】の生成失敗`, status: 'error', message: errMsg, model: model || undefined, wordPackId, lemma, jobId: job.job_id });
+      confirmedJobFailure = true;
       throw new ApiError(errMsg, 502);
+    }
+    if (latest.status !== 'succeeded') {
+      notify.update(notifId, {
+        title: `【${lemma}】の生成中`,
+        status: 'progress',
+        message: '生成はサーバーで継続中です。生成キューで完了状態を確認できます。',
+        model: model || undefined,
+        wordPackId,
+        lemma,
+        jobId: job.job_id,
+      });
+      return;
     }
 
     notify.update(notifId, { title: `【${lemma}】の生成完了！`, status: 'success', message: messages?.success || '処理が完了しました', model: model || undefined, wordPackId, lemma, jobId: job.job_id });
     dispatchAppEvent(APP_EVENTS.wordPackUpdated);
   } catch (e) {
+    if (acceptedJobId && !confirmedJobFailure) {
+      notify.update(notifId, {
+        title: `【${lemma}】の生成中`,
+        status: 'progress',
+        message: 'ジョブは受理済みですが状態確認に失敗しました。生成キューが確認を再開します。',
+        model: model || undefined,
+        wordPackId,
+        lemma,
+        jobId: acceptedJobId,
+      });
+      return;
+    }
     const m = messages?.failure || (e instanceof ApiError ? e.message : '処理に失敗しました');
-    notify.update(notifId, { title: `【${lemma}】の生成失敗`, status: 'error', message: m, model: model || undefined, wordPackId, lemma });
+    notify.update(notifId, { title: `【${lemma}】の生成失敗`, status: 'error', message: m, model: model || undefined, wordPackId, lemma, jobId: acceptedJobId });
     throw e;
   }
 }

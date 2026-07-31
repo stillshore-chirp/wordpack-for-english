@@ -189,6 +189,7 @@ export const GenerationQueuePanel: React.FC = () => {
   const lastAnnouncementKeyRef = useRef<string>(buildUpdateKey(findLatestNotification(notifications)));
   const updateTimersRef = useRef<Record<string, number>>({});
   const reconciliationRef = useRef<Map<string, number>>(new Map());
+  const reconciliationInFlightRef = useRef<Set<string>>(new Set());
 
   useEffect(() => {
     const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
@@ -213,6 +214,7 @@ export const GenerationQueuePanel: React.FC = () => {
   useEffect(() => {
     progressItems.forEach((item) => {
       if (!item.jobId) return;
+      if (reconciliationInFlightRef.current.has(item.id)) return;
       const lastCheckedAt = reconciliationRef.current.get(item.id) ?? 0;
       const notificationWasRecentlyUpdated = nowMs - item.updatedAt
         < PERSISTED_JOB_POLL_INTERVAL_MS;
@@ -228,7 +230,7 @@ export const GenerationQueuePanel: React.FC = () => {
       const isStale = nowMs - item.createdAt >= staleAfterMs;
       const lemma = resolvePreviewLemma(item) || extractLemma(item.title);
       const wordPackId = item.wordPackId?.trim() || '';
-      reconciliationRef.current.set(item.id, nowMs);
+      reconciliationInFlightRef.current.add(item.id);
 
       const reconcile = async () => {
         if (item.jobType === 'article-import') {
@@ -361,7 +363,10 @@ export const GenerationQueuePanel: React.FC = () => {
           });
         }
       };
-      void reconcile();
+      void reconcile().finally(() => {
+        reconciliationInFlightRef.current.delete(item.id);
+        reconciliationRef.current.set(item.id, Date.now());
+      });
     });
   }, [
     apiBase,

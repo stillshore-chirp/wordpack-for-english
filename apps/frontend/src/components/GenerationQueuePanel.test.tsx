@@ -368,6 +368,57 @@ describe('GenerationQueuePanel', () => {
     window.removeEventListener('quiz:updated', quizUpdated);
   });
 
+  it('状態確認が未完了の間は同じジョブを重複pollしない', async () => {
+    vi.useFakeTimers();
+    const persistedAt = Date.now() - 10 * 1000;
+    localStorage.setItem(
+      'wpfe.notifications.v1',
+      JSON.stringify([
+        {
+          id: 'n-slow-article',
+          title: '文章インポート中...',
+          message: 'バックグラウンドで文章を処理しています',
+          status: 'progress',
+          createdAt: persistedAt,
+          updatedAt: persistedAt,
+          model: 'gpt-5.6-luna',
+          jobId: 'article-import-job:slow',
+          jobType: 'article-import',
+        },
+      ]),
+    );
+    const fetchMock = vi.mocked(global.fetch);
+    const baseImplementation = fetchMock.getMockImplementation();
+    let statusRequestCount = 0;
+    const statusRequestResolvers: Array<(response: Response) => void> = [];
+    fetchMock.mockImplementation((input, init) => {
+      const url = typeof input === 'string' ? input : input.toString();
+      if (url.endsWith('/api/article/import/jobs/article-import-job%3Aslow')) {
+        statusRequestCount += 1;
+        return new Promise<Response>((resolve) => {
+          statusRequestResolvers.push(resolve);
+        });
+      }
+      if (!baseImplementation) throw new Error('fetch mock is unavailable');
+      return baseImplementation(input, init);
+    });
+
+    renderQueue();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6000);
+    });
+
+    expect(statusRequestCount).toBe(1);
+    statusRequestResolvers[0]?.(new Response(JSON.stringify({
+      job_id: 'article-import-job:slow',
+      status: 'running',
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    await act(async () => {});
+  });
+
   it('生成上限内でrunningのWordPackジョブは失敗扱いにしない', async () => {
     const startedAt = Date.now() - 21 * 60 * 1000;
     localStorage.setItem(
