@@ -98,17 +98,16 @@ def _create_job(
     job_id: str,
     owner_user_id: str,
     job_type: GenerationJobType,
-) -> GenerationJob:
+) -> tuple[GenerationJob, bool]:
     if _supports_persistent_jobs(store):
-        return _job_from_record(
-            store.create_generation_job(
-                job_id=job_id,
-                owner_user_id=owner_user_id,
-                job_type=job_type,
-                status="queued",
-            )
+        record = store.create_generation_job(
+            job_id=job_id,
+            owner_user_id=owner_user_id,
+            job_type=job_type,
+            status="queued",
         )
-    return GenerationJob(job_id, owner_user_id, job_type, "queued")
+        return _job_from_record(record), bool(record.get("_created", True))
+    return GenerationJob(job_id, owner_user_id, job_type, "queued"), True
 
 
 def _update_job(
@@ -190,21 +189,37 @@ async def enqueue_generation_job(
     async_runner: AsyncGenerationRunner | None = None,
     scheduler: TaskScheduler | None,
     id_generator: IdGenerator,
+    job_id: str | None = None,
 ) -> GenerationJobResponse:
     if (runner is None) == (async_runner is None):
         raise ValueError("exactly one generation job runner is required")
-    job_id = id_generator.new_id()
-    job = _create_job(
-        store,
-        job_id=job_id,
-        owner_user_id=owner_user_id,
-        job_type=job_type,
-    )
+    resolved_job_id = job_id or id_generator.new_id()
     async with _generation_jobs_lock:
-        _generation_jobs[job_id] = job
+        existing = _get_job(store, resolved_job_id)
+        if existing is not None:
+            if (
+                existing.owner_user_id != owner_user_id
+                or existing.job_type != job_type
+            ):
+                raise PermissionError("Generation job ID is already in use")
+            return existing.to_response()
+        job, created = _create_job(
+            store,
+            job_id=resolved_job_id,
+            owner_user_id=owner_user_id,
+            job_type=job_type,
+        )
+        if (
+            job.owner_user_id != owner_user_id
+            or job.job_type != job_type
+        ):
+            raise PermissionError("Generation job ID is already in use")
+        _generation_jobs[resolved_job_id] = job
+        if not created:
+            return job.to_response()
     if scheduler is None:
         await _run_generation_job(
-            job_id,
+            resolved_job_id,
             store=store,
             runner=runner,
             async_runner=async_runner,
@@ -212,7 +227,7 @@ async def enqueue_generation_job(
     else:
         scheduler.spawn(
             _run_generation_job(
-                job_id,
+                resolved_job_id,
                 store=store,
                 runner=runner,
                 async_runner=async_runner,

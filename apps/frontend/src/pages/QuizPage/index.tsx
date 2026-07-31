@@ -899,8 +899,16 @@ export const QuizPage: React.FC = () => {
       lemma,
     });
     let acceptedJobId: string | undefined;
+    const clientJobId = crypto.randomUUID();
+    const candidateJobId = `wordpack-generation-job:${clientJobId}`;
     let confirmedJobFailure = false;
     try {
+      notifications.update(notifId, {
+        message: 'WordPack生成の受付リクエストを送信しています',
+        jobId: candidateJobId,
+        jobType: 'wordpack-generation',
+        pollingOwner: 'foreground',
+      });
       let job = await createWordPackGenerationJob(apiBase, {
         lemma,
         pronunciation_enabled: settings.pronunciationEnabled,
@@ -910,7 +918,7 @@ export const QuizPage: React.FC = () => {
           reasoningEffort: settings.reasoningEffort,
           textVerbosity: settings.textVerbosity,
         }),
-      }, {
+      }, clientJobId, {
         timeoutMs: settings.requestTimeoutMs,
       });
       acceptedJobId = job.job_id;
@@ -969,17 +977,29 @@ export const QuizPage: React.FC = () => {
       if (response.id) setPreviewWordPackId(response.id);
     } catch (error) {
       const text = error instanceof ApiError ? error.message : 'WordPack生成に失敗しました。';
-      if (acceptedJobId && !confirmedJobFailure) {
+      const recoverableJobId = acceptedJobId
+        ?? (error instanceof ApiError && error.status === 0 ? candidateJobId : undefined);
+      if (recoverableJobId && !confirmedJobFailure) {
+        const submissionConfirmed = acceptedJobId !== undefined;
         notifications.update(notifId, {
-          title: `【${lemma}】の生成中`,
-          message: 'ジョブは受理済みですが状態確認に失敗しました。生成キューが確認を再開します。',
+          title: submissionConfirmed
+            ? `【${lemma}】の生成中`
+            : `【${lemma}】の受付状態を確認中`,
+          message: submissionConfirmed
+            ? 'ジョブは受理済みですが状態確認に失敗しました。生成キューが確認を再開します。'
+            : '送信結果が不明なため、同じジョブIDで自動確認します。',
           status: 'progress',
           lemma,
-          jobId: acceptedJobId,
+          jobId: recoverableJobId,
           jobType: 'wordpack-generation',
           pollingOwner: null,
         });
-        setMessage({ kind: 'status', text: 'WordPack生成ジョブは受理済みです。生成キューで状態を確認できます。' });
+        setMessage({
+          kind: 'status',
+          text: submissionConfirmed
+            ? 'WordPack生成ジョブは受理済みです。生成キューで状態を確認できます。'
+            : 'WordPack生成の送信結果を確認中です。生成キューが同じIDで受理状況を再確認します。',
+        });
         return;
       }
       updateRelatedLink(lemma, { status: 'missing' });
@@ -988,6 +1008,8 @@ export const QuizPage: React.FC = () => {
         message: text,
         status: 'error',
         lemma,
+        jobId: acceptedJobId ?? null,
+        jobType: acceptedJobId ? 'wordpack-generation' : null,
         pollingOwner: null,
       });
       setMessage({ kind: 'alert', text });

@@ -145,10 +145,18 @@ export const useExampleActions = ({
         lemma: lemmaText,
       });
       let acceptedJobId: string | undefined;
+      const clientJobId = crypto.randomUUID();
+      const candidateJobId = `example-generation-job:${clientJobId}`;
       let confirmedJobFailure = false;
       try {
         const requestBody = buildModelRequest();
-        let job = await createExampleGenerationJob(apiBase, wordPackId, category, requestBody, {
+        notify.update(notifId, {
+          message: `例文（${category}）の生成受付リクエストを送信しています`,
+          jobId: candidateJobId,
+          jobType: 'example-generation',
+          pollingOwner: 'foreground',
+        });
+        let job = await createExampleGenerationJob(apiBase, wordPackId, category, requestBody, clientJobId, {
           signal: ctrl.signal,
           timeoutMs: requestTimeoutMs,
         });
@@ -204,20 +212,29 @@ export const useExampleActions = ({
           return;
         }
         const text = resolveErrorMessage(error, '例文の追加生成に失敗しました');
-        if (acceptedJobId && !confirmedJobFailure) {
+        const recoverableJobId = acceptedJobId
+          ?? (error instanceof ApiError && error.status === 0 ? candidateJobId : undefined);
+        if (recoverableJobId && !confirmedJobFailure) {
+          const submissionConfirmed = acceptedJobId !== undefined;
           setStatusMessage({
-            kind: 'alert',
-            text: '例文の追加生成はバックグラウンドで継続しています。生成キューから状態を確認してください。',
+            kind: 'status',
+            text: submissionConfirmed
+              ? '例文の追加生成はバックグラウンドで継続しています。生成キューから状態を確認してください。'
+              : '例文の追加生成の送信結果を確認中です。生成キューが同じIDで受理状況を再確認します。',
           });
           notify.update(notifId, {
-            title: `【${lemmaText}】の生成状態を確認中`,
+            title: submissionConfirmed
+              ? `【${lemmaText}】の生成状態を確認中`
+              : `【${lemmaText}】の受付状態を確認中`,
             status: 'progress',
-            message: '一時的に状態を取得できませんでした。自動で再確認します。',
+            message: submissionConfirmed
+              ? '一時的に状態を取得できませんでした。自動で再確認します。'
+              : '送信結果が不明なため、同じジョブIDで自動確認します。',
             model,
             category,
             wordPackId,
             lemma: lemmaText,
-            jobId: acceptedJobId,
+            jobId: recoverableJobId,
             jobType: 'example-generation',
             pollingOwner: null,
           });
@@ -231,6 +248,9 @@ export const useExampleActions = ({
             category,
             wordPackId,
             lemma: lemmaText,
+            jobId: acceptedJobId ?? null,
+            jobType: acceptedJobId ? 'example-generation' : null,
+            pollingOwner: null,
           });
         }
       } finally {
@@ -258,14 +278,14 @@ export const useExampleActions = ({
         status: 'progress',
       });
       let acceptedJobId: string | undefined;
+      const clientJobId = crypto.randomUUID();
+      const candidateJobId = `article-import-job:${clientJobId}`;
       let confirmedJobFailure = false;
 
       try {
-        const clientJobId = crypto.randomUUID();
-        acceptedJobId = `article-import-job:${clientJobId}`;
         notify.update(notifId, {
-          message: 'バックグラウンド処理を受け付けています',
-          jobId: acceptedJobId,
+          message: '文章インポートの受付リクエストを送信しています',
+          jobId: candidateJobId,
           jobType: 'article-import',
           pollingOwner: 'foreground',
         });
@@ -320,16 +340,25 @@ export const useExampleActions = ({
           return;
         }
         const m = resolveErrorMessage(error, '文章インポートに失敗しました');
-        if (acceptedJobId && !confirmedJobFailure) {
+        const recoverableJobId = acceptedJobId
+          ?? (error instanceof ApiError && error.status === 0 ? candidateJobId : undefined);
+        if (recoverableJobId && !confirmedJobFailure) {
+          const submissionConfirmed = acceptedJobId !== undefined;
           setStatusMessage({
-            kind: 'alert',
-            text: '文章インポートはバックグラウンドで継続しています。生成キューから状態を確認してください。',
+            kind: 'status',
+            text: submissionConfirmed
+              ? '文章インポートはバックグラウンドで継続しています。生成キューから状態を確認してください。'
+              : '文章インポートの送信結果を確認中です。生成キューが同じIDで受理状況を再確認します。',
           });
           notify.update(notifId, {
-            title: '文章インポートの状態を確認中',
+            title: submissionConfirmed
+              ? '文章インポートの状態を確認中'
+              : '文章インポートの受付状態を確認中',
             status: 'progress',
-            message: '一時的に状態を取得できませんでした。自動で再確認します。',
-            jobId: acceptedJobId,
+            message: submissionConfirmed
+              ? '一時的に状態を取得できませんでした。自動で再確認します。'
+              : '送信結果が不明なため、同じジョブIDで自動確認します。',
+            jobId: recoverableJobId,
             jobType: 'article-import',
             pollingOwner: null,
           });
@@ -339,6 +368,9 @@ export const useExampleActions = ({
             title: '文章インポート失敗',
             status: 'error',
             message: m,
+            jobId: acceptedJobId ?? null,
+            jobType: acceptedJobId ? 'article-import' : null,
+            pollingOwner: null,
           });
         }
       } finally {

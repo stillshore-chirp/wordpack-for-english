@@ -1,4 +1,5 @@
 import { fetchJson } from '../../shared/api/fetchJson';
+import { submitIdempotentJob } from '../../shared/api/submitIdempotentJob';
 
 export interface GenerationJobResponse {
   job_id: string;
@@ -15,14 +16,18 @@ interface RequestOptions {
 
 export const createCategoryGenerateImportJob = (
   apiBase: string,
-  body: unknown,
+  body: Record<string, unknown>,
+  clientJobId: string,
   options?: RequestOptions,
 ): Promise<GenerationJobResponse> => (
-  fetchJson<GenerationJobResponse>(`${apiBase}/article/generate_and_import/jobs`, {
-    method: 'POST',
-    body,
-    ...options,
-  })
+  submitIdempotentJob(
+    () => fetchJson<GenerationJobResponse>(`${apiBase}/article/generate_and_import/jobs`, {
+      method: 'POST',
+      body: { ...body, client_job_id: clientJobId },
+      ...options,
+    }),
+    () => !options?.signal?.aborted,
+  )
 );
 
 export const fetchCategoryGenerateImportJob = (
@@ -40,12 +45,16 @@ export const createExampleGenerationJob = (
   apiBase: string,
   wordPackId: string,
   category: string,
-  body: unknown,
+  body: Record<string, unknown>,
+  clientJobId: string,
   options?: RequestOptions,
 ): Promise<GenerationJobResponse> => (
-  fetchJson<GenerationJobResponse>(
-    `${apiBase}/word/packs/${encodeURIComponent(wordPackId)}/examples/${encodeURIComponent(category)}/generate/jobs`,
-    { method: 'POST', body, ...options },
+  submitIdempotentJob(
+    () => fetchJson<GenerationJobResponse>(
+      `${apiBase}/word/packs/${encodeURIComponent(wordPackId)}/examples/${encodeURIComponent(category)}/generate/jobs`,
+      { method: 'POST', body: { ...body, client_job_id: clientJobId }, ...options },
+    ),
+    () => !options?.signal?.aborted,
   )
 );
 

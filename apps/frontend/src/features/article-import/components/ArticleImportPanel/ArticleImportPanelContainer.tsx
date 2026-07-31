@@ -107,6 +107,8 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
     setArticle(null);
     const notifId = addNotification({ title: '文章インポート中...', message: 'LLMで要約と語彙抽出を実行しています', status: 'progress', model: selectedModel });
     let acceptedJobId: string | undefined;
+    const clientJobId = crypto.randomUUID();
+    const candidateJobId = `article-import-job:${clientJobId}`;
     let acceptedArticleId: string | undefined;
     let confirmedJobFailure = false;
     try {
@@ -114,11 +116,9 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
       body.model = selectedModel;
       body.reasoning = { effort: settings.reasoningEffort || DEFAULT_REASONING_EFFORT };
       body.text_opts = { verbosity: settings.textVerbosity || DEFAULT_TEXT_VERBOSITY };
-      const clientJobId = crypto.randomUUID();
-      acceptedJobId = `article-import-job:${clientJobId}`;
       updateNotification(notifId, {
-        message: 'バックグラウンド処理を受け付けています',
-        jobId: acceptedJobId,
+        message: '文章インポートの受付リクエストを送信しています',
+        jobId: candidateJobId,
         jobType: 'article-import',
         pollingOwner: 'foreground',
       });
@@ -191,17 +191,26 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
         return;
       }
       const m = e instanceof ApiError ? e.message : '文章インポートに失敗しました';
-      if (acceptedJobId && !confirmedJobFailure) {
+      const recoverableJobId = acceptedJobId
+        ?? (e instanceof ApiError && e.status === 0 ? candidateJobId : undefined);
+      if (recoverableJobId && !confirmedJobFailure) {
+        const submissionConfirmed = acceptedJobId !== undefined;
         setMsg({
           kind: 'status',
-          text: '文章インポートはバックグラウンドで継続しています。生成キューから状態を確認してください。',
+          text: submissionConfirmed
+            ? '文章インポートはバックグラウンドで継続しています。生成キューから状態を確認してください。'
+            : '文章インポートの送信結果を確認中です。生成キューが同じIDで受理状況を再確認します。',
         });
         updateNotification(notifId, {
-          title: '文章インポートの状態を確認中',
+          title: submissionConfirmed
+            ? '文章インポートの状態を確認中'
+            : '文章インポートの受付状態を確認中',
           status: 'progress',
-          message: '一時的に状態を取得できませんでした。自動で再確認します。',
+          message: submissionConfirmed
+            ? '一時的に状態を取得できませんでした。自動で再確認します。'
+            : '送信結果が不明なため、同じジョブIDで自動確認します。',
           model: selectedModel,
-          jobId: acceptedJobId,
+          jobId: recoverableJobId,
           jobType: 'article-import',
           articleId: acceptedArticleId,
           pollingOwner: null,
@@ -213,6 +222,9 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
           status: 'error',
           message: m,
           model: selectedModel,
+          jobId: acceptedJobId ?? null,
+          jobType: acceptedJobId ? 'article-import' : null,
+          pollingOwner: null,
         });
       }
     } finally {
@@ -248,13 +260,21 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
       categories.map(async (selectedCategory) => {
         const notifId = addNotification({ title: `【${selectedCategory}】の例文生成・記事化を開始します`, message: '関連語を選定し、例文を生成して記事化します', status: 'progress', model: selectedModel, category: selectedCategory });
         let acceptedJobId: string | undefined;
+        const clientJobId = crypto.randomUUID();
+        const candidateJobId = `category-generate-import-job:${clientJobId}`;
         let confirmedJobFailure = false;
         try {
           const reqBody: any = { category: selectedCategory };
           reqBody.model = selectedModel;
           reqBody.reasoning = { effort: settings.reasoningEffort || DEFAULT_REASONING_EFFORT };
           reqBody.text = { verbosity: settings.textVerbosity || DEFAULT_TEXT_VERBOSITY };
-          let job = await createCategoryGenerateImportJob(settings.apiBase, reqBody, {
+          updateNotification(notifId, {
+            message: '例文生成・記事化の受付リクエストを送信しています',
+            jobId: candidateJobId,
+            jobType: 'category-generate-import',
+            pollingOwner: 'foreground',
+          });
+          let job = await createCategoryGenerateImportJob(settings.apiBase, reqBody, clientJobId, {
             timeoutMs: settings.requestTimeoutMs,
           });
           acceptedJobId = job.job_id;
@@ -312,20 +332,40 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
           return { category: selectedCategory, result };
         } catch (e) {
           const message = e instanceof ApiError ? e.message : '例文生成・記事化に失敗しました';
-          if (acceptedJobId && !confirmedJobFailure) {
+          const recoverableJobId = acceptedJobId
+            ?? (e instanceof ApiError && e.status === 0 ? candidateJobId : undefined);
+          if (recoverableJobId && !confirmedJobFailure) {
+            const submissionConfirmed = acceptedJobId !== undefined;
             updateNotification(notifId, {
-              title: '例文生成・記事化の状態を確認中',
+              title: submissionConfirmed
+                ? '例文生成・記事化の状態を確認中'
+                : '例文生成・記事化の受付状態を確認中',
               status: 'progress',
-              message: '一時的に状態を取得できませんでした。自動で再確認します。',
+              message: submissionConfirmed
+                ? '一時的に状態を取得できませんでした。自動で再確認します。'
+                : '送信結果が不明なため、同じジョブIDで自動確認します。',
               model: selectedModel,
               category: selectedCategory,
-              jobId: acceptedJobId,
+              jobId: recoverableJobId,
               jobType: 'category-generate-import',
               pollingOwner: null,
             });
-            return { category: selectedCategory, pending: true as const };
+            return {
+              category: selectedCategory,
+              pending: true as const,
+              submissionConfirmed,
+            };
           } else {
-            updateNotification(notifId, { title: '例文生成・記事化失敗', status: 'error', message, model: selectedModel, category: selectedCategory });
+            updateNotification(notifId, {
+              title: '例文生成・記事化失敗',
+              status: 'error',
+              message,
+              model: selectedModel,
+              category: selectedCategory,
+              jobId: acceptedJobId ?? null,
+              jobType: acceptedJobId ? 'category-generate-import' : null,
+              pollingOwner: null,
+            });
           }
           throw { category: selectedCategory, message };
         } finally {
@@ -339,6 +379,13 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
     ).length;
     const pendingCount = results.filter(
       (result) => result.status === 'fulfilled' && 'pending' in result.value,
+    ).length;
+    const unconfirmedCount = results.filter(
+      (result) => (
+        result.status === 'fulfilled'
+        && 'pending' in result.value
+        && !result.value.submissionConfirmed
+      ),
     ).length;
     const failures = results
       .filter((result): result is PromiseRejectedResult => result.status === 'rejected')
@@ -363,7 +410,9 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
       const completed = successCount > 0 ? `${successCount}カテゴリは完了し、` : '';
       setMsg({
         kind: 'status',
-        text: `${completed}${pendingCount}カテゴリの例文生成・記事化をバックグラウンドで継続しています。生成キューから状態を確認できます。`,
+        text: unconfirmedCount > 0
+          ? `${completed}${unconfirmedCount}カテゴリの送信結果を確認中です。生成キューが同じIDで受理状況を再確認します。`
+          : `${completed}${pendingCount}カテゴリの例文生成・記事化をバックグラウンドで継続しています。生成キューから状態を確認できます。`,
       });
       return;
     }

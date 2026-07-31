@@ -10,6 +10,7 @@ import {
   createExampleGenerationJob,
   fetchExampleGenerationJob,
 } from '../../features/generation/api';
+import { ApiError } from '../../shared/api/ApiError';
 
 vi.mock('../../features/article-import/api/articleApi', () => ({
   createArticleImportJob: vi.fn(),
@@ -91,7 +92,7 @@ describe('useExampleActions.importArticleFromExample', () => {
     });
 
     expect(setStatusMessage).toHaveBeenLastCalledWith({
-      kind: 'alert',
+      kind: 'status',
       text: '文章インポートはバックグラウンドで継続しています。生成キューから状態を確認してください。',
     });
     expect(notify.update).toHaveBeenLastCalledWith(
@@ -154,7 +155,7 @@ describe('useExampleActions.generateExamples', () => {
     });
 
     expect(setStatusMessage).toHaveBeenLastCalledWith({
-      kind: 'alert',
+      kind: 'status',
       text: '例文の追加生成はバックグラウンドで継続しています。生成キューから状態を確認してください。',
     });
     expect(notify.update).toHaveBeenLastCalledWith(
@@ -162,6 +163,45 @@ describe('useExampleActions.generateExamples', () => {
       expect.objectContaining({
         status: 'progress',
         jobId: 'example-generation-job:test',
+        jobType: 'example-generation',
+      }),
+    );
+  });
+
+  it('202応答喪失時は送信した同じ例文生成ジョブIDを生成キューへ引き継ぐ', async () => {
+    vi.mocked(createExampleGenerationJob).mockRejectedValueOnce(
+      new ApiError('Network error', 0),
+    );
+    const { result } = renderHook(() => useExampleActions({
+      apiBase: '/api',
+      requestTimeoutMs: 60_000,
+      generationRequestTimeoutMs: 1_500_000,
+      currentWordPackId: 'wp:alpha',
+      data: makeWordPack(),
+      model: 'gpt-5.6-luna',
+      reasoningEffort: 'high',
+      textVerbosity: 'medium',
+      setStatusMessage,
+      loadWordPack: vi.fn(),
+      notify,
+      confirmDialog: vi.fn(),
+    }));
+
+    await act(async () => {
+      await result.current.generateExamples('Dev');
+    });
+
+    const clientJobId = vi.mocked(createExampleGenerationJob).mock.calls[0]?.[4];
+    expect(clientJobId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(setStatusMessage).toHaveBeenLastCalledWith({
+      kind: 'status',
+      text: '例文の追加生成の送信結果を確認中です。生成キューが同じIDで受理状況を再確認します。',
+    });
+    expect(notify.update).toHaveBeenLastCalledWith(
+      'notification:example-generation',
+      expect.objectContaining({
+        status: 'progress',
+        jobId: `example-generation-job:${clientJobId}`,
         jobType: 'example-generation',
       }),
     );

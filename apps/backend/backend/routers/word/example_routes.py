@@ -187,20 +187,31 @@ async def create_examples_generation_job(
     lemma, _, _, _ = result
     request_options = req or ExamplesGenerateRequest()
 
-    return await enqueue_generation_job(
-        owner_user_id=principal.user_id,
-        job_type="example-generation",
-        store=repository,
-        runner=lambda: _generate_and_append_examples(
-            repository=repository,
-            word_pack_id=word_pack_id,
-            lemma=lemma,
-            category=category,
-            req=request_options,
-        ),
-        scheduler=AsyncioTaskScheduler(),
-        id_generator=PrefixedUuidGenerator("example-generation-job:"),
-    )
+    try:
+        return await enqueue_generation_job(
+            owner_user_id=principal.user_id,
+            job_type="example-generation",
+            store=repository,
+            runner=lambda: _generate_and_append_examples(
+                repository=repository,
+                word_pack_id=word_pack_id,
+                lemma=lemma,
+                category=category,
+                req=request_options,
+            ),
+            scheduler=AsyncioTaskScheduler(),
+            id_generator=PrefixedUuidGenerator("example-generation-job:"),
+            job_id=(
+                f"example-generation-job:{request_options.client_job_id}"
+                if request_options.client_job_id is not None
+                else None
+            ),
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
 
 
 @router.get(

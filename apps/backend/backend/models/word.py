@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from enum import Enum
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -107,6 +108,11 @@ class WordPackRequest(BaseModel):
     )
     text: dict | None = Field(
         default=None, description="text オプション（例: {verbosity: low|medium|high}）"
+    )
+    client_job_id: UUID | None = Field(
+        default=None,
+        exclude=True,
+        description="202応答喪失時に同じ生成ジョブを再取得するためのクライアント採番UUID",
     )
 
     @field_validator("lemma")

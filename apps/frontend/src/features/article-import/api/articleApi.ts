@@ -1,4 +1,5 @@
 import { fetchJson } from '../../../shared/api/fetchJson';
+import { submitIdempotentJob } from '../../../shared/api/submitIdempotentJob';
 import type { ArticleDetailData } from '../../../components/ArticleDetailModal';
 
 export type ArticleDetailResponse = ArticleDetailData;
@@ -16,12 +17,15 @@ export const createArticleImportJob = (
   clientJobId: string,
   options?: { signal?: AbortSignal; timeoutMs?: number },
 ): Promise<ArticleImportJobResponse> => (
-  fetchJson<ArticleImportJobResponse>(`${apiBase}/article/import/jobs`, {
-    method: 'POST',
-    body: { ...body, client_job_id: clientJobId },
-    signal: options?.signal,
-    timeoutMs: options?.timeoutMs,
-  })
+  submitIdempotentJob(
+    () => fetchJson<ArticleImportJobResponse>(`${apiBase}/article/import/jobs`, {
+      method: 'POST',
+      body: { ...body, client_job_id: clientJobId },
+      signal: options?.signal,
+      timeoutMs: options?.timeoutMs,
+    }),
+    () => !options?.signal?.aborted,
+  )
 );
 
 export const fetchArticleImportJob = (

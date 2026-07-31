@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any, Literal
 
-from .base import FirestoreBaseRepository, firestore
+from .base import AlreadyExists, FirestoreBaseRepository, firestore
 
 GenerationJobStatus = Literal["queued", "running", "succeeded", "failed"]
 
@@ -34,8 +34,16 @@ class FirestoreGenerationJobRepository(FirestoreBaseRepository):
             "created_at": now,
             "updated_at": now,
         }
-        self._jobs.document(job_id).set(payload)
-        return payload
+        doc_ref = self._jobs.document(job_id)
+        try:
+            doc_ref.create(payload)
+            return {**payload, "_created": True}
+        except AlreadyExists:
+            snapshot = doc_ref.get()
+            existing = snapshot.to_dict() if snapshot.exists else None
+            if existing is None:
+                raise
+            return {**existing, "_created": False}
 
     def update_generation_job(
         self,

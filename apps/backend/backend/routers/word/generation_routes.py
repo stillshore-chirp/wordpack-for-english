@@ -53,17 +53,28 @@ async def enqueue_word_pack_generation(
     req: WordPackRequest,
     principal: Principal = Depends(require_user_permission(Permission.WORDPACK_GENERATE)),
 ) -> GenerationJobResponse:
-    return await enqueue_generation_job(
-        owner_user_id=principal.user_id,
-        job_type="wordpack-generation",
-        store=get_store(),
-        async_runner=lambda: _generate_and_save_word_pack(
-            req,
+    try:
+        return await enqueue_generation_job(
             owner_user_id=principal.user_id,
-        ),
-        scheduler=AsyncioTaskScheduler(),
-        id_generator=PrefixedUuidGenerator("wordpack-generation-job:"),
-    )
+            job_type="wordpack-generation",
+            store=get_store(),
+            async_runner=lambda: _generate_and_save_word_pack(
+                req,
+                owner_user_id=principal.user_id,
+            ),
+            scheduler=AsyncioTaskScheduler(),
+            id_generator=PrefixedUuidGenerator("wordpack-generation-job:"),
+            job_id=(
+                f"wordpack-generation-job:{req.client_job_id}"
+                if req.client_job_id is not None
+                else None
+            ),
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
 
 
 @router.get(

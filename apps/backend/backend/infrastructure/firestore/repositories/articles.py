@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Literal
 
-from .base import Any, firestore
+from .base import AlreadyExists, Any, firestore
 from .base import FirestoreBaseRepository
 
 
@@ -210,8 +210,16 @@ class FirestoreArticleRepository(FirestoreBaseRepository):
             "created_at": now,
             "updated_at": now,
         }
-        self._article_import_jobs.document(job_id).set(payload)
-        return payload
+        doc_ref = self._article_import_jobs.document(job_id)
+        try:
+            doc_ref.create(payload)
+            return {**payload, "_created": True}
+        except AlreadyExists:
+            snapshot = doc_ref.get()
+            existing = snapshot.to_dict() if snapshot.exists else None
+            if existing is None:
+                raise
+            return {**existing, "_created": False}
 
     def update_article_import_job(
         self,

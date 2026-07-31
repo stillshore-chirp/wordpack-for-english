@@ -42,7 +42,8 @@
 | loading / empty / error | 既存状態を維持 | 既存の更新・再試行 | 既存導線 | Pass |
 | 再読込後の生成ジョブ | 保存済みジョブIDから5秒以内に状態確認を再開 | 待機を継続 | 成功・失敗へ自動補正 | Pass |
 | ジョブ受付後の一時的な追跡失敗 | 「バックグラウンドで継続」「自動で再確認」と表示 | 同一入力を即時再送しない | 生成キューが状態APIを再照合 | Pass |
-| ジョブ作成の202応答喪失 | POST前にクライアント採番IDを進行通知へ保存 | 確定失敗と表示しない | 同一IDの冪等な状態取得・再送 | Pass |
+| ジョブ作成の202応答喪失 | POST前にクライアント採番IDを「候補」として進行通知へ保存 | 受付済みと断定せず「送信結果を確認中」と表示 | 同一IDで1回再送し、再送も結果不明な場合だけ生成キューで状態取得 | Pass |
+| ジョブ作成前のHTTP 4xx / 5xx | エラー理由を表示 | 修正後に再実行 | 存在しない候補IDを生成キューへ残さない | Pass |
 | 長時間poll | 同じ進行内容は表示を維持 | 待機を継続 | `updatedAt` を変えずライブ通知を再発火しない | Pass |
 | Quiz起点ジョブの再読込後完了 | 生成キューの完了と選択中Quizの関連語を同期 | WordPackを開く | 更新イベントでQuiz詳細を再取得 | Pass |
 
@@ -125,6 +126,8 @@
 | P1 | Reader / カテゴリ生成・記事化 | 同期HTTPの切断後も保存処理だけが継続する | 失敗表示後にWordPackと記事が保存され、再試行で重複し得る | 所有者スコープ付き202ジョブと生成キュー再照合へ変更 | 対応済 |
 | P1 | WordPack / 追加例文生成 | 同期HTTPの切断後も例文保存だけが継続する | 失敗表示と保存結果が食い違い、再試行で例文が重複し得る | 所有者スコープ付き202ジョブと生成キュー再照合へ変更 | 対応済 |
 | P1 | Reader文章インポート | ジョブ作成後に202応答を失うとIDが分からない | 確定失敗表示と再送で記事が重複し得る | POST前のクライアント採番と同一IDの冪等受付 | 対応済 |
+| P1 | Reader文章インポート | クライアント採番IDを202受理前から受付済みと扱う | 4xx / 5xxでも26分間、存在しないジョブを進行中表示し得る | 確定HTTP失敗は即時エラー、通信結果不明時だけ候補IDを再照合 | 対応済 |
+| P1 | WordPack / カテゴリ記事化 / 追加例文生成 | 202応答喪失後にサーバー採番IDを取得できない | 再試行でWordPack・記事・例文が重複し得る | 全導線でクライアント採番UUIDと所有者・種別スコープ付き冪等受付を適用 | 対応済 |
 | P1 | 生成キュー / ライブリージョン | 同じ進行状態を毎秒更新 | スクリーンリーダーが同じ文を長時間反復 | 同一内容の通知更新をno-op化 | 対応済 |
 | P2 | Quiz関連WordPack | 再読込後のジョブ完了で選択中Quizが古い | 完了済みの語に再生成操作が残る | WordPack更新時にQuiz詳細を再取得 | 対応済 |
 | P2 | HTTP上限 | インストール済みStarletteにtimeout middlewareが存在しない | サーバー側の全体上限が適用されない | 実動ASGI middlewareと504回帰テストを追加 | 対応済 |
@@ -134,7 +137,7 @@
 
 - 変更前: [Lexicon desktop](../evidence/issue-563/before-lexicon-desktop.jpg)、[Reader desktop](../evidence/issue-563/before-reader-desktop.jpg)
 - 変更後: [Lexicon desktop](../evidence/issue-563/after-lexicon-desktop.jpg)、[Reader desktop](../evidence/issue-563/after-reader-desktop.jpg)、[Reader narrow](../evidence/issue-563/after-reader-narrow.jpg)
-- テスト結果: backend 326 passed / 1 skipped、frontend 218 passed / 1 skipped、Playwright smoke 9 passed、visual regression 6 passed
+- テスト結果: backend 328 passed / 1 skipped、frontend 225 passed / 1 skipped、Playwright smoke 9 passed、visual regression 6 passed
 - 手動確認: Luna 1選択肢、High 既定、6段階 effort、desktop / narrow、ゲスト無効理由、semantic labels
 - 取得できなかった証跡と理由: 実 OpenAI API 生成は課金と外部状態変更を避け、mock Responses API の request-shape テストで代替
 

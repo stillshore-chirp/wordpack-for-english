@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 import uuid
 
+from google.api_core.exceptions import AlreadyExists
 from google.cloud import firestore
 
 
@@ -43,7 +44,7 @@ class FakeDocumentReference:
     def create(self, data: dict[str, Any]) -> None:
         bucket = self._client._data.setdefault(self._collection, {})
         if self.id in bucket:
-            raise RuntimeError(f"document {self._collection}/{self.id} already exists")
+            raise AlreadyExists(f"document {self._collection}/{self.id} already exists")
         bucket[self.id] = dict(data)
 
     def update(self, data: dict[str, Any]) -> None:

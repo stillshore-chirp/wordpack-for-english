@@ -85,9 +85,12 @@ Request:
   "lemma": "converge",
   "model": "gpt-5.6-luna",
   "reasoning": { "effort": "high" },
-  "text": { "verbosity": "medium" }
+  "text": { "verbosity": "medium" },
+  "client_job_id": "11111111-1111-4111-8111-111111111111"
 }
 ```
+
+`client_job_id` は任意の UUID です。同じユーザーが同じ値を再送すると既存ジョブを返すため、アプリUIは202応答を受け取れない場合に同じIDで1回だけ再送し、WordPackを重複生成せず状態取得を再開できます。別ユーザーまたは別種のジョブが同じIDを使用しようとした場合は409で拒否します。
 
 Response:
 
@@ -149,6 +152,8 @@ Request:
 
 保存済み WordPack へカテゴリ別の例文を2件追加するジョブを作り、202 とジョブIDを返します。Luna High の生成が Firebase Hosting の同期上限を越えても、受付済み処理と画面上の失敗表示が食い違わないよう、アプリUIはこちらを使用します。
 
+Request の生成オプションには任意の UUID `client_job_id` を追加できます。同じユーザー・同じジョブ種別で再送した場合は既存ジョブを返し、202応答喪失後の追加例文重複を防ぎます。
+
 ### `GET /api/word/packs/{id}/examples/{category}/generate/jobs/{job_id}`
 
 追加例文生成ジョブの `queued / running / succeeded / failed` と、成功時の追加件数を返します。対象 WordPack の所有者だけが取得できます。
@@ -204,7 +209,7 @@ Request:
 
 - 1 回のインポート本文は最大 4,000 文字
 - 超過時は 413 `article_import_text_too_long`
-- `client_job_id` は任意の UUID。同じユーザーが同じ値を再送した場合は既存ジョブを返し、202応答の通信断後も重複保存せず状態取得を再開できます。アプリUIはPOST前にこの値と対応するジョブIDを生成キューへ保存します。
+- `client_job_id` は任意の UUID。同じユーザーが同じ値を再送した場合は既存ジョブを返し、202応答の通信断後も重複保存せず状態取得を再開できます。アプリUIはPOST前に候補IDを保持し、通信結果不明時は同じIDで1回再送します。確定HTTP失敗は即時エラーとし、再送後も結果不明の場合だけ候補IDを生成キューへ渡します。
 
 ### `GET /api/article/import/jobs/{job_id}`
 
@@ -214,7 +219,7 @@ Request:
 
 ### `POST /api/article/generate_and_import/jobs`
 
-カテゴリから関連語と例文を生成し、WordPack と Reader 記事へ保存するジョブを作り、202 とジョブIDを返します。成功時の `result` には `lemma`、`word_pack_id`、`category`、`generated_examples`、`article_ids` が入ります。ジョブは作成したユーザーだけが取得できます。
+カテゴリから関連語と例文を生成し、WordPack と Reader 記事へ保存するジョブを作り、202 とジョブIDを返します。Request には任意の UUID `client_job_id` を指定でき、同じユーザー・同じジョブ種別での再送は既存ジョブを返します。成功時の `result` には `lemma`、`word_pack_id`、`category`、`generated_examples`、`article_ids` が入ります。ジョブは作成したユーザーだけが取得できます。
 
 ### `GET /api/article/generate_and_import/jobs/{job_id}`
 

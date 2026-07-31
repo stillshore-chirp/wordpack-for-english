@@ -135,3 +135,71 @@ async def _assert_generation_job_records_runner_failure() -> None:
     assert job is not None
     assert job.status == "failed"
     assert job.error == "provider timeout"
+
+
+def test_generation_job_replay_is_idempotent_and_owner_scoped() -> None:
+    asyncio.run(_assert_generation_job_replay_is_idempotent_and_owner_scoped())
+
+
+async def _assert_generation_job_replay_is_idempotent_and_owner_scoped() -> None:
+    store = _Store()
+    run_count = 0
+
+    def run() -> dict[str, Any]:
+        nonlocal run_count
+        run_count += 1
+        return {"word_pack_id": "wp:test"}
+
+    first = await enqueue_generation_job(
+        owner_user_id="user-1",
+        job_type="wordpack-generation",
+        store=store,
+        runner=run,
+        scheduler=None,
+        id_generator=_IdGenerator(),
+        job_id="wordpack-generation-job:client-id",
+    )
+    replay = await enqueue_generation_job(
+        owner_user_id="user-1",
+        job_type="wordpack-generation",
+        store=store,
+        runner=run,
+        scheduler=None,
+        id_generator=_IdGenerator(),
+        job_id="wordpack-generation-job:client-id",
+    )
+
+    assert first.job_id == replay.job_id == "wordpack-generation-job:client-id"
+    assert first.status == "queued"
+    assert replay.status == "succeeded"
+    assert run_count == 1
+
+    try:
+        await enqueue_generation_job(
+            owner_user_id="user-2",
+            job_type="wordpack-generation",
+            store=store,
+            runner=run,
+            scheduler=None,
+            id_generator=_IdGenerator(),
+            job_id="wordpack-generation-job:client-id",
+        )
+    except PermissionError:
+        pass
+    else:  # pragma: no cover - assertion guard
+        raise AssertionError("another owner must not reuse a generation job ID")
+
+    try:
+        await enqueue_generation_job(
+            owner_user_id="user-1",
+            job_type="example-generation",
+            store=store,
+            runner=run,
+            scheduler=None,
+            id_generator=_IdGenerator(),
+            job_id="wordpack-generation-job:client-id",
+        )
+    except PermissionError:
+        pass
+    else:  # pragma: no cover - assertion guard
+        raise AssertionError("another job type must not reuse a generation job ID")

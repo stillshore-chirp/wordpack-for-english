@@ -222,8 +222,16 @@ export const useWordPack = ({
         lemma: normalizedLemma,
       });
       let acceptedJobId: string | undefined;
+      const clientJobId = crypto.randomUUID();
+      const candidateJobId = `wordpack-generation-job:${clientJobId}`;
       let confirmedJobFailure = false;
       try {
+        updateNotification(notifId, {
+          message: 'WordPack生成の受付リクエストを送信しています',
+          jobId: candidateJobId,
+          jobType: 'wordpack-generation',
+          pollingOwner: 'foreground',
+        });
         const initialJob = await createWordPackGenerationJob(
           apiBase,
           applyModelRequestFields({
@@ -231,6 +239,7 @@ export const useWordPack = ({
             pronunciation_enabled: pronunciationEnabled,
             regenerate_scope: regenerateScope,
           }),
+          clientJobId,
           { signal: ctrl.signal, timeoutMs: requestTimeoutMs },
         );
         acceptedJobId = initialJob.job_id;
@@ -293,14 +302,26 @@ export const useWordPack = ({
         if (error instanceof ApiError && error.status === 0 && /aborted|timed out/i.test(error.message)) {
           text = 'タイムアウトしました（サーバ側で処理継続の可能性があります）。時間をおいて更新または保存済みを開いてください。';
         }
-        if (acceptedJobId && !confirmedJobFailure) {
-          setMessage({ kind: 'status', text: 'WordPack生成ジョブは受理済みです。生成キューで状態を確認できます。' });
+        const recoverableJobId = acceptedJobId
+          ?? (error instanceof ApiError && error.status === 0 ? candidateJobId : undefined);
+        if (recoverableJobId && !confirmedJobFailure) {
+          const submissionConfirmed = acceptedJobId !== undefined;
+          setMessage({
+            kind: 'status',
+            text: submissionConfirmed
+              ? 'WordPack生成ジョブは受理済みです。生成キューで状態を確認できます。'
+              : 'WordPack生成の送信結果を確認中です。生成キューが同じIDで受理状況を再確認します。',
+          });
           updateNotification(notifId, {
-            title: `【${normalizedLemma}】の生成中`,
+            title: submissionConfirmed
+              ? `【${normalizedLemma}】の生成中`
+              : `【${normalizedLemma}】の受付状態を確認中`,
             status: 'progress',
-            message: 'ジョブは受理済みですが状態確認に失敗しました。生成キューが確認を再開します。',
+            message: submissionConfirmed
+              ? 'ジョブは受理済みですが状態確認に失敗しました。生成キューが確認を再開します。'
+              : '送信結果が不明なため、同じジョブIDで自動確認します。',
             lemma: normalizedLemma,
-            jobId: acceptedJobId,
+            jobId: recoverableJobId,
             jobType: 'wordpack-generation',
             pollingOwner: null,
           });
@@ -312,6 +333,8 @@ export const useWordPack = ({
           status: 'error',
           message: `新規生成に失敗しました（${text}）`,
           lemma: normalizedLemma,
+          jobId: acceptedJobId ?? null,
+          jobType: acceptedJobId ? 'wordpack-generation' : null,
           pollingOwner: null,
         });
       } finally {
@@ -338,8 +361,16 @@ export const useWordPack = ({
         lemma: normalizedLemma,
       });
       let acceptedJobId: string | undefined;
+      const clientJobId = crypto.randomUUID();
+      const candidateJobId = `wordpack-generation-job:${clientJobId}`;
       let confirmedJobFailure = false;
       try {
+        updateNotification(notifId, {
+          message: 'WordPack生成の受付リクエストを送信しています',
+          jobId: candidateJobId,
+          jobType: 'wordpack-generation',
+          pollingOwner: 'foreground',
+        });
         const initialJob = await createWordPackGenerationJob(
           apiBase,
           applyModelRequestFields({
@@ -347,6 +378,7 @@ export const useWordPack = ({
             pronunciation_enabled: pronunciationEnabled,
             regenerate_scope: regenerateScope,
           }),
+          clientJobId,
           { timeoutMs: requestTimeoutMs },
         );
         acceptedJobId = initialJob.job_id;
@@ -403,21 +435,32 @@ export const useWordPack = ({
         if (error instanceof ApiError && error.status === 0 && /timed out/i.test(error.message)) {
           text = 'タイムアウトしました（サーバ側で処理継続の可能性があります）。時間をおいて更新または保存済みを開いてください。';
         }
+        const recoverableJobId = acceptedJobId
+          ?? (error instanceof ApiError && error.status === 0 ? candidateJobId : undefined);
+        const submissionConfirmed = acceptedJobId !== undefined;
         if (mountedRef.current) {
           setMessage({
-            kind: acceptedJobId && !confirmedJobFailure ? 'status' : 'alert',
-            text: acceptedJobId && !confirmedJobFailure
-              ? 'WordPack生成ジョブは受理済みです。生成キューで状態を確認できます。'
+            kind: recoverableJobId && !confirmedJobFailure ? 'status' : 'alert',
+            text: recoverableJobId && !confirmedJobFailure
+              ? (
+                submissionConfirmed
+                  ? 'WordPack生成ジョブは受理済みです。生成キューで状態を確認できます。'
+                  : 'WordPack生成の送信結果を確認中です。生成キューが同じIDで受理状況を再確認します。'
+              )
               : text,
           });
         }
-        if (acceptedJobId && !confirmedJobFailure) {
+        if (recoverableJobId && !confirmedJobFailure) {
           updateNotification(notifId, {
-            title: `【${normalizedLemma}】の生成中`,
+            title: submissionConfirmed
+              ? `【${normalizedLemma}】の生成中`
+              : `【${normalizedLemma}】の受付状態を確認中`,
             status: 'progress',
-            message: 'ジョブは受理済みですが状態確認に失敗しました。生成キューが確認を再開します。',
+            message: submissionConfirmed
+              ? 'ジョブは受理済みですが状態確認に失敗しました。生成キューが確認を再開します。'
+              : '送信結果が不明なため、同じジョブIDで自動確認します。',
             lemma: normalizedLemma,
-            jobId: acceptedJobId,
+            jobId: recoverableJobId,
             jobType: 'wordpack-generation',
             pollingOwner: null,
           });
@@ -428,6 +471,8 @@ export const useWordPack = ({
           status: 'error',
           message: `新規生成に失敗しました（${text}）`,
           lemma: normalizedLemma,
+          jobId: acceptedJobId ?? null,
+          jobType: acceptedJobId ? 'wordpack-generation' : null,
           pollingOwner: null,
         });
         return null;

@@ -69,19 +69,21 @@ def _create_job_record(
     store: object,
     job_id: str,
     owner_user_id: str,
-) -> ArticleImportJob:
+) -> tuple[ArticleImportJob, bool]:
     if _store_supports_persistent_jobs(store):
-        return _job_from_record(
-            store.create_article_import_job(
-                job_id=job_id,
-                owner_user_id=owner_user_id,
-                status="queued",
-            )
+        record = store.create_article_import_job(
+            job_id=job_id,
+            owner_user_id=owner_user_id,
+            status="queued",
         )
-    return ArticleImportJob(
-        job_id=job_id,
-        owner_user_id=owner_user_id,
-        status="queued",
+        return _job_from_record(record), bool(record.get("_created", True))
+    return (
+        ArticleImportJob(
+            job_id=job_id,
+            owner_user_id=owner_user_id,
+            status="queued",
+        ),
+        True,
     )
 
 
@@ -174,8 +176,12 @@ async def enqueue_article_import_job(
             if existing.owner_user_id != owner_user_id:
                 raise PermissionError("Article import job ID is already in use")
             return existing.to_response()
-        job = _create_job_record(store, resolved_job_id, owner_user_id)
+        job, created = _create_job_record(store, resolved_job_id, owner_user_id)
+        if job.owner_user_id != owner_user_id:
+            raise PermissionError("Article import job ID is already in use")
         _article_import_jobs[resolved_job_id] = job
+        if not created:
+            return job.to_response()
     if scheduler is None:
         await _run_article_import_job(
             resolved_job_id,

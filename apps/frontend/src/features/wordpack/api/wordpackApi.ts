@@ -1,4 +1,5 @@
 import { fetchJson } from '../../../shared/api/fetchJson';
+import { submitIdempotentJob } from '../../../shared/api/submitIdempotentJob';
 import {
   composeModelRequestFields,
   regenerateWordPackRequest,
@@ -77,14 +78,18 @@ export interface WordPackGenerationJob {
 export const createWordPackGenerationJob = (
   apiBase: string,
   body: Record<string, unknown>,
+  clientJobId: string,
   options?: { signal?: AbortSignal; timeoutMs?: number },
 ): Promise<WordPackGenerationJob> => (
-  fetchJson<WordPackGenerationJob>(`${apiBase}/word/pack/jobs`, {
-    method: 'POST',
-    body,
-    signal: options?.signal,
-    timeoutMs: options?.timeoutMs,
-  })
+  submitIdempotentJob(
+    () => fetchJson<WordPackGenerationJob>(`${apiBase}/word/pack/jobs`, {
+      method: 'POST',
+      body: { ...body, client_job_id: clientJobId },
+      signal: options?.signal,
+      timeoutMs: options?.timeoutMs,
+    }),
+    () => !options?.signal?.aborted,
+  )
 );
 
 export const fetchWordPackGenerationJob = (

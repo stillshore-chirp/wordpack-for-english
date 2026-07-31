@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Optional
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -17,6 +18,11 @@ class ExamplesGenerateRequest(BaseModel):
     model: Optional[str] = Field(default=None, description="LLMモデル名の上書き")
     reasoning: Optional[dict] = Field(default=None)
     text: Optional[dict] = Field(default=None)
+    client_job_id: UUID | None = Field(
+        default=None,
+        exclude=True,
+        description="202応答喪失時に同じ生成ジョブを再取得するためのクライアント採番UUID",
+    )
 
     @field_validator("model")
     @classmethod

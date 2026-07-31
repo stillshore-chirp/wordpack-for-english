@@ -395,6 +395,11 @@ class CategoryGenerateImportRequest(BaseModel):
     model: str | None = None
     reasoning: dict | None = None
     text: dict | None = None
+    client_job_id: uuid.UUID | None = Field(
+        default=None,
+        exclude=True,
+        description="202応答喪失時に同じ生成ジョブを再取得するためのクライアント採番UUID",
+    )
 
     @field_validator("model")
     @classmethod
@@ -472,14 +477,25 @@ async def create_generate_and_import_job(
             ):
                 return flow.run(req.category)
 
-    return await enqueue_generation_job(
-        owner_user_id=principal.user_id,
-        job_type="category-generate-import",
-        store=store,
-        runner=runner,
-        scheduler=AsyncioTaskScheduler(),
-        id_generator=PrefixedUuidGenerator("category-generate-import-job:"),
-    )
+    try:
+        return await enqueue_generation_job(
+            owner_user_id=principal.user_id,
+            job_type="category-generate-import",
+            store=store,
+            runner=runner,
+            scheduler=AsyncioTaskScheduler(),
+            id_generator=PrefixedUuidGenerator("category-generate-import-job:"),
+            job_id=(
+                f"category-generate-import-job:{req.client_job_id}"
+                if req.client_job_id is not None
+                else None
+            ),
+        )
+    except PermissionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
 
 
 @router.get(

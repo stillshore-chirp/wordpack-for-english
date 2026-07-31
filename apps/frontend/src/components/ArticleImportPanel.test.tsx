@@ -180,7 +180,7 @@ describe('ArticleImportPanel (MSW + contexts)', () => {
     expect(dialog).toBeInTheDocument();
   });
 
-  it('ジョブID採番後の500応答は確定失敗にせず生成キューへ引き継ぐ', async () => {
+  it('ジョブ作成前の500応答は処理継続と誤表示せず確定失敗にする', async () => {
     overrideImportFailureHandlers();
     renderWithProviders();
     const user = userEvent.setup();
@@ -191,11 +191,11 @@ describe('ArticleImportPanel (MSW + contexts)', () => {
     const importButton = screen.getByRole('button', { name: '文章をインポート' });
     await user.click(importButton);
 
-    const status = await screen.findByRole('status');
-    expect(status).toHaveTextContent(
+    const alert = await screen.findByRole('alert');
+    expect(alert).toHaveTextContent('インポート処理でサーバーエラーが発生しました');
+    expect(screen.queryByText(
       '文章インポートはバックグラウンドで継続しています。生成キューから状態を確認してください。',
-    );
-    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    )).not.toBeInTheDocument();
 
     await waitFor(() => {
       expect(importButton).toBeEnabled();
@@ -236,11 +236,11 @@ describe('ArticleImportPanel (MSW + contexts)', () => {
   });
 
   it('202応答が失われても送信前に採番したジョブIDで再照合できる', async () => {
-    let clientJobId = '';
+    const clientJobIds: string[] = [];
     server.use(
       http.post('/api/article/import/jobs', async ({ request }) => {
         const body = await request.json() as { client_job_id?: string };
-        clientJobId = body.client_job_id ?? '';
+        clientJobIds.push(body.client_job_id ?? '');
         return HttpResponse.error();
       }),
     );
@@ -254,9 +254,11 @@ describe('ArticleImportPanel (MSW + contexts)', () => {
     await user.click(screen.getByRole('button', { name: '文章をインポート' }));
 
     expect(await screen.findByRole('status')).toHaveTextContent(
-      '文章インポートはバックグラウンドで継続しています。生成キューから状態を確認してください。',
+      '文章インポートの送信結果を確認中です。生成キューが同じIDで受理状況を再確認します。',
     );
-    expect(clientJobId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(clientJobIds).toHaveLength(2);
+    expect(new Set(clientJobIds)).toHaveProperty('size', 1);
+    expect(clientJobIds[0]).toMatch(/^[0-9a-f-]{36}$/);
     await waitFor(() => {
       const notifications = JSON.parse(
         screen.getByTestId('notification-probe').textContent || '[]',
@@ -264,14 +266,14 @@ describe('ArticleImportPanel (MSW + contexts)', () => {
       expect(notifications).toEqual(expect.arrayContaining([
         expect.objectContaining({
           status: 'progress',
-          jobId: `article-import-job:${clientJobId}`,
+          jobId: `article-import-job:${clientJobIds[0]}`,
           jobType: 'article-import',
         }),
       ]));
     });
   });
 
-  it('例文生成・記事化失敗後に実行中表示が解除される', async () => {
+  it('例文生成・記事化の202応答がタイムアウトした後も実行中表示を解除して再照合する', async () => {
     overrideGenerateTimeoutHandlers();
     renderWithProviders();
     const user = userEvent.setup();
@@ -282,8 +284,10 @@ describe('ArticleImportPanel (MSW + contexts)', () => {
     const runningButton = await screen.findByRole('button', { name: /例文を生成して記事化（実行中/ });
     expect(runningButton).toBeInTheDocument();
 
-    const alert = await screen.findByRole('alert');
-    expect(alert).toHaveTextContent('Request aborted or timed out');
+    const status = await screen.findByRole('status');
+    expect(status).toHaveTextContent(
+      '1カテゴリの送信結果を確認中です。生成キューが同じIDで受理状況を再確認します。',
+    );
 
     await waitFor(() => {
       expect(screen.getByRole('button', { name: '例文を生成して記事化' })).toBeInTheDocument();
