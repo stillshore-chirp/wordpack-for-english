@@ -420,7 +420,9 @@ describe('GenerationQueuePanel', () => {
     renderQueue();
 
     expect(await screen.findByRole('button', { name: 'alpha の生成結果プレビューを開く' })).toBeInTheDocument();
-    expect(screen.getByRole('status')).toHaveTextContent('2件の例文から記事を作成しました');
+    await waitFor(() => {
+      expect(screen.getByRole('status')).toHaveTextContent('2件の例文から記事を作成しました');
+    });
     expect(
       requestedUrls.some((url) => url.endsWith('/api/article/generate_and_import/jobs/category-job%3Aalpha')),
     ).toBe(true);
