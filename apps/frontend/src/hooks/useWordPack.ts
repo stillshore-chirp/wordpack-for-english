@@ -13,7 +13,6 @@ import {
   enqueueRegenerateWordPack,
   fetchRegenerateJobStatus,
   fetchWordPackGenerationJob,
-  regenerateWordPackRequest,
   updateGuestPublicFlag,
   type WordPackGenerationJob,
 } from '../features/wordpack/api';
