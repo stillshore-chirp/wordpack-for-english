@@ -16,8 +16,9 @@ import { WordPackPreviewModal } from '../../components/WordPackPreviewModal';
 import {
   composeModelRequestFields,
   createEmptyWordPackRequest,
+  createWordPackGenerationJob,
+  fetchWordPackGenerationJob,
   fetchWordPackList,
-  generateWordPackRequest,
 } from '../../features/wordpack/api';
 import type { WordPackListItem } from '../../features/wordpack/types';
 import { DEFAULT_LLM_MODEL } from '../../lib/wordpack';
@@ -887,8 +888,10 @@ export const QuizPage: React.FC = () => {
       status: 'progress',
       lemma,
     });
+    let acceptedJobId: string | undefined;
+    let confirmedJobFailure = false;
     try {
-      const response = await generateWordPackRequest(apiBase, {
+      let job = await createWordPackGenerationJob(apiBase, {
         lemma,
         pronunciation_enabled: settings.pronunciationEnabled,
         regenerate_scope: settings.regenerateScope,
@@ -898,9 +901,48 @@ export const QuizPage: React.FC = () => {
           textVerbosity: settings.textVerbosity,
         }),
       }, {
-        timeoutMs: settings.generationRequestTimeoutMs
-          ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
+        timeoutMs: settings.requestTimeoutMs,
       });
+      acceptedJobId = job.job_id;
+      notifications.update(notifId, {
+        jobId: job.job_id,
+        jobType: 'wordpack-generation',
+        pollingOwner: 'foreground',
+      });
+      const deadlineMs = Date.now() + (
+        settings.generationRequestTimeoutMs
+        ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS
+      );
+      while (
+        (job.status === 'queued' || job.status === 'running')
+        && Date.now() < deadlineMs
+      ) {
+        const remainingMs = deadlineMs - Date.now();
+        await new Promise<void>((resolve) => {
+          window.setTimeout(resolve, Math.min(1500, remainingMs));
+        });
+        job = await fetchWordPackGenerationJob(apiBase, job.job_id, {
+          timeoutMs: settings.requestTimeoutMs,
+        });
+      }
+      if (job.status === 'queued' || job.status === 'running') {
+        notifications.update(notifId, {
+          title: `【${lemma}】の生成中`,
+          message: '生成はサーバーで継続中です。生成キューが状態を再確認します。',
+          status: 'progress',
+          lemma,
+          jobId: job.job_id,
+          jobType: 'wordpack-generation',
+          pollingOwner: null,
+        });
+        setMessage({ kind: 'status', text: 'WordPack生成は継続中です。生成キューで状態を確認できます。' });
+        return;
+      }
+      if (job.status === 'failed' || !job.result) {
+        confirmedJobFailure = true;
+        throw new ApiError(job.error || 'WordPack生成に失敗しました。', 500);
+      }
+      const response = job.result;
       updateRelatedLink(lemma, { status: 'existing', word_pack_id: response.id, is_empty: false });
       notifications.update(notifId, {
         title: `【${response.lemma}】の生成完了`,
@@ -908,18 +950,35 @@ export const QuizPage: React.FC = () => {
         status: 'success',
         wordPackId: response.id ?? null,
         lemma: response.lemma,
+        jobId: job.job_id,
+        jobType: 'wordpack-generation',
+        pollingOwner: null,
       });
       dispatchAppEvent(APP_EVENTS.wordPackUpdated);
       await loadWordPacks();
       if (response.id) setPreviewWordPackId(response.id);
     } catch (error) {
       const text = error instanceof ApiError ? error.message : 'WordPack生成に失敗しました。';
+      if (acceptedJobId && !confirmedJobFailure) {
+        notifications.update(notifId, {
+          title: `【${lemma}】の生成中`,
+          message: 'ジョブは受理済みですが状態確認に失敗しました。生成キューが確認を再開します。',
+          status: 'progress',
+          lemma,
+          jobId: acceptedJobId,
+          jobType: 'wordpack-generation',
+          pollingOwner: null,
+        });
+        setMessage({ kind: 'status', text: 'WordPack生成ジョブは受理済みです。生成キューで状態を確認できます。' });
+        return;
+      }
       updateRelatedLink(lemma, { status: 'missing' });
       notifications.update(notifId, {
         title: `【${lemma}】の生成失敗`,
         message: text,
         status: 'error',
         lemma,
+        pollingOwner: null,
       });
       setMessage({ kind: 'alert', text });
     }

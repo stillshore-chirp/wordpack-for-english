@@ -74,9 +74,9 @@ Response:
 
 ## WordPack
 
-### `POST /api/word/pack`
+### `POST /api/word/pack/jobs`
 
-WordPack を生成し、語義、共起、対比、例文、語源、学習カード要点、発音などを返します。
+WordPack生成ジョブを開始し、`202` と `job_id` を返します。アプリUIはこの経路を使い、Firebase Hostingの同期リライト上限を越える生成でも短い状態取得リクエストへ分離します。
 
 Request:
 
@@ -93,20 +93,27 @@ Response:
 
 ```json
 {
-  "id": "wp:xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-  "lemma": "converge",
-  "senses": [],
-  "examples": {},
-  "citations": [],
-  "confidence": "medium"
+  "job_id": "wordpack-generation-job:xxxxxxxx",
+  "job_type": "wordpack-generation",
+  "status": "queued"
 }
 ```
+
+### `GET /api/word/pack/jobs/{job_id}`
+
+作成したユーザーに限り、`queued / running / succeeded / failed` を取得できます。成功時の `result` は保存済みWordPackの `id` と生成内容を含みます。画面再読込後も生成キューがこのAPIで追跡を再開します。
+
+従来の同期 `POST /api/word/pack` は互換性のため残しますが、アプリUIは非同期ジョブ経路を使用します。
 
 入力制約:
 
 - `lemma` は英数字、半角スペース、ハイフン、アポストロフィのみ
 - 1〜64 文字
 - Firestore path に使えない記号や制御文字は 422
+
+### `POST /api/word/packs`
+
+内容を生成しない空のWordPackを短い同期処理で保存します。Luna Highを待つ用途ではないためLLMは呼び出さず、`sense_title` は見出し語から決定的に初期化します。
 
 ### `GET /api/word?lemma=...`
 

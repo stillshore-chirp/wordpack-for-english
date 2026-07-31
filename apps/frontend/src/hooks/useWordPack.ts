@@ -7,7 +7,16 @@ import {
 import { ApiError, fetchJson } from '../lib/fetcher';
 import { validateLemmaInput } from '../lib/lemmaValidation';
 import { APP_EVENTS, dispatchAppEvent } from '../shared/events/appEvents';
-import { composeModelRequestFields, enqueueRegenerateWordPack, fetchRegenerateJobStatus, regenerateWordPackRequest, updateGuestPublicFlag } from '../features/wordpack/api';
+import {
+  composeModelRequestFields,
+  createWordPackGenerationJob,
+  enqueueRegenerateWordPack,
+  fetchRegenerateJobStatus,
+  fetchWordPackGenerationJob,
+  regenerateWordPackRequest,
+  updateGuestPublicFlag,
+  type WordPackGenerationJob,
+} from '../features/wordpack/api';
 export type { ExampleItem, Examples, Pronunciation, Sense, WordPack } from '../features/wordpack/types';
 import type { Examples, WordPack } from '../features/wordpack/types';
 
@@ -28,6 +37,36 @@ interface GeneratedWordPackResult {
   wordPack: WordPack;
   wordPackId: string | null;
 }
+
+const pollWordPackGenerationJob = async ({
+  apiBase,
+  initialJob,
+  deadlineMs,
+  requestTimeoutMs,
+  signal,
+}: {
+  apiBase: string;
+  initialJob: WordPackGenerationJob;
+  deadlineMs: number;
+  requestTimeoutMs: number;
+  signal?: AbortSignal;
+}): Promise<WordPackGenerationJob> => {
+  let job = initialJob;
+  while (
+    (job.status === 'queued' || job.status === 'running')
+    && Date.now() < deadlineMs
+  ) {
+    const remainingMs = deadlineMs - Date.now();
+    await new Promise<void>((resolve) => {
+      window.setTimeout(resolve, Math.min(1500, remainingMs));
+    });
+    job = await fetchWordPackGenerationJob(apiBase, job.job_id, {
+      signal,
+      timeoutMs: requestTimeoutMs,
+    });
+  }
+  return job;
+};
 
 interface UseWordPackResult {
   aiMeta: AiMeta | null;
@@ -183,17 +222,49 @@ export const useWordPack = ({
         status: 'progress',
         lemma: normalizedLemma,
       });
+      let acceptedJobId: string | undefined;
+      let confirmedJobFailure = false;
       try {
-        const res = await fetchJson<WordPack>(`${apiBase}/word/pack`, {
-          method: 'POST',
-          body: applyModelRequestFields({
+        const initialJob = await createWordPackGenerationJob(
+          apiBase,
+          applyModelRequestFields({
             lemma: normalizedLemma,
             pronunciation_enabled: pronunciationEnabled,
             regenerate_scope: regenerateScope,
           }),
-          signal: ctrl.signal,
-          timeoutMs: generationTimeoutMs,
+          { signal: ctrl.signal, timeoutMs: requestTimeoutMs },
+        );
+        acceptedJobId = initialJob.job_id;
+        updateNotification(notifId, {
+          jobId: initialJob.job_id,
+          jobType: 'wordpack-generation',
+          pollingOwner: 'foreground',
         });
+        const job = await pollWordPackGenerationJob({
+          apiBase,
+          initialJob,
+          deadlineMs: Date.now() + generationTimeoutMs,
+          requestTimeoutMs,
+          signal: ctrl.signal,
+        });
+        if (job.status === 'queued' || job.status === 'running') {
+          setMessage({ kind: 'status', text: 'WordPack生成は継続中です。生成キューで状態を確認できます。' });
+          updateNotification(notifId, {
+            title: `【${normalizedLemma}】の生成中`,
+            status: 'progress',
+            message: '生成はサーバーで継続中です。生成キューが状態を再確認します。',
+            lemma: normalizedLemma,
+            jobId: job.job_id,
+            jobType: 'wordpack-generation',
+            pollingOwner: null,
+          });
+          return;
+        }
+        if (job.status === 'failed' || !job.result) {
+          confirmedJobFailure = true;
+          throw new ApiError(job.error || 'WordPack の生成に失敗しました', 500);
+        }
+        const res = job.result;
         const normalized = normalizeWordPack(res);
         const generatedWordPackId = res.id?.trim() || null;
         if (mountedRef.current) {
@@ -208,14 +279,33 @@ export const useWordPack = ({
           message: '新規生成が完了しました',
           wordPackId: generatedWordPackId,
           lemma: res.lemma,
+          jobId: job.job_id,
+          jobType: 'wordpack-generation',
+          pollingOwner: null,
         });
         dispatchAppEvent(APP_EVENTS.wordPackUpdated);
         try { onWordPackGenerated?.(null); } catch {}
       } catch (error) {
-        if (ctrl.signal.aborted) return;
+        if (ctrl.signal.aborted) {
+          if (acceptedJobId) updateNotification(notifId, { pollingOwner: null });
+          return;
+        }
         let text = error instanceof ApiError ? error.message : 'WordPack の生成に失敗しました';
         if (error instanceof ApiError && error.status === 0 && /aborted|timed out/i.test(error.message)) {
           text = 'タイムアウトしました（サーバ側で処理継続の可能性があります）。時間をおいて更新または保存済みを開いてください。';
+        }
+        if (acceptedJobId && !confirmedJobFailure) {
+          setMessage({ kind: 'status', text: 'WordPack生成ジョブは受理済みです。生成キューで状態を確認できます。' });
+          updateNotification(notifId, {
+            title: `【${normalizedLemma}】の生成中`,
+            status: 'progress',
+            message: 'ジョブは受理済みですが状態確認に失敗しました。生成キューが確認を再開します。',
+            lemma: normalizedLemma,
+            jobId: acceptedJobId,
+            jobType: 'wordpack-generation',
+            pollingOwner: null,
+          });
+          return;
         }
         setMessage({ kind: 'alert', text });
         updateNotification(notifId, {
@@ -223,6 +313,7 @@ export const useWordPack = ({
           status: 'error',
           message: `新規生成に失敗しました（${text}）`,
           lemma: normalizedLemma,
+          pollingOwner: null,
         });
       } finally {
         if (mountedRef.current) {
@@ -230,7 +321,7 @@ export const useWordPack = ({
         }
       }
     },
-    [addNotification, apiBase, applyModelRequestFields, extractAiMeta, generationTimeoutMs, normalizeWordPack, onWordPackGenerated, pronunciationEnabled, regenerateScope, updateNotification],
+    [addNotification, apiBase, applyModelRequestFields, extractAiMeta, generationTimeoutMs, normalizeWordPack, onWordPackGenerated, pronunciationEnabled, regenerateScope, requestTimeoutMs, updateNotification],
   );
 
   const generateDetachedWordPack = useCallback(
@@ -247,16 +338,50 @@ export const useWordPack = ({
         status: 'progress',
         lemma: normalizedLemma,
       });
+      let acceptedJobId: string | undefined;
+      let confirmedJobFailure = false;
       try {
-        const res = await fetchJson<WordPack>(`${apiBase}/word/pack`, {
-          method: 'POST',
-          body: applyModelRequestFields({
+        const initialJob = await createWordPackGenerationJob(
+          apiBase,
+          applyModelRequestFields({
             lemma: normalizedLemma,
             pronunciation_enabled: pronunciationEnabled,
             regenerate_scope: regenerateScope,
           }),
-          timeoutMs: generationTimeoutMs,
+          { timeoutMs: requestTimeoutMs },
+        );
+        acceptedJobId = initialJob.job_id;
+        updateNotification(notifId, {
+          jobId: initialJob.job_id,
+          jobType: 'wordpack-generation',
+          pollingOwner: 'foreground',
         });
+        const job = await pollWordPackGenerationJob({
+          apiBase,
+          initialJob,
+          deadlineMs: Date.now() + generationTimeoutMs,
+          requestTimeoutMs,
+        });
+        if (job.status === 'queued' || job.status === 'running') {
+          if (mountedRef.current) {
+            setMessage({ kind: 'status', text: 'WordPack生成は継続中です。生成キューで状態を確認できます。' });
+          }
+          updateNotification(notifId, {
+            title: `【${normalizedLemma}】の生成中`,
+            status: 'progress',
+            message: '生成はサーバーで継続中です。生成キューが状態を再確認します。',
+            lemma: normalizedLemma,
+            jobId: job.job_id,
+            jobType: 'wordpack-generation',
+            pollingOwner: null,
+          });
+          return null;
+        }
+        if (job.status === 'failed' || !job.result) {
+          confirmedJobFailure = true;
+          throw new ApiError(job.error || 'WordPack の生成に失敗しました', 500);
+        }
+        const res = job.result;
         const normalized = normalizeWordPack(res);
         const generatedWordPackId = res.id?.trim() || null;
         if (mountedRef.current) {
@@ -268,6 +393,9 @@ export const useWordPack = ({
           message: '新規生成が完了しました',
           wordPackId: generatedWordPackId,
           lemma: res.lemma,
+          jobId: job.job_id,
+          jobType: 'wordpack-generation',
+          pollingOwner: null,
         });
         dispatchAppEvent(APP_EVENTS.wordPackUpdated);
         return { wordPack: normalized, wordPackId: generatedWordPackId };
@@ -277,18 +405,36 @@ export const useWordPack = ({
           text = 'タイムアウトしました（サーバ側で処理継続の可能性があります）。時間をおいて更新または保存済みを開いてください。';
         }
         if (mountedRef.current) {
-          setMessage({ kind: 'alert', text });
+          setMessage({
+            kind: acceptedJobId && !confirmedJobFailure ? 'status' : 'alert',
+            text: acceptedJobId && !confirmedJobFailure
+              ? 'WordPack生成ジョブは受理済みです。生成キューで状態を確認できます。'
+              : text,
+          });
+        }
+        if (acceptedJobId && !confirmedJobFailure) {
+          updateNotification(notifId, {
+            title: `【${normalizedLemma}】の生成中`,
+            status: 'progress',
+            message: 'ジョブは受理済みですが状態確認に失敗しました。生成キューが確認を再開します。',
+            lemma: normalizedLemma,
+            jobId: acceptedJobId,
+            jobType: 'wordpack-generation',
+            pollingOwner: null,
+          });
+          return null;
         }
         updateNotification(notifId, {
           title: `【${normalizedLemma}】の生成失敗`,
           status: 'error',
           message: `新規生成に失敗しました（${text}）`,
           lemma: normalizedLemma,
+          pollingOwner: null,
         });
         return null;
       }
     },
-    [addNotification, apiBase, applyModelRequestFields, generationTimeoutMs, normalizeWordPack, pronunciationEnabled, regenerateScope, updateNotification],
+    [addNotification, apiBase, applyModelRequestFields, generationTimeoutMs, normalizeWordPack, pronunciationEnabled, regenerateScope, requestTimeoutMs, updateNotification],
   );
 
   const createEmptyWordPack = useCallback(

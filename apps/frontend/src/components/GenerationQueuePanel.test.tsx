@@ -77,6 +77,20 @@ const setupFetchMocks = () => {
         headers: { 'Content-Type': 'application/json' },
       });
     }
+    if (url.endsWith('/api/word/pack/jobs/wordpack-generation-job%3Aalpha')) {
+      return new Response(JSON.stringify({
+        job_id: 'wordpack-generation-job:alpha',
+        job_type: 'wordpack-generation',
+        status: 'succeeded',
+        result: {
+          id: 'wp:alpha',
+          ...wordPackResponse,
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     if (url.endsWith('/api/article/import/jobs/article-import-job%3Aalpha')) {
       return new Response(JSON.stringify({
         job_id: 'article-import-job:alpha',
@@ -443,6 +457,31 @@ describe('GenerationQueuePanel', () => {
     });
     expect(
       requestedUrls.some((url) => url.endsWith('/api/article/generate_and_import/jobs/category-job%3Aalpha')),
+    ).toBe(true);
+  });
+
+  it('再読込後の新規WordPack生成ジョブは完了カードへ補正する', async () => {
+    const persistedAt = Date.now() - 10 * 1000;
+    localStorage.setItem(
+      'wpfe.notifications.v1',
+      JSON.stringify([{
+        id: 'n-restored-wordpack-generation',
+        title: '【alpha】の生成処理中...',
+        message: 'バックグラウンドで生成しています',
+        status: 'progress',
+        createdAt: persistedAt,
+        updatedAt: persistedAt,
+        model: 'gpt-5.6-luna',
+        lemma: 'alpha',
+        jobId: 'wordpack-generation-job:alpha',
+        jobType: 'wordpack-generation',
+      }]),
+    );
+    renderQueue();
+
+    expect(await screen.findByRole('button', { name: 'alpha の生成結果プレビューを開く' })).toBeInTheDocument();
+    expect(
+      requestedUrls.some((url) => url.endsWith('/api/word/pack/jobs/wordpack-generation-job%3Aalpha')),
     ).toBe(true);
   });
 

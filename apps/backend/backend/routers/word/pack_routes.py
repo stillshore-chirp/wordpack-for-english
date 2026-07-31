@@ -15,10 +15,6 @@ from ...authorization.policies import (
 from ...authorization.principal import Principal
 from ...config import settings
 from ...application.wordpack.create_empty_wordpack import build_empty_wordpack
-from ...infrastructure.llm.empty_wordpack_title import (
-    EmptyWordPackTitleGenerationError,
-    generate_sense_title_for_empty_wordpack,
-)
 from ...models.word import (
     WordPack,
     WordPackCreateRequest,
@@ -40,24 +36,13 @@ async def create_empty_word_pack(
     req: WordPackCreateRequest,
     principal: Principal = Depends(require_user_permission(Permission.WORDPACK_CREATE)),
 ) -> dict:
-    """空のWordPackを作成・保存する（sense_title は短い日本語をLLMで生成）。"""
+    """LLMを待たず、編集可能な空のWordPackを短い同期処理で作成・保存する。"""
 
     lemma = req.lemma.strip()
     if not lemma:
         raise HTTPException(status_code=400, detail="lemma is required")
 
-    try:
-        generated_title = generate_sense_title_for_empty_wordpack(lemma)
-    except EmptyWordPackTitleGenerationError as exc:
-        raise HTTPException(
-            status_code=502,
-            detail={
-                "message": "LLM failed to generate sense_title (strict mode)",
-                "reason_code": "LLM_FAILURE",
-                "diagnostics": {"lemma": lemma, "error": str(exc)[:200]},
-            },
-        ) from exc
-    empty_word_pack = build_empty_wordpack(lemma, generated_title=generated_title)
+    empty_word_pack = build_empty_wordpack(lemma)
     word_pack_id = next_word_pack_id()
     get_store().save_word_pack(
         word_pack_id,

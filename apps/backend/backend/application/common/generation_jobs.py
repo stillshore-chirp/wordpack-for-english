@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Callable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, Literal
 
@@ -12,9 +12,14 @@ from pydantic import BaseModel
 from ...logging import logger
 from .ports import IdGenerator, TaskScheduler
 
-GenerationJobType = Literal["category-generate-import", "example-generation"]
+GenerationJobType = Literal[
+    "category-generate-import",
+    "example-generation",
+    "wordpack-generation",
+]
 GenerationJobStatus = Literal["queued", "running", "succeeded", "failed"]
 GenerationRunner = Callable[[], Mapping[str, Any]]
+AsyncGenerationRunner = Callable[[], Awaitable[Mapping[str, Any]]]
 
 
 class GenerationJobResponse(BaseModel):
@@ -64,7 +69,11 @@ def _job_from_record(record: Mapping[str, object]) -> GenerationJob:
     if status not in {"queued", "running", "succeeded", "failed"}:
         status = "failed"
     job_type = str(record.get("job_type") or "")
-    if job_type not in {"category-generate-import", "example-generation"}:
+    if job_type not in {
+        "category-generate-import",
+        "example-generation",
+        "wordpack-generation",
+    }:
         raise ValueError("Unsupported generation job type")
     result: dict[str, Any] | None = None
     result_json = record.get("result_json")
@@ -143,13 +152,19 @@ async def _run_generation_job(
     job_id: str,
     *,
     store: object,
-    runner: GenerationRunner,
+    runner: GenerationRunner | None,
+    async_runner: AsyncGenerationRunner | None,
 ) -> None:
     async with _generation_jobs_lock:
         if _update_job(store, job_id, status="running") is None:
             return
     try:
-        result = await anyio.to_thread.run_sync(runner)
+        if async_runner is not None:
+            result = await async_runner()
+        elif runner is not None:
+            result = await anyio.to_thread.run_sync(runner)
+        else:  # pragma: no cover - guarded by enqueue_generation_job
+            raise RuntimeError("generation job runner is not configured")
     except Exception as exc:
         error = str(exc)[:500]
         async with _generation_jobs_lock:
@@ -171,10 +186,13 @@ async def enqueue_generation_job(
     owner_user_id: str,
     job_type: GenerationJobType,
     store: object,
-    runner: GenerationRunner,
+    runner: GenerationRunner | None = None,
+    async_runner: AsyncGenerationRunner | None = None,
     scheduler: TaskScheduler | None,
     id_generator: IdGenerator,
 ) -> GenerationJobResponse:
+    if (runner is None) == (async_runner is None):
+        raise ValueError("exactly one generation job runner is required")
     job_id = id_generator.new_id()
     job = _create_job(
         store,
@@ -185,9 +203,21 @@ async def enqueue_generation_job(
     async with _generation_jobs_lock:
         _generation_jobs[job_id] = job
     if scheduler is None:
-        await _run_generation_job(job_id, store=store, runner=runner)
+        await _run_generation_job(
+            job_id,
+            store=store,
+            runner=runner,
+            async_runner=async_runner,
+        )
     else:
-        scheduler.spawn(_run_generation_job(job_id, store=store, runner=runner))
+        scheduler.spawn(
+            _run_generation_job(
+                job_id,
+                store=store,
+                runner=runner,
+                async_runner=async_runner,
+            )
+        )
     return job.to_response()
 
 

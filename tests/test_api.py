@@ -170,6 +170,32 @@ def test_word_pack(client):
     assert saved.json()["lemma"] == "converge"
 
 
+def test_word_pack_generation_job_persists_result(client):
+    with client as job_client:
+        response = job_client.post(
+            "/api/word/pack/jobs",
+            json={"lemma": "concurrent"},
+        )
+        assert response.status_code == 202
+        body = response.json()
+        assert body["job_type"] == "wordpack-generation"
+        job_id = body["job_id"]
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline:
+            poll = job_client.get(f"/api/word/pack/jobs/{job_id}")
+            assert poll.status_code == 200
+            body = poll.json()
+            if body["status"] in {"succeeded", "failed"}:
+                break
+            time.sleep(0.01)
+
+    assert body["status"] == "succeeded"
+    assert body["result"]["lemma"] == "concurrent"
+    assert body["result"]["id"].startswith("wp:")
+    saved = client.get(f"/api/word/packs/{body['result']['id']}")
+    assert saved.status_code == 200
+
+
 @pytest.mark.parametrize(
     "endpoint,payload",
     [
@@ -277,15 +303,14 @@ def test_generate_word_pack_strict_flow_error(monkeypatch: pytest.MonkeyPatch):
     assert resp.json().get("detail", {}).get("reason_code") == "LLM_JSON_PARSE"
 
 
-def test_create_empty_word_pack_generates_japanese_sense_title(monkeypatch: pytest.MonkeyPatch):
+def test_create_empty_word_pack_does_not_wait_for_llm(monkeypatch: pytest.MonkeyPatch):
     backend_main = _reload_backend_app(monkeypatch, strict=False)
     from fastapi.testclient import TestClient
     import backend.providers as providers_mod
 
     class _StubLLM:
         def complete(self, prompt: str) -> str:
-            # 空パック用の短い日本語タイトル生成プロンプトに対して固定応答
-            return "処理量"
+            raise AssertionError("empty WordPack creation must not call the LLM")
 
     providers_mod._LLM_INSTANCE = _StubLLM()
 
@@ -302,7 +327,7 @@ def test_create_empty_word_pack_generates_japanese_sense_title(monkeypatch: pyte
     target = next((it for it in items if it.get("id") == pack_id), None)
     assert target is not None
     assert target.get("lemma") == "throughput"
-    assert target.get("sense_title") == "処理量"
+    assert target.get("sense_title") == "throughput"
 
 
 

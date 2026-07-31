@@ -66,4 +66,39 @@ export const generateWordPackRequest = (
   })
 );
 
+export interface WordPackGenerationJob {
+  job_id: string;
+  job_type: 'wordpack-generation';
+  status: 'queued' | 'running' | 'succeeded' | 'failed';
+  result?: WordPack | null;
+  error?: string | null;
+}
+
+export const createWordPackGenerationJob = (
+  apiBase: string,
+  body: Record<string, unknown>,
+  options?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<WordPackGenerationJob> => (
+  fetchJson<WordPackGenerationJob>(`${apiBase}/word/pack/jobs`, {
+    method: 'POST',
+    body,
+    signal: options?.signal,
+    timeoutMs: options?.timeoutMs,
+  })
+);
+
+export const fetchWordPackGenerationJob = (
+  apiBase: string,
+  jobId: string,
+  options?: { signal?: AbortSignal; timeoutMs?: number },
+): Promise<WordPackGenerationJob> => (
+  fetchJson<WordPackGenerationJob>(
+    `${apiBase}/word/pack/jobs/${encodeURIComponent(jobId)}`,
+    {
+      signal: options?.signal,
+      timeoutMs: options?.timeoutMs,
+    },
+  )
+);
+
 export const updateGuestPublicRequest = updateGuestPublicFlag;

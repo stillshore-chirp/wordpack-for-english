@@ -6,7 +6,8 @@ export type NotificationJobType =
   | 'article-import'
   | 'quiz-generation'
   | 'category-generate-import'
-  | 'example-generation';
+  | 'example-generation'
+  | 'wordpack-generation';
 export type NotificationPollingOwner = 'foreground';
 
 export interface NotificationItem {

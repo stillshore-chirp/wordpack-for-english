@@ -133,7 +133,7 @@ describe('WordPackPanel E2E (mocked fetch)', () => {
         );
       }
 
-      if (url.endsWith('/api/word/pack') && init?.method === 'POST') {
+      if (url.endsWith('/api/word/pack/jobs') && init?.method === 'POST') {
         const body = init?.body ? JSON.parse(init.body as string) : {};
         const lemma = body.lemma || 'test';
         if (options.wordPackPostGate) {
@@ -142,8 +142,7 @@ describe('WordPackPanel E2E (mocked fetch)', () => {
         const id = nextWordPackId();
         generated.add(lemma);
         lemmaById.set(id, lemma);
-        return new Response(
-          JSON.stringify({
+        const result = {
             id,
             lemma,
             sense_title: `${lemma}概説`,
@@ -192,6 +191,13 @@ describe('WordPackPanel E2E (mocked fetch)', () => {
             study_card: `study of ${lemma}`,
             citations: [{ text: 'citation' }],
             confidence: 'medium',
+          };
+        return new Response(
+          JSON.stringify({
+            job_id: `wordpack-generation-job:${id}`,
+            job_type: 'wordpack-generation',
+            status: 'succeeded',
+            result,
           }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
         );
@@ -380,12 +386,12 @@ describe('WordPackPanel E2E (mocked fetch)', () => {
 
     // fetch が正しいエンドポイントで呼ばれていること（採点APIは呼ばれない）
     const urls = fetchMock.mock.calls.map((c) => (typeof c[0] === 'string' ? c[0] : (c[0] as URL).toString()));
-    expect(urls.some((u) => u.endsWith('/api/word/pack'))).toBe(true);
+    expect(urls.some((u) => u.endsWith('/api/word/pack/jobs'))).toBe(true);
     expect(urls.some((u) => u.endsWith('/api/review/grade_by_lemma'))).toBe(false);
 
     // リクエストボディに model/reasoning/text が含まれていること
     const bodies = fetchMock.mock.calls
-      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/word/pack') : ((c[0] as URL).toString().endsWith('/api/word/pack'))))
+      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/word/pack/jobs') : ((c[0] as URL).toString().endsWith('/api/word/pack/jobs'))))
       .map((c) => (c[1]?.body ? JSON.parse(c[1]!.body as string) : {}));
     expect(bodies.some((b) => (
       b.model === 'gpt-5.6-luna'
@@ -514,7 +520,7 @@ describe('WordPackPanel E2E (mocked fetch)', () => {
     });
 
     const generatedBodies = fetchMock.mock.calls
-      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/word/pack') : ((c[0] as URL).toString().endsWith('/api/word/pack'))))
+      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/word/pack/jobs') : ((c[0] as URL).toString().endsWith('/api/word/pack/jobs'))))
       .map((c) => (c[1]?.body ? JSON.parse(c[1]!.body as string) : {}));
     expect(generatedBodies.some((body) => body.lemma === 'Ghosts')).toBe(true);
   });
@@ -553,7 +559,7 @@ describe('WordPackPanel E2E (mocked fetch)', () => {
     });
     expect(within(queue).getByRole('status')).toHaveTextContent('Ghosts の生成状態は完了です');
     const generatedBodies = fetchMock.mock.calls
-      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/word/pack') : ((c[0] as URL).toString().endsWith('/api/word/pack'))))
+      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/word/pack/jobs') : ((c[0] as URL).toString().endsWith('/api/word/pack/jobs'))))
       .map((c) => (c[1]?.body ? JSON.parse(c[1]!.body as string) : {}));
     expect(generatedBodies.some((body) => body.lemma === 'Ghosts')).toBe(true);
   });
@@ -624,7 +630,7 @@ describe('WordPackPanel E2E (mocked fetch)', () => {
     const urls = fetchMock.mock.calls.map((call) => (
       typeof call[0] === 'string' ? call[0] : (call[0] as URL).toString()
     ));
-    expect(urls.some((url) => url.endsWith('/api/word/pack'))).toBe(true);
+    expect(urls.some((url) => url.endsWith('/api/word/pack/jobs'))).toBe(true);
     expect(urls.filter((url) => url.includes('/api/word/lemma/Ghosts')).length).toBe(ghostLookupCountBeforeGenerate);
   });
 
@@ -673,7 +679,7 @@ describe('WordPackPanel E2E (mocked fetch)', () => {
 
     const wordPackPostCount = () => fetchMock.mock.calls.filter((call) => {
       const url = typeof call[0] === 'string' ? call[0] : (call[0] as URL).toString();
-      return url.endsWith('/api/word/pack') && call[1]?.method === 'POST';
+      return url.endsWith('/api/word/pack/jobs') && call[1]?.method === 'POST';
     }).length;
 
     await act(async () => {
@@ -734,7 +740,7 @@ describe('WordPackPanel E2E (mocked fetch)', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('ゲストモードでは例文中の未生成語をWordPack生成できません。ログインすると未生成語を追加できます。');
     const generatedBodies = fetchMock.mock.calls
-      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/word/pack') : ((c[0] as URL).toString().endsWith('/api/word/pack'))))
+      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/word/pack/jobs') : ((c[0] as URL).toString().endsWith('/api/word/pack/jobs'))))
       .map((c) => (c[1]?.body ? JSON.parse(c[1]!.body as string) : {}));
     expect(generatedBodies.some((body) => body.lemma === 'Ghosts')).toBe(false);
   });
@@ -773,7 +779,7 @@ describe('WordPackPanel E2E (mocked fetch)', () => {
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent(`「${longTokenText}」はWordPackとして生成できません。見出し語は最大64文字までです`);
     const generatedBodies = fetchMock.mock.calls
-      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/word/pack') : ((c[0] as URL).toString().endsWith('/api/word/pack'))))
+      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/word/pack/jobs') : ((c[0] as URL).toString().endsWith('/api/word/pack/jobs'))))
       .map((c) => (c[1]?.body ? JSON.parse(c[1]!.body as string) : {}));
     expect(generatedBodies.some((body) => body.lemma === longTokenText)).toBe(false);
   });

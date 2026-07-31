@@ -14,6 +14,7 @@ import {
   fetchExampleGenerationJob,
 } from '../features/generation/api';
 import { APP_EVENTS, dispatchAppEvent } from '../shared/events/appEvents';
+import { fetchWordPackGenerationJob } from '../features/wordpack/api';
 import { WordPackPreviewModal } from './WordPackPreviewModal';
 import type { WordPackListItem } from '../features/wordpack/types';
 
@@ -238,6 +239,51 @@ export const GenerationQueuePanel: React.FC = () => {
       reconciliationInFlightRef.current.add(item.id);
 
       const reconcile = async () => {
+        if (item.jobType === 'wordpack-generation') {
+          try {
+            const job = await fetchWordPackGenerationJob(
+              apiBase,
+              item.jobId as string,
+              { timeoutMs: requestTimeoutMs },
+            );
+            if (job.status === 'succeeded' && job.result) {
+              const resultLemma = job.result.lemma || lemma;
+              dispatchAppEvent(APP_EVENTS.wordPackUpdated);
+              update(item.id, {
+                title: `【${resultLemma}】の生成完了！`,
+                status: 'success',
+                message: '新規生成が完了しました',
+                wordPackId: job.result.id ?? null,
+                lemma: resultLemma,
+                jobId: item.jobId,
+                jobType: 'wordpack-generation',
+              });
+              return;
+            }
+            if (job.status !== 'failed' && !isStale) return;
+            update(item.id, {
+              title: `【${lemma || 'WordPack'}】の生成状態を確認できません`,
+              status: 'error',
+              message: job.status === 'failed'
+                ? (job.error || 'WordPack生成ジョブが失敗しました。必要ならもう一度実行してください。')
+                : 'WordPack生成が長時間完了していません。保存済みWordPackを確認するか、時間をおいて再試行してください。',
+              lemma,
+              jobId: item.jobId,
+              jobType: 'wordpack-generation',
+            });
+          } catch {
+            if (!isStale) return;
+            update(item.id, {
+              title: `【${lemma || 'WordPack'}】の生成状態を確認できません`,
+              status: 'error',
+              message: 'WordPack生成ジョブの状態を確認できませんでした。保存済みWordPackを確認するか、必要ならもう一度実行してください。',
+              lemma,
+              jobId: item.jobId,
+              jobType: 'wordpack-generation',
+            });
+          }
+          return;
+        }
         if (item.jobType === 'category-generate-import') {
           try {
             const job = await fetchCategoryGenerateImportJob(apiBase, item.jobId as string, {
