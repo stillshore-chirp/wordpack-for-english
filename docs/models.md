@@ -12,6 +12,7 @@ JSON 生成を強制したい呼び出しでは、Responses API の `text.format
 - `text.format`: JSON 生成時に内部で `{"type": "json_object"}` を付与
 - `max_output_tokens`: `.env` の `LLM_MAX_TOKENS`
 - 1試行のタイムアウト: `.env` の `LLM_TIMEOUT_MS`
+- 複数呼び出しを含むフロー全体のタイムアウト: `.env` の `LLM_REQUEST_TIMEOUT_MS`
 
 ## 設定例
 
@@ -29,7 +30,7 @@ JSON 生成を強制したい呼び出しでは、Responses API の `text.format
 - `reasoning` または `text` の一部だけを API で指定した場合も、欠けている `effort=high` / `verbosity=medium` をアプリ既定として補います。
 - 旧 `gpt-5.4-mini` / `gpt-5.4-nano` や旧 `minimal` は新規リクエストで拒否します。保存済みデータの生成メタ情報は履歴として書き換えません。
 - 出力のまとまりや一貫性は `reasoning.effort`、文量や詳細度は `text.verbosity` で調整します。
-- Luna High の推論時間を確保するため、`LLM_TIMEOUT_MS=300000`（5分）を既定にします。HTTP 全体のアプリ内上限はこれに5秒を加えます。Cloud Run は6分以上にし、Firebase Hosting リライト経由の約60秒制約がある導線では、直接接続または既存の非同期ジョブ・ポーリング経路を使います。
+- Luna High の推論時間を確保するため、`LLM_TIMEOUT_MS=300000`（1試行5分）を既定にします。Reader取り込みのように最大4回のLLM呼び出しを直列実行するフローは、別の `LLM_REQUEST_TIMEOUT_MS=1500000`（全体25分）をフロントのabortとバックエンドHTTP middlewareに適用します。Cloud Run は30分以上にし、Firebase Hosting リライト経由の約60秒制約がある導線では、直接接続または既存の非同期ジョブ・ポーリング経路を使います。
 - `reasoning.effort=high` では可視出力の前に推論トークンを消費します。`max_output_tokens` は推論・可視出力・非表示の整形トークンを合わせた上限であるため、OpenAI の初期検証時の推奨余裕に合わせて `LLM_MAX_TOKENS=25000` を既定にします。これは予約枠ではなく上限で、実際に生成したトークンだけが課金対象です。
 - 応答が `status=incomplete` かつ `incomplete_details.reason=max_output_tokens` になった場合は、使用量を確認して `LLM_MAX_TOKENS` を調整します。コスト管理のため、根拠なくモデル上限の 128,000 まで引き上げません。
 - モデル側が `reasoning` や `text.verbosity` を拒否した場合、バックエンドは JSON 形式指定だけを残して再試行し、それも拒否された場合はプロンプト内の JSON 指示に委ねて再試行します。

@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNotifications, type NotificationItem } from '../NotificationsContext';
-import { useOptionalSettings } from '../SettingsContext';
+import { DEFAULT_REQUEST_TIMEOUT_MS, useOptionalSettings } from '../SettingsContext';
 import { ApiError, fetchJson } from '../lib/fetcher';
 import { DEFAULT_LLM_MODEL } from '../lib/wordpack';
 import { WordPackPreviewModal } from './WordPackPreviewModal';
@@ -164,7 +164,7 @@ export const GenerationQueuePanel: React.FC = () => {
   const { notifications, clearAll, remove, update } = useNotifications();
   const settingsContext = useOptionalSettings();
   const apiBase = settingsContext?.settings.apiBase ?? '/api';
-  const requestTimeoutMs = settingsContext?.settings.requestTimeoutMs ?? 360000;
+  const requestTimeoutMs = settingsContext?.settings.requestTimeoutMs ?? DEFAULT_REQUEST_TIMEOUT_MS;
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [liveMessage, setLiveMessage] = useState('');
   const [updatedItemKeys, setUpdatedItemKeys] = useState<Record<string, string>>({});

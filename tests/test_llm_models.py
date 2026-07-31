@@ -33,6 +33,7 @@ def test_luna_is_the_only_supported_model_and_high_is_the_default_effort():
 
 def test_high_reasoning_defaults_reserve_time_and_output_budget():
     assert Settings.model_fields["llm_timeout_ms"].default == 300000
+    assert Settings.model_fields["llm_request_timeout_ms"].default == 1500000
     assert Settings.model_fields["llm_max_tokens"].default == 25000
 
 

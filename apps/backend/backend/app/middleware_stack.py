@@ -33,7 +33,10 @@ _PROXY_MIDDLEWARE_PARAM = (
 def _maybe_add_timeout_middleware(app: FastAPI, app_settings: Any) -> None:
     if TimeoutMiddleware is None:
         return
-    http_timeout_sec = max(1, int((app_settings.llm_timeout_ms + 5000) / 1000))
+    http_timeout_sec = max(
+        1,
+        int((app_settings.llm_request_timeout_ms + 5000) / 1000),
+    )
     app.add_middleware(TimeoutMiddleware, timeout=http_timeout_sec)
 
 

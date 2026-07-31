@@ -8,6 +8,8 @@ import {
   type TextVerbosity,
 } from './lib/wordpack';
 
+export const DEFAULT_REQUEST_TIMEOUT_MS = 1_500_000;
+
 export interface Settings {
   apiBase: string;
   pronunciationEnabled: boolean;
@@ -174,7 +176,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       regenerateScope: 'all',
       autoAdvanceAfterGrade: false,
       // 初期描画直後のズレを避けるため、保守的に長めの既定値。実値は /api/config で即同期。
-      requestTimeoutMs: 360000,
+      requestTimeoutMs: DEFAULT_REQUEST_TIMEOUT_MS,
       model: savedModel,
       reasoningEffort: DEFAULT_REASONING_EFFORT,
       textVerbosity: DEFAULT_TEXT_VERBOSITY,

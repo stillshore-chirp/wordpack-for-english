@@ -197,6 +197,13 @@ class Settings(BaseSettings):
         default=300000,
         description="Per-attempt timeout for LLM calls (ms) / LLM呼出しの試行毎タイムアウト(ms)",
     )
+    llm_request_timeout_ms: int = Field(
+        default=1500000,
+        description=(
+            "End-to-end timeout for multi-call LLM request flows (ms) / "
+            "複数LLM呼出しを含むリクエスト全体のタイムアウト(ms)"
+        ),
+    )
     llm_max_retries: int = Field(
         default=1,
         description="Max retries for LLM calls / LLM呼出しの最大リトライ回数",

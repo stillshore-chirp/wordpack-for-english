@@ -6,7 +6,10 @@ import type { MockedFunction } from 'vitest';
 import { axe } from 'vitest-axe';
 import { App } from './App';
 import { AppProviders } from './main';
-import { AUTO_RETRY_INTERVAL_MS } from './SettingsContext';
+import {
+  AUTO_RETRY_INTERVAL_MS,
+  DEFAULT_REQUEST_TIMEOUT_MS,
+} from './SettingsContext';
 import type { FC, ReactNode } from 'react';
 
 interface MockCredentialResponse {
@@ -179,6 +182,10 @@ beforeEach(() => {
 });
 
 describe('App navigation', () => {
+  it('keeps the initial client timeout large enough for multi-call LLM flows', () => {
+    expect(DEFAULT_REQUEST_TIMEOUT_MS).toBe(1_500_000);
+  });
+
   it('shows login card when user has not authenticated yet', async () => {
     fetchMock.mockImplementation((input: RequestInfo | URL) => {
       const url = resolveUrl(input);

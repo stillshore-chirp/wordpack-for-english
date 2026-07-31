@@ -10,12 +10,14 @@ frontend が Google login 設定などを取得します。
 
 ```json
 {
-  "request_timeout_ms": 120000,
-  "llm_model": "gpt-5-mini",
+  "request_timeout_ms": 1500000,
+  "llm_model": "gpt-5.6-luna",
   "session_auth_disabled": false,
   "google_client_id": "12345-abcdefgh.apps.googleusercontent.com"
 }
 ```
+
+`request_timeout_ms` は1回のLLM呼び出し上限ではなく、Reader取り込みなど複数のLLM呼び出しを含むフロー全体の上限です。既定は25分で、フロントエンドのabortとバックエンドのHTTP middlewareを同じ値へ揃えます。
 
 Cloud Run の段階リリース中は、候補 revision を本番経路から識別するため `deployment_version` も返します。このフィールドはデプロイスクリプトが `DEPLOYMENT_VERSION` を設定した環境だけに追加され、未設定時の既存レスポンスは変わりません。
 
