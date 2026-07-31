@@ -8,6 +8,7 @@ from .articles import (
 )
 from .base import FirestoreBaseRepository, FirestoreBaseStore
 from .examples import FirestoreExampleRepository, FirestoreExampleStore
+from .generation_jobs import FirestoreGenerationJobRepository, FirestoreGenerationJobStore
 from .quizzes import FirestoreQuizRepository, FirestoreQuizStore, QuizGenerationJobStatus
 from .regenerate_jobs import FirestoreRegenerateJobRepository, FirestoreRegenerateJobStore
 from .users import FirestoreUserRepository, FirestoreUserStore
@@ -23,6 +24,8 @@ __all__ = [
     "FirestoreBaseStore",
     "FirestoreExampleRepository",
     "FirestoreExampleStore",
+    "FirestoreGenerationJobRepository",
+    "FirestoreGenerationJobStore",
     "FirestoreQuizRepository",
     "FirestoreQuizStore",
     "QuizGenerationJobStatus",

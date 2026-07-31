@@ -34,6 +34,10 @@ import {
   type ArticleDetailResponse,
 } from '../../api/articleApi';
 import { APP_EVENTS, dispatchAppEvent } from '../../../../shared/events/appEvents';
+import {
+  createCategoryGenerateImportJob,
+  fetchCategoryGenerateImportJob,
+} from '../../../generation/api';
 
 interface ArticleImportPanelProps {
   showInlineControls?: boolean;
@@ -232,21 +236,82 @@ export const ArticleImportPanel: React.FC<ArticleImportPanelProps> = ({
     const results = await Promise.allSettled(
       categories.map(async (selectedCategory) => {
         const notifId = addNotification({ title: `【${selectedCategory}】の例文生成・記事化を開始します`, message: '関連語を選定し、例文を生成して記事化します', status: 'progress', model: selectedModel, category: selectedCategory });
+        let acceptedJobId: string | undefined;
+        let confirmedJobFailure = false;
         try {
           const reqBody: any = { category: selectedCategory };
           reqBody.model = selectedModel;
           reqBody.reasoning = { effort: settings.reasoningEffort || DEFAULT_REASONING_EFFORT };
           reqBody.text = { verbosity: settings.textVerbosity || DEFAULT_TEXT_VERBOSITY };
-          const res = await fetchJson<{ lemma: string; word_pack_id: string; category: string; generated_examples: number; article_ids: string[] }>(`${settings.apiBase}/article/generate_and_import`, {
-            method: 'POST',
-            body: reqBody,
-            timeoutMs: settings.generationRequestTimeoutMs ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
+          let job = await createCategoryGenerateImportJob(settings.apiBase, reqBody, {
+            timeoutMs: settings.requestTimeoutMs,
           });
-          updateNotification(notifId, { title: '例文生成・記事化完了', status: 'success', message: `【${res.lemma}】${res.generated_examples}件の例文から記事を作成しました`, model: selectedModel, category: (res.category as string | undefined) || selectedCategory, wordPackId: res.word_pack_id, lemma: res.lemma });
-          return { category: selectedCategory, result: res };
+          acceptedJobId = job.job_id;
+          updateNotification(notifId, {
+            message: 'バックグラウンドで例文生成と記事化を続けています',
+            jobId: job.job_id,
+            jobType: 'category-generate-import',
+          });
+          const deadlineMs = Date.now()
+            + (settings.generationRequestTimeoutMs ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS);
+          while (job.status === 'queued' || job.status === 'running') {
+            if (Date.now() >= deadlineMs) {
+              throw new ApiError(
+                '例文生成・記事化が制限時間内に完了しませんでした。生成キューから状態を確認してください。',
+                0,
+              );
+            }
+            await new Promise<void>((resolve) => window.setTimeout(resolve, ARTICLE_IMPORT_POLL_INTERVAL_MS));
+            job = await fetchCategoryGenerateImportJob(settings.apiBase, job.job_id, {
+              timeoutMs: settings.requestTimeoutMs,
+            });
+          }
+          if (job.status === 'failed') {
+            confirmedJobFailure = true;
+            throw new ApiError(job.error || '例文生成・記事化に失敗しました', 500);
+          }
+          const result = job.result;
+          const lemma = typeof result?.lemma === 'string' ? result.lemma : '';
+          const wordPackId = typeof result?.word_pack_id === 'string' ? result.word_pack_id : '';
+          const generatedExamples = typeof result?.generated_examples === 'number'
+            ? result.generated_examples
+            : 0;
+          if (!lemma || !wordPackId) {
+            confirmedJobFailure = true;
+            throw new ApiError('例文生成・記事化の結果を確認できませんでした', 500);
+          }
+          const resultCategory = typeof result?.category === 'string'
+            ? result.category
+            : selectedCategory;
+          updateNotification(notifId, {
+            title: '例文生成・記事化完了',
+            status: 'success',
+            message: `【${lemma}】${generatedExamples}件の例文から記事を作成しました`,
+            model: selectedModel,
+            category: resultCategory,
+            wordPackId,
+            lemma,
+            jobId: job.job_id,
+            jobType: 'category-generate-import',
+          });
+          dispatchAppEvent(APP_EVENTS.wordPackUpdated);
+          dispatchAppEvent(APP_EVENTS.articleUpdated);
+          return { category: selectedCategory, result };
         } catch (e) {
           const message = e instanceof ApiError ? e.message : '例文生成・記事化に失敗しました';
-          updateNotification(notifId, { title: '例文生成・記事化失敗', status: 'error', message, model: selectedModel, category: selectedCategory });
+          if (acceptedJobId && !confirmedJobFailure) {
+            updateNotification(notifId, {
+              title: '例文生成・記事化の状態を確認中',
+              status: 'progress',
+              message: '一時的に状態を取得できませんでした。自動で再確認します。',
+              model: selectedModel,
+              category: selectedCategory,
+              jobId: acceptedJobId,
+              jobType: 'category-generate-import',
+            });
+          } else {
+            updateNotification(notifId, { title: '例文生成・記事化失敗', status: 'error', message, model: selectedModel, category: selectedCategory });
+          }
           throw { category: selectedCategory, message };
         } finally {
           setGenRunning((n) => Math.max(0, n - 1));

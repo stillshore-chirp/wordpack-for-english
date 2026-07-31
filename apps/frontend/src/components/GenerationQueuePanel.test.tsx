@@ -97,6 +97,38 @@ const setupFetchMocks = () => {
         headers: { 'Content-Type': 'application/json' },
       });
     }
+    if (url.endsWith('/api/article/generate_and_import/jobs/category-job%3Aalpha')) {
+      return new Response(JSON.stringify({
+        job_id: 'category-job:alpha',
+        job_type: 'category-generate-import',
+        status: 'succeeded',
+        result: {
+          lemma: 'alpha',
+          word_pack_id: 'wp:alpha',
+          category: 'Dev',
+          generated_examples: 2,
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (url.endsWith('/api/word/packs/wp%3Aalpha/examples/Dev/generate/jobs/example-job%3Aalpha')) {
+      return new Response(JSON.stringify({
+        job_id: 'example-job:alpha',
+        job_type: 'example-generation',
+        status: 'succeeded',
+        result: {
+          word_pack_id: 'wp:alpha',
+          lemma: 'alpha',
+          category: 'Dev',
+          added: 2,
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     if (url.endsWith('/api/word/lemma/alpha')) {
       return new Response(JSON.stringify({ found: true, id: 'wp:alpha', lemma: 'alpha', sense_title: 'alpha概説' }), {
         status: 200,
@@ -366,6 +398,59 @@ describe('GenerationQueuePanel', () => {
     ).toBe(true);
     expect(quizUpdated).toHaveBeenCalledOnce();
     window.removeEventListener('quiz:updated', quizUpdated);
+  });
+
+  it('再読込後のカテゴリ生成・記事化ジョブはWordPackと記事を更新する', async () => {
+    const persistedAt = Date.now() - 10 * 1000;
+    localStorage.setItem(
+      'wpfe.notifications.v1',
+      JSON.stringify([{
+        id: 'n-restored-category',
+        title: '【Dev】の例文生成・記事化を開始します',
+        message: 'バックグラウンドで生成しています',
+        status: 'progress',
+        createdAt: persistedAt,
+        updatedAt: persistedAt,
+        model: 'gpt-5.6-luna',
+        category: 'Dev',
+        jobId: 'category-job:alpha',
+        jobType: 'category-generate-import',
+      }]),
+    );
+    renderQueue();
+
+    expect(await screen.findByRole('button', { name: 'alpha の生成結果プレビューを開く' })).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent('2件の例文から記事を作成しました');
+    expect(
+      requestedUrls.some((url) => url.endsWith('/api/article/generate_and_import/jobs/category-job%3Aalpha')),
+    ).toBe(true);
+  });
+
+  it('再読込後の追加例文生成ジョブはWordPackの完了カードへ補正する', async () => {
+    const persistedAt = Date.now() - 10 * 1000;
+    localStorage.setItem(
+      'wpfe.notifications.v1',
+      JSON.stringify([{
+        id: 'n-restored-example',
+        title: '【alpha】の生成処理中...',
+        message: '例文をバックグラウンドで追加生成しています',
+        status: 'progress',
+        createdAt: persistedAt,
+        updatedAt: persistedAt,
+        model: 'gpt-5.6-luna',
+        category: 'Dev',
+        wordPackId: 'wp:alpha',
+        lemma: 'alpha',
+        jobId: 'example-job:alpha',
+        jobType: 'example-generation',
+      }]),
+    );
+    renderQueue();
+
+    expect(await screen.findByRole('button', { name: 'alpha の生成結果プレビューを開く' })).toBeInTheDocument();
+    expect(
+      requestedUrls.some((url) => url.endsWith('/api/word/packs/wp%3Aalpha/examples/Dev/generate/jobs/example-job%3Aalpha')),
+    ).toBe(true);
   });
 
   it('状態確認が未完了の間は同じジョブを重複pollしない', async () => {

@@ -13,6 +13,10 @@ import {
   fetchArticleImportJob,
 } from '../features/article-import/api/articleApi';
 import { DEFAULT_GENERATION_REQUEST_TIMEOUT_MS } from '../SettingsContext';
+import {
+  createExampleGenerationJob,
+  fetchExampleGenerationJob,
+} from '../features/generation/api';
 
 interface UseExampleActionsParams {
   apiBase: string;
@@ -140,17 +144,57 @@ export const useExampleActions = ({
         wordPackId,
         lemma: lemmaText,
       });
+      let acceptedJobId: string | undefined;
+      let confirmedJobFailure = false;
       try {
         const requestBody = buildModelRequest();
-        await fetchJson(`${apiBase}/word/packs/${wordPackId}/examples/${category}/generate`, {
-          method: 'POST',
-          body: requestBody,
+        let job = await createExampleGenerationJob(apiBase, wordPackId, category, requestBody, {
           signal: ctrl.signal,
-          timeoutMs: generationRequestTimeoutMs ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS,
+          timeoutMs: requestTimeoutMs,
         });
+        acceptedJobId = job.job_id;
+        notify.update(notifId, {
+          message: `例文（${category}）をバックグラウンドで追加生成しています`,
+          jobId: job.job_id,
+          jobType: 'example-generation',
+        });
+        const deadlineMs = Date.now()
+          + (generationRequestTimeoutMs ?? DEFAULT_GENERATION_REQUEST_TIMEOUT_MS);
+        while (job.status === 'queued' || job.status === 'running') {
+          if (Date.now() >= deadlineMs) {
+            throw new ApiError(
+              '例文の追加生成が制限時間内に完了しませんでした。生成キューから状態を確認してください。',
+              0,
+            );
+          }
+          await new Promise<void>((resolve) => window.setTimeout(resolve, 1000));
+          job = await fetchExampleGenerationJob(apiBase, wordPackId, category, job.job_id, {
+            signal: ctrl.signal,
+            timeoutMs: requestTimeoutMs,
+          });
+        }
+        if (job.status === 'failed') {
+          confirmedJobFailure = true;
+          throw new ApiError(job.error || '例文の追加生成に失敗しました', 500);
+        }
+        if (!job.result) {
+          confirmedJobFailure = true;
+          throw new ApiError('例文の追加生成結果を確認できませんでした', 500);
+        }
         setStatusMessage({ kind: 'status', text: `${category} に例文を2件追加しました` });
-        notify.update(notifId, { title: `【${lemmaText}】の生成完了！`, status: 'success', message: `${category} に例文を2件追加しました`, model, category, wordPackId, lemma: lemmaText });
+        notify.update(notifId, {
+          title: `【${lemmaText}】の生成完了！`,
+          status: 'success',
+          message: `${category} に例文を2件追加しました`,
+          model,
+          category,
+          wordPackId,
+          lemma: lemmaText,
+          jobId: job.job_id,
+          jobType: 'example-generation',
+        });
         await loadWordPack(wordPackId);
+        dispatchAppEvent(APP_EVENTS.wordPackUpdated);
         try { onWordPackGenerated?.(wordPackId); } catch {}
       } catch (error) {
         if (ctrl.signal.aborted) {
@@ -158,16 +202,34 @@ export const useExampleActions = ({
           return;
         }
         const text = resolveErrorMessage(error, '例文の追加生成に失敗しました');
-        setStatusMessage({ kind: 'alert', text });
-        notify.update(notifId, {
-          title: `【${lemmaText}】の生成失敗`,
-          status: 'error',
-          message: `${category} の例文追加生成に失敗しました（${text}）`,
-          model,
-          category,
-          wordPackId,
-          lemma: lemmaText,
-        });
+        if (acceptedJobId && !confirmedJobFailure) {
+          setStatusMessage({
+            kind: 'alert',
+            text: '例文の追加生成はバックグラウンドで継続しています。生成キューから状態を確認してください。',
+          });
+          notify.update(notifId, {
+            title: `【${lemmaText}】の生成状態を確認中`,
+            status: 'progress',
+            message: '一時的に状態を取得できませんでした。自動で再確認します。',
+            model,
+            category,
+            wordPackId,
+            lemma: lemmaText,
+            jobId: acceptedJobId,
+            jobType: 'example-generation',
+          });
+        } else {
+          setStatusMessage({ kind: 'alert', text });
+          notify.update(notifId, {
+            title: `【${lemmaText}】の生成失敗`,
+            status: 'error',
+            message: `${category} の例文追加生成に失敗しました（${text}）`,
+            model,
+            category,
+            wordPackId,
+            lemma: lemmaText,
+          });
+        }
       } finally {
         setExamplesLoading(false);
       }

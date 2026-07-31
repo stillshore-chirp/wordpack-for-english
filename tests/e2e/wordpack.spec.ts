@@ -261,7 +261,21 @@ test.describe('WordPack 操作', () => {
         const match = url.match(/examples\/([^/]+)\/generate/);
         const category = (match?.[1] ?? 'Dev') as keyof Examples;
         store.addExamples(category);
-        await route.fulfill(json({ ok: true }));
+        if (url.endsWith('/generate/jobs')) {
+          await route.fulfill(json({
+            job_id: 'example-generation-job:e2e:1',
+            job_type: 'example-generation',
+            status: 'succeeded',
+            result: {
+              word_pack_id: store.wordPackId,
+              lemma: 'alpha',
+              category,
+              added: 2,
+            },
+          }, 202));
+        } else {
+          await route.fulfill(json({ ok: true }));
+        }
         return;
       }
 

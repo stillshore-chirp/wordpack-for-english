@@ -1,7 +1,12 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
 export type NotificationStatus = 'progress' | 'success' | 'error';
-export type NotificationJobType = 'wordpack-regeneration' | 'article-import' | 'quiz-generation';
+export type NotificationJobType =
+  | 'wordpack-regeneration'
+  | 'article-import'
+  | 'quiz-generation'
+  | 'category-generate-import'
+  | 'example-generation';
 
 export interface NotificationItem {
   id: string;

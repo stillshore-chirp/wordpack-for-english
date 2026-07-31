@@ -16,6 +16,11 @@ from ..application.article.import_jobs import (
     enqueue_article_import_job,
     get_article_import_job,
 )
+from ..application.common.generation_jobs import (
+    GenerationJobResponse,
+    enqueue_generation_job,
+    get_generation_job,
+)
 from ..auth import principal_from_request
 from ..authorization.dependencies import require_user_permission
 from ..authorization.permissions import Permission
@@ -418,3 +423,64 @@ async def generate_and_import_examples(
             # フローは同期実装のため、イベントループをブロックしないようスレッドにオフロード
             result = await anyio.to_thread.run_sync(partial(flow.run, req.category))
             return result
+
+
+@router.post(
+    "/generate_and_import/jobs",
+    response_model=GenerationJobResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="カテゴリ例文生成・記事化ジョブを開始",
+)
+async def create_generate_and_import_job(
+    req: CategoryGenerateImportRequest,
+    principal: Principal = Depends(require_user_permission(Permission.ARTICLE_CREATE)),
+) -> GenerationJobResponse:
+    """カテゴリ例文生成から記事保存までを、再接続可能な非同期ジョブとして開始する。"""
+
+    def runner() -> dict[str, object]:
+        flow = CategoryGenerateAndImportFlow(
+            model=req.model,
+            reasoning=req.reasoning,
+            text=req.text,
+            owner_user_id=principal.user_id,
+        )
+        with request_trace(
+            name="CategoryGenerateAndImportFlow",
+            metadata={"endpoint": "/api/article/generate_and_import/jobs"},
+        ) as ctx:
+            trace = ctx.get("trace") if isinstance(ctx, dict) else None
+            with span(
+                trace=trace,
+                name="article.category_generate_and_import",
+                input={"category": req.category.value},
+            ):
+                return flow.run(req.category)
+
+    return await enqueue_generation_job(
+        owner_user_id=principal.user_id,
+        job_type="category-generate-import",
+        store=store,
+        runner=runner,
+        scheduler=AsyncioTaskScheduler(),
+        id_generator=PrefixedUuidGenerator("category-generate-import-job:"),
+    )
+
+
+@router.get(
+    "/generate_and_import/jobs/{job_id}",
+    response_model=GenerationJobResponse,
+    summary="カテゴリ例文生成・記事化ジョブの状態を取得",
+)
+async def get_generate_and_import_job_status(
+    job_id: str,
+    principal: Principal = Depends(require_user_permission(Permission.ARTICLE_READ)),
+) -> GenerationJobResponse:
+    job = await get_generation_job(
+        job_id,
+        owner_user_id=principal.user_id,
+        expected_job_type="category-generate-import",
+        store=store,
+    )
+    if job is None:
+        raise HTTPException(status_code=404, detail="Generation job not found")
+    return job

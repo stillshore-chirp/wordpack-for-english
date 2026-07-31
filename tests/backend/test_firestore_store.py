@@ -154,6 +154,30 @@ def test_firestore_article_import_job_roundtrip(firestore_store: AppFirestoreSto
     assert firestore_store.get_article_import_job("missing") is None
 
 
+def test_firestore_generation_job_roundtrip(firestore_store: AppFirestoreStore) -> None:
+    created = firestore_store.create_generation_job(
+        job_id="generation-job:demo",
+        owner_user_id="user-1",
+        job_type="example-generation",
+    )
+    assert created["status"] == "queued"
+    assert created["owner_user_id"] == "user-1"
+    assert created["job_type"] == "example-generation"
+
+    succeeded = firestore_store.update_generation_job(
+        "generation-job:demo",
+        status="succeeded",
+        result_json='{"word_pack_id":"wp:demo","added":2}',
+    )
+    assert succeeded is not None
+    assert succeeded["result_json"] == '{"word_pack_id":"wp:demo","added":2}'
+
+    found = firestore_store.get_generation_job("generation-job:demo")
+    assert found is not None
+    assert found["job_id"] == "generation-job:demo"
+    assert firestore_store.get_generation_job("missing") is None
+
+
 def test_firestore_quiz_generation_job_roundtrip(firestore_store: AppFirestoreStore) -> None:
     created = firestore_store.create_quiz_generation_job(job_id="quiz-job:demo")
 

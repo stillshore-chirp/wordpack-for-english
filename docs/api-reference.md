@@ -138,6 +138,16 @@ Request:
 
 ## 例文
 
+### `POST /api/word/packs/{id}/examples/{category}/generate/jobs`
+
+保存済み WordPack へカテゴリ別の例文を2件追加するジョブを作り、202 とジョブIDを返します。Luna High の生成が Firebase Hosting の同期上限を越えても、受付済み処理と画面上の失敗表示が食い違わないよう、アプリUIはこちらを使用します。
+
+### `GET /api/word/packs/{id}/examples/{category}/generate/jobs/{job_id}`
+
+追加例文生成ジョブの `queued / running / succeeded / failed` と、成功時の追加件数を返します。対象 WordPack の所有者だけが取得できます。
+
+従来の同期 `POST /api/word/packs/{id}/examples/{category}/generate` は互換性のため残します。
+
 ### `GET /api/word/examples`
 
 保存済み例文を WordPack 横断で返します。ゲスト閲覧では、`guest_public=true` の WordPack に紐づく例文だけを返します。
@@ -193,9 +203,17 @@ Request:
 
 従来の同期 `POST /api/article/import` は互換性のため残しますが、アプリUIは非同期ジョブ経路を使用します。
 
-### `POST /api/article/generate_and_import`
+### `POST /api/article/generate_and_import/jobs`
 
-カテゴリから例文を生成し、記事として保存します。一部だけ記事化できた場合は成功レスポンスに警告を含め、全件失敗時は 502 を返します。
+カテゴリから関連語と例文を生成し、WordPack と Reader 記事へ保存するジョブを作り、202 とジョブIDを返します。成功時の `result` には `lemma`、`word_pack_id`、`category`、`generated_examples`、`article_ids` が入ります。ジョブは作成したユーザーだけが取得できます。
+
+### `GET /api/article/generate_and_import/jobs/{job_id}`
+
+カテゴリ例文生成・記事化ジョブの `queued / running / succeeded / failed` と、成功時の保存結果を返します。画面移動や一時的な状態取得失敗の後も、生成キューはこのAPIで状態を再確認します。
+
+従来の同期 `POST /api/article/generate_and_import` は互換性のため残します。
+
+一部だけ記事化できた場合は成功結果に警告を含め、全件失敗時はジョブを `failed` にします。
 
 ### `GET /api/article`
 

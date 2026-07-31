@@ -27,6 +27,10 @@ def test_word_router_paths_are_registered_in_split_package() -> None:
     assert "/packs/{word_pack_id}/regenerate" in paths
     assert "/packs/{word_pack_id}/regenerate/async" in paths
     assert "/packs/{word_pack_id}/examples/{category}/generate" in paths
+    assert "/packs/{word_pack_id}/examples/{category}/generate/jobs" in paths
+    assert (
+        "/packs/{word_pack_id}/examples/{category}/generate/jobs/{job_id}" in paths
+    )
     assert "/examples" in paths
     assert "/examples/bulk-delete" in paths
     assert "/lemma/{lemma}" in paths

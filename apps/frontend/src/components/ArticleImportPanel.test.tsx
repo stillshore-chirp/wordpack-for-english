@@ -34,15 +34,20 @@ const setupArticleImportHandlers = () => {
         article_id: 'art:abcd1234',
       }, { status: 202 });
     }),
-    http.post('/api/article/generate_and_import', async () => {
+    http.post('/api/article/generate_and_import/jobs', async () => {
       await delay(40);
       return HttpResponse.json({
-        lemma: 'test',
-        word_pack_id: 'wp:test:abcd',
-        category: 'Common',
-        generated_examples: 2,
-        article_ids: ['art:1', 'art:2'],
-      });
+        job_id: 'category-generate-import-job:test',
+        job_type: 'category-generate-import',
+        status: 'succeeded',
+        result: {
+          lemma: 'test',
+          word_pack_id: 'wp:test:abcd',
+          category: 'Common',
+          generated_examples: 2,
+          article_ids: ['art:1', 'art:2'],
+        },
+      }, { status: 202 });
     }),
     http.get('/api/article/:id', async ({ params }) => {
       await delay(40);
@@ -78,17 +83,23 @@ const overrideImportFailureHandlers = () => {
 const overrideGenerateTimeoutHandlers = () => {
   server.use(
     http.get('/api/config', () => HttpResponse.json({
-      request_timeout_ms: 60000,
+      request_timeout_ms: 30,
       generation_request_timeout_ms: 30,
     })),
-    http.post('/api/article/generate_and_import', async () => {
+    http.post('/api/article/generate_and_import/jobs', async () => {
       await delay(80);
       return HttpResponse.json({
-        lemma: 'test',
-        word_pack_id: 'wp:test:abcd',
-        category: 'Common',
-        generated_examples: 2,
-        article_ids: ['art:1', 'art:2'],
+        job_id: 'category-generate-import-job:slow',
+        job_type: 'category-generate-import',
+        status: 'running',
+      }, { status: 202 });
+    }),
+    http.get('/api/article/generate_and_import/jobs/:jobId', async () => {
+      await delay(80);
+      return HttpResponse.json({
+        job_id: 'category-generate-import-job:slow',
+        job_type: 'category-generate-import',
+        status: 'running',
       });
     }),
   );

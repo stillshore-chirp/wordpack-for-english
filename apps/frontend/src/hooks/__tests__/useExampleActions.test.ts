@@ -6,10 +6,18 @@ import {
 } from '../../features/article-import/api/articleApi';
 import type { WordPack } from '../useWordPack';
 import { useExampleActions } from '../useExampleActions';
+import {
+  createExampleGenerationJob,
+  fetchExampleGenerationJob,
+} from '../../features/generation/api';
 
 vi.mock('../../features/article-import/api/articleApi', () => ({
   createArticleImportJob: vi.fn(),
   fetchArticleImportJob: vi.fn(),
+}));
+vi.mock('../../features/generation/api', () => ({
+  createExampleGenerationJob: vi.fn(),
+  fetchExampleGenerationJob: vi.fn(),
 }));
 
 const makeWordPack = (): WordPack => ({
@@ -92,6 +100,69 @@ describe('useExampleActions.importArticleFromExample', () => {
         status: 'progress',
         jobId: 'article-import-job:example',
         jobType: 'article-import',
+      }),
+    );
+  });
+});
+
+describe('useExampleActions.generateExamples', () => {
+  const notify = {
+    add: vi.fn(() => 'notification:example-generation'),
+    update: vi.fn(),
+  };
+  const setStatusMessage = vi.fn();
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    notify.add.mockClear();
+    notify.update.mockClear();
+    setStatusMessage.mockClear();
+    vi.mocked(createExampleGenerationJob).mockResolvedValue({
+      job_id: 'example-generation-job:test',
+      job_type: 'example-generation',
+      status: 'running',
+    });
+    vi.mocked(fetchExampleGenerationJob).mockRejectedValue(
+      new Error('status temporarily unavailable'),
+    );
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('ジョブ受付後の状態取得失敗を生成キューで再照合できる進行中状態に保つ', async () => {
+    const { result } = renderHook(() => useExampleActions({
+      apiBase: '/api',
+      requestTimeoutMs: 60_000,
+      generationRequestTimeoutMs: 1_500_000,
+      currentWordPackId: 'wp:alpha',
+      data: makeWordPack(),
+      model: 'gpt-5.6-luna',
+      reasoningEffort: 'high',
+      textVerbosity: 'medium',
+      setStatusMessage,
+      loadWordPack: vi.fn(),
+      notify,
+      confirmDialog: vi.fn(),
+    }));
+
+    await act(async () => {
+      const generationPromise = result.current.generateExamples('Dev');
+      await vi.advanceTimersByTimeAsync(1000);
+      await generationPromise;
+    });
+
+    expect(setStatusMessage).toHaveBeenLastCalledWith({
+      kind: 'alert',
+      text: '例文の追加生成はバックグラウンドで継続しています。生成キューから状態を確認してください。',
+    });
+    expect(notify.update).toHaveBeenLastCalledWith(
+      'notification:example-generation',
+      expect.objectContaining({
+        status: 'progress',
+        jobId: 'example-generation-job:test',
+        jobType: 'example-generation',
       }),
     );
   });

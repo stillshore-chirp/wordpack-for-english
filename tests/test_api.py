@@ -1,6 +1,7 @@
 import json
 import re
 import sys
+import time
 import types
 from datetime import UTC, datetime
 from pathlib import Path
@@ -502,6 +503,26 @@ def test_generate_examples_uses_llm_meta(client, monkeypatch):
     assert len(examples) >= 2
     assert examples[-1]["llm_model"] == "gpt-5.6-luna"
     assert examples[-1]["transcription_typing_count"] == 0
+
+    job_response = client.post(
+        f"/api/word/packs/{pack_id}/examples/Dev/generate/jobs",
+        json={"model": "gpt-5.6-luna", "reasoning": {"effort": "high"}},
+    )
+    assert job_response.status_code == 202
+    job_id = job_response.json()["job_id"]
+    job_body = job_response.json()
+    for _ in range(100):
+        poll = client.get(
+            f"/api/word/packs/{pack_id}/examples/Dev/generate/jobs/{job_id}"
+        )
+        assert poll.status_code == 200
+        job_body = poll.json()
+        if job_body["status"] in {"succeeded", "failed"}:
+            break
+        time.sleep(0.01)
+    assert job_body["status"] == "succeeded"
+    assert job_body["result"]["word_pack_id"] == pack_id
+    assert job_body["result"]["added"] == 2
 def test_word_lookup(client: TestClient, monkeypatch: pytest.MonkeyPatch):
     from backend.models.word import WordPack
     from backend.routers import word as word_router
@@ -1145,6 +1166,25 @@ def test_category_generate_and_import_endpoint(client, monkeypatch):
         r"wp:[0-9a-f]{32}", body["word_pack_id"]
     )
     assert isinstance(body.get("article_ids"), list) and len(body["article_ids"]) >= 1
+
+    job_response = client.post(
+        "/api/article/generate_and_import/jobs",
+        json={"category": "Dev"},
+    )
+    assert job_response.status_code == 202
+    job_id = job_response.json()["job_id"]
+    job_body = job_response.json()
+    for _ in range(100):
+        poll = client.get(f"/api/article/generate_and_import/jobs/{job_id}")
+        assert poll.status_code == 200
+        job_body = poll.json()
+        if job_body["status"] in {"succeeded", "failed"}:
+            break
+        time.sleep(0.01)
+    assert job_body["status"] == "succeeded"
+    assert isinstance(job_body["result"]["lemma"], str)
+    assert job_body["result"]["word_pack_id"].startswith("wp:")
+    assert job_body["result"]["generated_examples"] >= 2
 
     # 記事が取得できること
     first_article_id = body["article_ids"][0]

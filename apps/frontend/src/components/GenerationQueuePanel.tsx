@@ -9,6 +9,10 @@ import { ApiError, fetchJson } from '../lib/fetcher';
 import { DEFAULT_LLM_MODEL } from '../lib/wordpack';
 import { fetchArticleImportJob } from '../features/article-import/api/articleApi';
 import { fetchQuizGenerationJob } from '../features/quiz/api';
+import {
+  fetchCategoryGenerateImportJob,
+  fetchExampleGenerationJob,
+} from '../features/generation/api';
 import { APP_EVENTS, dispatchAppEvent } from '../shared/events/appEvents';
 import { WordPackPreviewModal } from './WordPackPreviewModal';
 import type { WordPackListItem } from '../features/wordpack/types';
@@ -233,6 +237,114 @@ export const GenerationQueuePanel: React.FC = () => {
       reconciliationInFlightRef.current.add(item.id);
 
       const reconcile = async () => {
+        if (item.jobType === 'category-generate-import') {
+          try {
+            const job = await fetchCategoryGenerateImportJob(apiBase, item.jobId as string, {
+              timeoutMs: requestTimeoutMs,
+            });
+            if (job.status === 'succeeded' && job.result) {
+              const resultLemma = typeof job.result.lemma === 'string'
+                ? job.result.lemma
+                : lemma;
+              const resultWordPackId = typeof job.result.word_pack_id === 'string'
+                ? job.result.word_pack_id
+                : item.wordPackId;
+              const generatedExamples = typeof job.result.generated_examples === 'number'
+                ? job.result.generated_examples
+                : 0;
+              dispatchAppEvent(APP_EVENTS.wordPackUpdated);
+              dispatchAppEvent(APP_EVENTS.articleUpdated);
+              update(item.id, {
+                title: '例文生成・記事化完了',
+                status: 'success',
+                message: `【${resultLemma}】${generatedExamples}件の例文から記事を作成しました`,
+                wordPackId: resultWordPackId,
+                lemma: resultLemma,
+                jobId: item.jobId,
+                jobType: 'category-generate-import',
+              });
+              return;
+            }
+            if (job.status !== 'failed' && !isStale) return;
+            update(item.id, {
+              title: '例文生成・記事化の状態を確認できません',
+              status: 'error',
+              message: job.status === 'failed'
+                ? (job.error || '例文生成・記事化ジョブが失敗しました。必要ならもう一度実行してください。')
+                : '例文生成・記事化が長時間完了していません。記事一覧を確認するか、時間をおいて再試行してください。',
+              jobId: item.jobId,
+              jobType: 'category-generate-import',
+            });
+          } catch {
+            if (!isStale) return;
+            update(item.id, {
+              title: '例文生成・記事化の状態を確認できません',
+              status: 'error',
+              message: 'ジョブの状態を確認できませんでした。記事一覧を確認するか、必要ならもう一度実行してください。',
+              jobId: item.jobId,
+              jobType: 'category-generate-import',
+            });
+          }
+          return;
+        }
+        if (item.jobType === 'example-generation') {
+          if (!wordPackId || !item.category) {
+            update(item.id, {
+              title: `【${lemma || 'WordPack'}】の生成状態を確認できません`,
+              status: 'error',
+              message: 'WordPack IDまたはカテゴリが保存されていないため、完了状態を確認できません。',
+              jobId: item.jobId,
+              jobType: 'example-generation',
+            });
+            return;
+          }
+          try {
+            const job = await fetchExampleGenerationJob(
+              apiBase,
+              wordPackId,
+              item.category,
+              item.jobId as string,
+              { timeoutMs: requestTimeoutMs },
+            );
+            if (job.status === 'succeeded' && job.result) {
+              dispatchAppEvent(APP_EVENTS.wordPackUpdated);
+              update(item.id, {
+                title: `【${lemma || 'WordPack'}】の生成完了！`,
+                status: 'success',
+                message: `${item.category} に例文を2件追加しました`,
+                wordPackId,
+                lemma,
+                jobId: item.jobId,
+                jobType: 'example-generation',
+              });
+              return;
+            }
+            if (job.status !== 'failed' && !isStale) return;
+            update(item.id, {
+              title: `【${lemma || 'WordPack'}】の生成状態を確認できません`,
+              status: 'error',
+              message: job.status === 'failed'
+                ? (job.error || '例文追加生成ジョブが失敗しました。必要ならもう一度実行してください。')
+                : '例文追加生成が長時間完了していません。保存済みWordPackを確認するか、時間をおいて再試行してください。',
+              wordPackId,
+              lemma,
+              jobId: item.jobId,
+              jobType: 'example-generation',
+            });
+          } catch {
+            if (!isStale) return;
+            update(item.id, {
+              title: `【${lemma || 'WordPack'}】の生成状態を確認できません`,
+              status: 'error',
+              message: '例文追加生成ジョブの状態を確認できませんでした。保存済みWordPackを確認するか、必要ならもう一度実行してください。',
+              wordPackId,
+              lemma,
+              jobId: item.jobId,
+              jobType: 'example-generation',
+            });
+          }
+          return;
+        }
         if (item.jobType === 'article-import') {
           try {
             const job = await fetchArticleImportJob(apiBase, item.jobId as string, {

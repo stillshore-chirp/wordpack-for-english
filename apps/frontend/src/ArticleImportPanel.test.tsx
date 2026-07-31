@@ -51,10 +51,15 @@ describe('ArticleImportPanel model/params wiring (mocked fetch)', () => {
           { status: 202, headers: { 'Content-Type': 'application/json' } },
         );
       }
-      if (url.endsWith('/api/article/generate_and_import') && init?.method === 'POST') {
+      if (url.endsWith('/api/article/generate_and_import/jobs') && init?.method === 'POST') {
         return new Response(
-          JSON.stringify({ lemma: 'test', word_pack_id: 'wp:test:abcd', category: 'Common', generated_examples: 2, article_ids: ['art:1', 'art:2'] }),
-          { status: 200, headers: { 'Content-Type': 'application/json' } },
+          JSON.stringify({
+            job_id: 'category-generate-import-job:test',
+            job_type: 'category-generate-import',
+            status: 'succeeded',
+            result: { lemma: 'test', word_pack_id: 'wp:test:abcd', category: 'Common', generated_examples: 2, article_ids: ['art:1', 'art:2'] },
+          }),
+          { status: 202, headers: { 'Content-Type': 'application/json' } },
         );
       }
       if (url.endsWith('/api/article/art:abcd1234') && (!init || (init && (!init.method || init.method === 'GET')))) {
@@ -173,7 +178,7 @@ describe('ArticleImportPanel model/params wiring (mocked fetch)', () => {
     });
 
     const genBodies = fetchMock.mock.calls
-      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/generate_and_import') : ((c[0] as URL).toString().endsWith('/api/article/generate_and_import'))))
+      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/generate_and_import/jobs') : ((c[0] as URL).toString().endsWith('/api/article/generate_and_import/jobs'))))
       .map((c) => (c[1]?.body ? JSON.parse(c[1]!.body as string) : {}));
     expect(genBodies.some((b) => b.model === 'gpt-5.6-luna' && b.reasoning && b.text && !('temperature' in b))).toBe(true);
   });
@@ -250,7 +255,7 @@ describe('ArticleImportPanel model/params wiring (mocked fetch)', () => {
     });
 
     const genBodies = fetchMock.mock.calls
-      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/generate_and_import') : ((c[0] as URL).toString().endsWith('/api/article/generate_and_import'))))
+      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/generate_and_import/jobs') : ((c[0] as URL).toString().endsWith('/api/article/generate_and_import/jobs'))))
       .map((c) => (c[1]?.body ? JSON.parse(c[1]!.body as string) : {}));
     expect(genBodies.length).toBeGreaterThan(0);
     expect(genBodies.some((b) => b.category === 'Dev')).toBe(true);
@@ -271,7 +276,7 @@ describe('ArticleImportPanel model/params wiring (mocked fetch)', () => {
     });
 
     const genBodies = fetchMock.mock.calls
-      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/generate_and_import') : ((c[0] as URL).toString().endsWith('/api/article/generate_and_import'))))
+      .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/article/generate_and_import/jobs') : ((c[0] as URL).toString().endsWith('/api/article/generate_and_import/jobs'))))
       .map((c) => (c[1]?.body ? JSON.parse(c[1]!.body as string) : {}));
     expect(genBodies.map((b) => b.category).sort()).toEqual(
       ['Business', 'CS', 'Common', 'Dev', 'LLM'].sort(),
