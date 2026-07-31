@@ -170,16 +170,22 @@ async def enqueue_article_import_job(
     job = _create_job_record(store, job_id, owner_user_id)
     async with _article_import_lock:
         _article_import_jobs[job_id] = job
-    task = _run_article_import_job(
-        job_id,
-        req,
-        store=store,
-        runner=runner,
-    )
     if scheduler is None:
-        await task
+        await _run_article_import_job(
+            job_id,
+            req,
+            store=store,
+            runner=runner,
+        )
     else:
-        scheduler.spawn(task)
+        scheduler.spawn(
+            _run_article_import_job(
+                job_id,
+                req,
+                store=store,
+                runner=runner,
+            )
+        )
     return job.to_response()
 
 
