@@ -4,6 +4,8 @@ from copy import deepcopy
 import json
 from pathlib import Path
 
+import pytest
+
 from backend.config import settings
 from backend.flows.word_pack import WordPackFlow
 from backend.infrastructure.firestore.repositories.app_store import AppFirestoreStore
@@ -74,7 +76,8 @@ def test_wordpack_and_five_initial_example_categories_keep_six_call_baseline() -
         assert all(len(item.generation_provenance) == 1 for item in items)
 
 
-def test_wordpack_provenance_records_nested_schema_failure() -> None:
+def test_wordpack_provenance_records_nested_schema_failure(monkeypatch) -> None:
+    monkeypatch.setattr(settings, "strict_mode", False)
     llm = _SequencedWordPackLlm(
         {
             "senses": [{"id": "s1"}],
@@ -95,7 +98,24 @@ def test_wordpack_provenance_records_nested_schema_failure() -> None:
     }
 
 
-def test_wordpack_provenance_rejects_senses_with_only_blank_glosses() -> None:
+def test_wordpack_strict_mode_rejects_schema_invalid_generated_payload(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "strict_mode", True)
+    flow = WordPackFlow(
+        llm=_SequencedWordPackLlm(
+            {"senses": [{"id": "s1", "gloss_ja": "収束する"}]}
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="schema-valid usable data"):
+        flow._retrieve("converge")
+
+
+def test_wordpack_provenance_rejects_senses_with_only_blank_glosses(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "strict_mode", False)
     payload = _fixture()
     payload["senses"] = [
         {

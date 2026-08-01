@@ -120,6 +120,8 @@ class WordPackFlow:
         """語の情報を取得。OpenAI LLM を使用してセクション別のJSONを生成・解析。"""
         citations: list[Citation] = []
         llm_data: dict[str, Any] | None = None
+        schema_valid = False
+        application_valid = False
 
         # OpenAI LLM を使用して語の詳細情報を生成
         try:
@@ -148,8 +150,6 @@ class WordPackFlow:
                 if isinstance(out, str) and out.strip():
                     try:
                         llm_data = parse_json_response(out)
-                        schema_valid = False
-                        application_valid = False
                         if isinstance(llm_data, dict):
                             try:
                                 validated = GeneratedWordPackPayload.model_validate(llm_data)
@@ -217,11 +217,15 @@ class WordPackFlow:
                 raise
             # 非 strict では静かにフォールバック
 
-        # strict: LLM 出力が空/未解析ならエラー
+        # strict: LLM 出力が生成契約と適用条件を満たさない限り保存へ進めない。
         if settings.strict_mode and (
-            not isinstance(llm_data, dict) or not llm_data.get("senses")
+            not isinstance(llm_data, dict)
+            or not schema_valid
+            or not application_valid
         ):
-            raise RuntimeError("LLM returned no usable data (strict mode)")
+            raise RuntimeError(
+                "LLM returned no schema-valid usable data (strict mode)"
+            )
 
         return {"lemma": lemma, "citations": citations, "llm_data": llm_data}
 
