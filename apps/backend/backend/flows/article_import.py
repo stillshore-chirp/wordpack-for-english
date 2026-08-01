@@ -14,6 +14,9 @@ from ..flows.word_pack import WordPackFlow
 from ..id_factory import generate_word_pack_id
 from ..infrastructure.llm.json_response_parser import parse_json_response, strip_code_fences
 from ..logging import logger
+from ..llmops.completion import complete_typed, safe_provenance, with_validation
+from ..llmops.identity import prompt_identity_from_builder
+from ..llmops.types import CompletionResult
 from ..models.article import (
     ArticleDetailResponse,
     ArticleImportRequest,
@@ -45,6 +48,7 @@ class _ArticleState(TypedDict, total=False):
     generation_category: Optional[str]
     generation_started_at: Optional[str]
     generation_completed_at: Optional[str]
+    generation_provenance: list[dict[str, Any]]
     created_at: str
     updated_at: str
 
@@ -620,6 +624,52 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
         # 指定して aware datetime を記録する。これにより API 利用者がタイムゾーンを
         # 推測する必要がなくなり、DeprecationWarning も解消される。
         generation_started_at = datetime.now(UTC).isoformat()
+        generation_provenance: list[dict[str, Any]] = []
+
+        def _invoke(
+            prompt: str,
+            *,
+            prompt_id: str,
+            operation: str,
+            builder: object,
+            response_mode: str,
+            schema: object,
+        ) -> CompletionResult:
+            identity = prompt_identity_from_builder(
+                prompt_id=prompt_id,
+                operation=operation,
+                builder=builder,  # type: ignore[arg-type]
+                schema=schema,  # type: ignore[arg-type]
+                major_settings={
+                    "model": selected_llm_model,
+                    "params": formatted_llm_params,
+                    "response_mode": response_mode,
+                },
+            )
+            return complete_typed(
+                llm,
+                prompt,
+                identity=identity,
+                response_mode=response_mode,
+            )
+
+        def _record(
+            result: CompletionResult,
+            *,
+            parse: bool | None = None,
+            schema: bool | None = None,
+            application: bool | None = None,
+        ) -> None:
+            provenance = safe_provenance(
+                with_validation(
+                    result,
+                    parse=parse,
+                    schema=schema,
+                    application=application,
+                )
+            )
+            if provenance is not None:
+                generation_provenance.append(provenance)
 
         try:
             graph = create_state_graph()
@@ -642,10 +692,8 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
             # 入力の要点を構造化ログ
             import hashlib as _hf  # local import
 
-            preview = original_text[:120]
             payload = {
                 "text_chars": len(original_text),
-                "text_preview": preview,
             }
             if original_text:
                 try:
@@ -662,7 +710,7 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                 # クロージャの original_text を直接参照する。
                 txt = original_text
                 pr = self._prompt_title(txt)
-                payload = {"prompt_chars": len(pr), "prompt_preview": pr[:200]}
+                payload = {"prompt_chars": len(pr)}
                 with span(trace=None, name="article.title.prompt", input=payload):
                     pass
                 with span(
@@ -670,9 +718,18 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                     name="article.title.llm",
                     input={"prompt_chars": len(pr)},
                 ):
-                    out = self._complete_text(llm, pr)
+                    completion = _invoke(
+                        pr,
+                        prompt_id="article.title",
+                        operation="article.generate_title",
+                        builder=self._prompt_title,
+                        response_mode="plain",
+                        schema={"type": "string"},
+                    )
+                    out = completion.content
                 t = str(out or "").strip()
                 t = self._strip_code_fences(t)
+                _record(completion, schema=bool(t), application=bool(t))
                 # 安全側: 空なら Untitled（UI互換）。ダミー生成ではなく保存時に明示化するだけ。
                 s["title_en"] = t or "Untitled"
                 logger.info(
@@ -694,9 +751,18 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                     name="article.translation.llm",
                     input={"prompt_chars": len(pr)},
                 ):
-                    out = self._complete_text(llm, pr)
+                    completion = _invoke(
+                        pr,
+                        prompt_id="article.translation",
+                        operation="article.translate",
+                        builder=self._prompt_translation,
+                        response_mode="plain",
+                        schema={"type": "string"},
+                    )
+                    out = completion.content
                 ja = str(out or "").strip()
                 ja = self._strip_code_fences(ja)
+                _record(completion, schema=bool(ja), application=bool(ja))
                 s["body_ja"] = ja
                 logger.info(
                     "article_import_translation_generated", body_ja_chars=len(ja)
@@ -717,9 +783,18 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                     name="article.explanation.llm",
                     input={"prompt_chars": len(pr)},
                 ):
-                    out = self._complete_text(llm, pr)
+                    completion = _invoke(
+                        pr,
+                        prompt_id="article.explanation",
+                        operation="article.explain",
+                        builder=self._prompt_explanation,
+                        response_mode="plain",
+                        schema={"type": "string"},
+                    )
+                    out = completion.content
                 note = str(out or "").strip()
                 note = self._strip_code_fences(note)
+                _record(completion, schema=bool(note), application=bool(note))
                 s["notes_ja"] = note or None
                 logger.info(
                     "article_import_explanation_generated",
@@ -754,8 +829,22 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                     name="article.lemmas.llm",
                     input={"prompt_chars": len(pr)},
                 ):
-                    out = llm.complete(pr)
+                    completion = _invoke(
+                        pr,
+                        prompt_id="article.lemmas",
+                        operation="article.extract_lemmas",
+                        builder=self._prompt_lemmas,
+                        response_mode="json",
+                        schema={"type": "array", "items": {"type": "string"}},
+                    )
+                    out = completion.content
                 raw_list = _parse_lemmas_json(str(out or ""))
+                _record(
+                    completion,
+                    parse=bool(raw_list),
+                    schema=bool(raw_list),
+                    application=bool(raw_list),
+                )
                 s["lemmas"] = raw_list
                 logger.info("article_import_lemmas_generated", count=len(raw_list))
                 return s
@@ -867,6 +956,7 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                         generation_started_at=started_at,
                         generation_completed_at=completed_at,
                         generation_duration_ms=duration_ms,
+                        generation_provenance=generation_provenance,
                         owner_user_id=self._owner_user_id,
                     )
                     meta = store.get_article(article_id)
@@ -974,6 +1064,7 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                                 generation_started_at=started_at_db,
                                 generation_completed_at=completed_at_db,
                                 generation_duration_ms=fixed_duration,
+                                generation_provenance=generation_provenance,
                                 owner_user_id=self._owner_user_id,
                             )
                             s["llm_model"] = fixed_model or None
@@ -1104,6 +1195,7 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                 generation_duration_ms_db,
                 _guest_public_db,
                 links,
+                generation_provenance_db,
             ) = got
             link_models: list[ArticleWordPackLink] = [
                 ArticleWordPackLink(word_pack_id=wp, lemma=lm, status=st, is_empty=True)
@@ -1165,6 +1257,9 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                     if isinstance(generation_duration_ms_db, (int, float))
                     and not isinstance(generation_duration_ms_db, bool)
                     else None
+                ),
+                generation_provenance=list(
+                    generation_provenance_db or generation_provenance
                 ),
                 warnings=list(s.get("warnings", []) or []) or None,
             )

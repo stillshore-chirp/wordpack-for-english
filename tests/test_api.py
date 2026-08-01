@@ -1441,6 +1441,8 @@ def test_article_import_includes_llm_metadata(monkeypatch):
     detail = r_get.json()
     assert detail["llm_model"] == "gpt-5.6-luna"
     assert detail["llm_params"] == data["llm_params"]
+    assert len(data["generation_provenance"]) == 4
+    assert detail["generation_provenance"] == data["generation_provenance"]
     _assert_iso_utc(detail["generation_started_at"])
     _assert_iso_utc(detail["generation_completed_at"])
     assert detail["generation_duration_ms"] >= 0
@@ -1491,6 +1493,7 @@ def test_article_import_uses_plain_text_generation_for_non_json_steps(monkeypatc
     assert any("詳細な解説" in prompt for prompt in stub.plain_prompts)
     assert len(stub.json_prompts) == 1
     assert "JSON 配列" in stub.json_prompts[0]
+    assert len(response.json()["generation_provenance"]) == 4
 
 
 def test_article_import_category_and_zero_duration(monkeypatch):

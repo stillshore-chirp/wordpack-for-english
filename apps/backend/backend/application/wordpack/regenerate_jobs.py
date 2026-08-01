@@ -7,6 +7,7 @@ from typing import Any, Literal
 from pydantic import BaseModel
 
 from ...logging import logger
+from ...llmops.completion import generation_workflow_context
 from ...models.word import WordPack, WordPackRegenerateRequest
 from ..common.errors import NotFoundError
 from ..common.ports import IdGenerator, TaskScheduler
@@ -152,17 +153,18 @@ async def run_regenerate_job(
         if not job:
             return
     try:
-        result = repository.get_word_pack(word_pack_id)
-        if result is None:
-            raise NotFoundError("WordPack not found")
-        lemma, _, _, _ = result
-        word_pack, _ = await flow(
-            lemma=lemma,
-            req_opts=req,
-            scope=req.regenerate_scope,
-            error_mapping=error_mapping,
-        )
-        repository.save_word_pack(word_pack_id, lemma, word_pack.model_dump_json())
+        with generation_workflow_context(job_id):
+            result = repository.get_word_pack(word_pack_id)
+            if result is None:
+                raise NotFoundError("WordPack not found")
+            lemma, _, _, _ = result
+            word_pack, _ = await flow(
+                lemma=lemma,
+                req_opts=req,
+                scope=req.regenerate_scope,
+                error_mapping=error_mapping,
+            )
+            repository.save_word_pack(word_pack_id, lemma, word_pack.model_dump_json())
         async with _regenerate_lock:
             _update_job_record(repository, job_id, status="succeeded", result=word_pack)
         logger.info(

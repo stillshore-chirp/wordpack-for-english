@@ -42,6 +42,7 @@ def iter_example_rows(examples: Mapping[str, Any]) -> Iterable[tuple]:
             grammar_ja = str(item.get("grammar_ja") or "").strip() or None
             llm_model = str(item.get("llm_model") or "").strip() or None
             llm_params = str(item.get("llm_params") or "").strip() or None
+            generation_provenance = list(item.get("generation_provenance") or [])
             checked_only_count = normalize_non_negative_int(
                 (item or {}).get("checked_only_count")
             )
@@ -57,6 +58,7 @@ def iter_example_rows(examples: Mapping[str, Any]) -> Iterable[tuple]:
                 grammar_ja,
                 llm_model,
                 llm_params,
+                generation_provenance,
                 checked_only_count,
                 learned_count,
                 transcription_typing_count,
@@ -196,6 +198,8 @@ def merge_core_with_examples(core_json: str, rows: Sequence[Mapping[str, Any]]) 
             item["llm_model"] = r["llm_model"]
         if r.get("llm_params"):
             item["llm_params"] = r["llm_params"]
+        if r.get("generation_provenance"):
+            item["generation_provenance"] = list(r["generation_provenance"])
         item["checked_only_count"] = normalize_non_negative_int(
             r.get("checked_only_count")
         )

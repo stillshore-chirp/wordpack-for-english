@@ -36,7 +36,11 @@ class FakeQuizStore:
 
 
 class FakeQuizLlm:
+    def __init__(self) -> None:
+        self.calls = 0
+
     def complete(self, prompt: str) -> str:
+        self.calls += 1
         return json.dumps(
             {
                 "title_en": "Latency Review",
@@ -111,10 +115,13 @@ def test_quiz_generate_flow_warns_when_source_lemma_is_not_in_passage() -> None:
         }
     )
 
-    quiz = QuizGenerateFlow(store=store, llm=FakeQuizLlm()).run(req)
+    llm = FakeQuizLlm()
+    quiz = QuizGenerateFlow(store=store, llm=llm).run(req)
 
     links = {link.lemma: link for link in quiz.related_word_packs}
     assert links["latency"].word_pack_id == "wp:latency"
     assert links["latency"].occurrences
     assert links["mitigate"].warning is not None
     assert "本文中に見つかりません" in links["mitigate"].warning
+    assert llm.calls == 1
+    assert len(quiz.generation_provenance) == 1

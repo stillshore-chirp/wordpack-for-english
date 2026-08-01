@@ -11,6 +11,8 @@ from ..flows.article_import import ArticleImportFlow
 from ..flows.word_pack import WordPackFlow
 from ..id_factory import generate_word_pack_id
 from ..logging import logger
+from ..llmops.completion import complete_typed, safe_provenance, with_validation
+from ..llmops.identity import prompt_identity_from_builder
 from ..models.article import ArticleImportRequest
 from ..models.word import ExampleCategory, WordPack
 from ..observability import span
@@ -56,6 +58,21 @@ class CategoryGenerateAndImportFlow:
             "text_opts": text,
         }
         self._owner_user_id = owner_user_id
+        self._selection_provenance: list[dict[str, Any]] = []
+
+    def _record_selection(
+        self, completion: object, *, parse: bool, application: bool
+    ) -> None:
+        provenance = safe_provenance(
+            with_validation(
+                completion,
+                parse=parse,
+                schema=parse,
+                application=application,
+            )  # type: ignore[arg-type]
+        )
+        if provenance is not None:
+            self._selection_provenance.append(provenance)
 
     def _prompt_lemma(
         self, category: ExampleCategory, attempted: list[str], avoid_existing: list[str]
@@ -150,7 +167,24 @@ class CategoryGenerateAndImportFlow:
                 name="category.pick_lemma.llm",
                 input={"prompt_chars": len(prompt)},
             ):
-                out = self._llm.complete(prompt)
+                identity = prompt_identity_from_builder(
+                    prompt_id="category.pick_lemma",
+                    operation="category.pick_lemma",
+                    builder=self._prompt_lemma,
+                    schema={
+                        "type": "object",
+                        "required": ["lemma"],
+                        "properties": {"lemma": {"type": "string"}},
+                    },
+                    major_settings={**self._llm_info, "category": category.value},
+                )
+                completion = complete_typed(
+                    self._llm,
+                    prompt,
+                    identity=identity,
+                    response_mode="json",
+                )
+                out = completion.content
             try:
                 data = json.loads((out or "").strip().strip("`"))
                 lemma_raw = str(data.get("lemma") or "").strip()
@@ -159,15 +193,19 @@ class CategoryGenerateAndImportFlow:
             lemma = lemma_raw.lower()
             # basic normalization
             if not lemma or len(lemma) > 64:
+                self._record_selection(completion, parse=bool(lemma_raw), application=False)
                 attempted.append(lemma_raw or "")
                 continue
             if not all((ch.isalpha() or ch in {"-", "'", " "}) for ch in lemma):
+                self._record_selection(completion, parse=True, application=False)
                 attempted.append(lemma)
                 continue
             # reject duplicates
             if store.find_word_pack_id_by_lemma(lemma) is not None:
+                self._record_selection(completion, parse=True, application=False)
                 attempted.append(lemma)
                 continue
+            self._record_selection(completion, parse=True, application=True)
             logger.info("category_pick_lemma", category=category.value, lemma=lemma)
             return lemma
         # Fallback: choose from a deterministic candidate list filtered by existing
@@ -219,6 +257,7 @@ class CategoryGenerateAndImportFlow:
             study_card="",
             citations=[],
             confidence="low",
+            generation_provenance=list(self._selection_provenance),
         )
         wp_id = generate_word_pack_id()
         with span(
@@ -255,6 +294,7 @@ class CategoryGenerateAndImportFlow:
                     "grammar_ja": it.grammar_ja,
                     "llm_model": it.llm_model,
                     "llm_params": it.llm_params,
+                    "generation_provenance": list(it.generation_provenance),
                 }
             )
         if len(items) < 2:
@@ -264,6 +304,7 @@ class CategoryGenerateAndImportFlow:
         return items[:2]
 
     def run(self, category: ExampleCategory) -> dict:
+        self._selection_provenance = []
         lemma = self._choose_new_lemma(category)
         wp_id = self._ensure_empty_wordpack(lemma)
         items = self._generate_two_examples(lemma, category)

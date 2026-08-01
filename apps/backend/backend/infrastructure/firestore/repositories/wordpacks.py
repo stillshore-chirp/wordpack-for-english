@@ -445,6 +445,7 @@ class FirestoreWordPackRepository(FirestoreBaseRepository):
             grammar_ja,
             llm_model,
             llm_params,
+            generation_provenance,
             checked_only_count,
             learned_count,
             transcription_typing_count,
@@ -461,6 +462,7 @@ class FirestoreWordPackRepository(FirestoreBaseRepository):
                     "grammar_ja": grammar_ja,
                     "llm_model": llm_model,
                     "llm_params": llm_params,
+                    "generation_provenance": generation_provenance,
                     "checked_only_count": normalize_non_negative_int(checked_only_count),
                     "learned_count": normalize_non_negative_int(learned_count),
                     "transcription_typing_count": normalize_non_negative_int(
@@ -491,6 +493,7 @@ class FirestoreWordPackRepository(FirestoreBaseRepository):
                     "grammar_ja": data.get("grammar_ja"),
                     "llm_model": data.get("llm_model"),
                     "llm_params": data.get("llm_params"),
+                    "generation_provenance": data.get("generation_provenance") or [],
                     "checked_only_count": data.get("checked_only_count"),
                     "learned_count": data.get("learned_count"),
                     "transcription_typing_count": data.get("transcription_typing_count"),

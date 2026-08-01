@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -215,6 +215,7 @@ class Examples(BaseModel):
         llm_params: str | None = Field(
             default=None, description="LLMパラメータ情報を連結した文字列（任意）"
         )
+        generation_provenance: list[dict[str, object]] = Field(default_factory=list)
         checked_only_count: int = Field(
             default=0,
             ge=0,
@@ -396,6 +397,10 @@ class WordPack(BaseModel):
     # 生成に使用したAIのメタ（任意）
     llm_model: str | None = Field(default=None)
     llm_params: str | None = Field(default=None)
+    generation_provenance: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="raw prompt/output を含まない生成来歴",
+    )
     guest_public: bool = Field(
         default=False,
         description="ゲスト閲覧対象かどうか（WordPack単位の公開フラグ）",

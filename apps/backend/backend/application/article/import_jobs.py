@@ -8,6 +8,7 @@ from typing import Literal
 import anyio
 
 from ...logging import logger
+from ...llmops.completion import generation_workflow_context
 from ...models.article import (
     ArticleDetailResponse,
     ArticleImportJobResponse,
@@ -139,7 +140,8 @@ async def _run_article_import_job(
         if _update_job_record(store, job_id, status="running") is None:
             return
     try:
-        result = await anyio.to_thread.run_sync(runner, req)
+        with generation_workflow_context(job_id):
+            result = await anyio.to_thread.run_sync(runner, req)
     except Exception as exc:
         error = str(exc)[:500]
         async with _article_import_lock:

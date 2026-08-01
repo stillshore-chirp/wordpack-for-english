@@ -13,6 +13,9 @@ from ..domain.wordpack.lemma import validate_lemma
 from ..id_factory import generate_word_pack_id
 from ..infrastructure.llm.json_response_parser import parse_json_response
 from ..logging import logger
+from ..llmops.completion import complete_typed, safe_provenance, with_validation
+from ..llmops.identity import PromptIdentity, prompt_identity_from_builder
+from ..llmops.types import CompletionResult
 from ..models.quiz import Quiz, QuizGenerateRequest, QuizWordPackLink, QuizWordPackOccurrence
 from ..providers import get_llm_provider
 
@@ -35,17 +38,15 @@ def _normalize_llm_params(req: QuizGenerateRequest) -> str | None:
     return str(params) if params else None
 
 
-def _complete_json(llm: object, prompt: str) -> str:
-    complete = getattr(llm, "complete", None)
-    if callable(complete):
-        return str(complete(prompt) or "")
-    complete_text = getattr(llm, "complete_text", None)
-    if callable(complete_text):
-        return str(complete_text(prompt) or "")
-    raise RuntimeError("LLM provider does not support complete")
+def _complete_json(
+    llm: object, prompt: str, *, identity: PromptIdentity
+) -> CompletionResult:
+    return complete_typed(llm, prompt, identity=identity, response_mode="json")
 
 
-def _repair_json(llm: object, raw: str, error: Exception) -> str:
+def _repair_json(
+    llm: object, raw: str, error: Exception, *, llm_info: Mapping[str, Any]
+) -> CompletionResult:
     repair_prompt = f"""The following quiz JSON was invalid.
 Return corrected JSON only, preserving the original content as much as possible.
 Validation or parse error: {type(error).__name__}: {str(error)[:600]}
@@ -53,7 +54,14 @@ Validation or parse error: {type(error).__name__}: {str(error)[:600]}
 Invalid content:
 {raw[:20000]}
 """
-    return _complete_json(llm, repair_prompt)
+    identity = prompt_identity_from_builder(
+        prompt_id="quiz.repair",
+        operation="quiz.repair_json",
+        builder=_repair_json,
+        schema=Quiz.model_json_schema(),
+        major_settings=dict(llm_info),
+    )
+    return _complete_json(llm, repair_prompt, identity=identity)
 
 
 def _source_word_pack_lemmas(store: object, word_pack_ids: list[str]) -> tuple[list[str], list[QuizWordPackLink]]:
@@ -226,17 +234,35 @@ class QuizGenerateFlow:
             text_override=get_override_value(req, "text"),
         )
         llm_info = build_llm_info(req)
-        raw = _complete_json(llm, prompt)
+        prompt_identity = prompt_identity_from_builder(
+            prompt_id="quiz.generate",
+            operation="quiz.generate",
+            builder=build_quiz_generation_prompt,
+            schema=Quiz.model_json_schema(),
+            major_settings=llm_info,
+        )
+        completion = _complete_json(llm, prompt, identity=prompt_identity)
+        raw = completion.content
+        provenance: list[dict[str, Any]] = []
         if not raw.strip():
+            failed = safe_provenance(with_validation(completion, parse=False))
+            if failed is not None:
+                provenance.append(failed)
             logger.warning("quiz_generation_failed", reason_code="QUIZ_LLM_EMPTY")
             raise RuntimeError("QUIZ_LLM_EMPTY")
         try:
             data = parse_json_response(raw, prefer_json_object=True)
         except Exception as exc:
-            repaired = _repair_json(llm, raw, exc)
+            failed = safe_provenance(with_validation(completion, parse=False))
+            if failed is not None:
+                provenance.append(failed)
+            completion = _repair_json(llm, raw, exc, llm_info=llm_info)
             try:
-                data = parse_json_response(repaired, prefer_json_object=True)
+                data = parse_json_response(completion.content, prefer_json_object=True)
             except Exception as repair_exc:
+                failed = safe_provenance(with_validation(completion, parse=False))
+                if failed is not None:
+                    provenance.append(failed)
                 logger.warning("quiz_generation_failed", reason_code="QUIZ_JSON_PARSE_FAILED")
                 raise RuntimeError("QUIZ_JSON_PARSE_FAILED") from repair_exc
         if not isinstance(data, dict):
@@ -277,8 +303,19 @@ class QuizGenerateFlow:
         try:
             quiz = Quiz.model_validate(payload)
         except Exception as exc:
+            failed = safe_provenance(
+                with_validation(completion, parse=True, schema=False, application=False)
+            )
+            if failed is not None:
+                provenance.append(failed)
             logger.warning("quiz_schema_invalid", reason_code="QUIZ_SCHEMA_INVALID", error=str(exc)[:1000])
             raise RuntimeError("QUIZ_SCHEMA_INVALID") from exc
+        succeeded = safe_provenance(
+            with_validation(completion, parse=True, schema=True, application=True)
+        )
+        if succeeded is not None:
+            provenance.append(succeeded)
+        quiz = quiz.model_copy(update={"generation_provenance": provenance})
         self._store.save_quiz(
             quiz.id,
             quiz.model_dump(mode="json"),

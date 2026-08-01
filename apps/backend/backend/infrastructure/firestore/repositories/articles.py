@@ -3,7 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Literal
 
-from .base import AlreadyExists, Any, firestore
+from ....logging import logger
+from .base import AlreadyExists, Any, firestore, json
 from .base import FirestoreBaseRepository
 
 
@@ -54,6 +55,18 @@ class FirestoreArticleRepository(FirestoreBaseRepository):
             "guest_public": bool(kwargs.get("guest_public", stored.get("guest_public", False))),
             "owner_user_id": kwargs.get("owner_user_id", stored.get("owner_user_id")),
         }
+        if "generation_provenance" in kwargs:
+            try:
+                payload["generation_provenance_json"] = json.dumps(
+                    list(kwargs.get("generation_provenance") or []),
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            except Exception as exc:
+                logger.warning(
+                    "article_provenance_serialization_failed",
+                    error_type=type(exc).__name__,
+                )
         doc_ref.set(payload, merge=True)
         if related_word_packs is not None:
             for snapshot in list(self._article_word_packs.stream()):
@@ -90,6 +103,7 @@ class FirestoreArticleRepository(FirestoreBaseRepository):
         int | None,
         bool,
         list[tuple[str, str, str]],
+        list[dict[str, Any]],
     ] | None:
         doc = self._articles.document(article_id).get()
         if not doc.exists:
@@ -107,6 +121,20 @@ class FirestoreArticleRepository(FirestoreBaseRepository):
                     str(link.get("status") or ""),
                 )
             )
+        generation_provenance: list[dict[str, Any]] = []
+        try:
+            parsed_provenance = json.loads(
+                str(data.get("generation_provenance_json") or "[]")
+            )
+            if isinstance(parsed_provenance, list):
+                generation_provenance = [
+                    item for item in parsed_provenance if isinstance(item, dict)
+                ]
+        except Exception as exc:
+            logger.warning(
+                "article_provenance_deserialization_failed",
+                error_type=type(exc).__name__,
+            )
         return (
             str(data.get("title_en") or ""),
             str(data.get("body_en") or ""),
@@ -122,6 +150,7 @@ class FirestoreArticleRepository(FirestoreBaseRepository):
             data.get("generation_duration_ms"),
             bool(data.get("guest_public", False)),
             related,
+            generation_provenance,
         )
 
     def list_articles(

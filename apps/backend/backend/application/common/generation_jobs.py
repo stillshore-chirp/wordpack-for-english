@@ -11,6 +11,7 @@ import anyio
 from pydantic import BaseModel
 
 from ...logging import logger
+from ...llmops.completion import generation_workflow_context
 from .ports import IdGenerator, TaskScheduler
 
 GenerationJobType = Literal[
@@ -185,12 +186,13 @@ async def _run_generation_job(
         if _update_job(store, job_id, status="running") is None:
             return
     try:
-        if async_runner is not None:
-            result = await async_runner()
-        elif runner is not None:
-            result = await anyio.to_thread.run_sync(runner)
-        else:  # pragma: no cover - guarded by enqueue_generation_job
-            raise RuntimeError("generation job runner is not configured")
+        with generation_workflow_context(job_id):
+            if async_runner is not None:
+                result = await async_runner()
+            elif runner is not None:
+                result = await anyio.to_thread.run_sync(runner)
+            else:  # pragma: no cover - guarded by enqueue_generation_job
+                raise RuntimeError("generation job runner is not configured")
     except Exception as exc:
         error = str(exc)[:500]
         async with _generation_jobs_lock:

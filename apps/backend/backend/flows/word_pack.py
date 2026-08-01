@@ -10,6 +10,8 @@ from . import create_state_graph
 from ..infrastructure.llm.json_response_parser import parse_json_response
 from ..infrastructure.llm.prompts.examples import build_examples_prompt
 from ..infrastructure.llm.prompts.wordpack import build_wordpack_prompt
+from ..llmops.completion import complete_typed, safe_provenance, with_validation
+from ..llmops.identity import prompt_identity_from_builder
 from ..models.word import (
     DEFAULT_ETYMOLOGY_PLACEHOLDER,
     WordPack,
@@ -56,7 +58,12 @@ class WordPackFlow:
         self.llm = llm
         # 生成に使用した LLM のメタ（モデル名やパラメータ文字列表現）
         self._llm_info: dict[str, Any] = llm_info or {}
+        self._generation_provenance: list[dict[str, Any]] = []
         self.graph = create_state_graph()
+
+    @property
+    def generation_provenance(self) -> list[dict[str, Any]]:
+        return list(self._generation_provenance)
 
     def _lookup_etymology_from_dictionary(self, lemma: str) -> str | None:
         """静的な辞書ソースから語源メモを探すフォールバック。"""
@@ -112,8 +119,20 @@ class WordPackFlow:
             if self.llm is not None and hasattr(self.llm, "complete"):
                 logger.info("wordpack_llm_prompt_built", lemma=lemma)
                 prompt = build_wordpack_prompt(lemma)
-
-                out = self.llm.complete(prompt)  # type: ignore[attr-defined]
+                identity = prompt_identity_from_builder(
+                    prompt_id="wordpack.core",
+                    operation="wordpack.generate",
+                    builder=build_wordpack_prompt,
+                    schema=WordPack.model_json_schema(),
+                    major_settings=self._llm_info,
+                )
+                completion = complete_typed(
+                    self.llm,
+                    prompt,
+                    identity=identity,
+                    response_mode="json",
+                )
+                out = completion.content
                 logger.info(
                     "wordpack_llm_output_received",
                     lemma=lemma,
@@ -122,6 +141,17 @@ class WordPackFlow:
                 if isinstance(out, str) and out.strip():
                     try:
                         llm_data = parse_json_response(out)
+                        has_senses = bool(
+                            isinstance(llm_data, dict)
+                            and isinstance(llm_data.get("senses"), list)
+                            and llm_data.get("senses")
+                        )
+                        completion = with_validation(
+                            completion,
+                            parse=True,
+                            schema=isinstance(llm_data, dict),
+                            application=has_senses,
+                        )
                         logger.info(
                             "wordpack_llm_json_parsed",
                             lemma=lemma,
@@ -134,6 +164,12 @@ class WordPackFlow:
                             )
                         )
                     except json.JSONDecodeError:
+                        completion = with_validation(
+                            completion,
+                            parse=False,
+                            schema=False,
+                            application=False,
+                        )
                         logger.info("wordpack_llm_json_parse_failed", lemma=lemma)
                         citations.append(
                             Citation(
@@ -145,6 +181,16 @@ class WordPackFlow:
                             raise RuntimeError(
                                 "Failed to parse LLM JSON in strict mode"
                             )
+                else:
+                    completion = with_validation(
+                        completion,
+                        parse=False,
+                        schema=False,
+                        application=False,
+                    )
+                provenance = safe_provenance(completion)
+                if provenance is not None:
+                    self._generation_provenance.append(provenance)
         except Exception as exc:
             if settings.strict_mode:
                 # strict: LLM 呼び出し失敗/タイムアウトは即エラー
@@ -398,6 +444,7 @@ class WordPackFlow:
             study_card=study_card,
             citations=citations or [],
             confidence=confidence,
+            generation_provenance=list(self._generation_provenance),
         )
         logger.info(
             "wordpack_synthesize_done",
@@ -465,6 +512,7 @@ class WordPackFlow:
         regenerate_scope: RegenerateScope | str = RegenerateScope.all,
     ) -> WordPack:
         """語を入力として `WordPack` を生成して返す（ダミー生成なし）。"""
+        self._generation_provenance = []
         data = self._retrieve(lemma)
         # 後続の _synthesize で LLM 生成物を参照できるように一時保存
         self._last_llm_data = data.get("llm_data")
@@ -510,7 +558,7 @@ class WordPackFlow:
                 "wordpack_examples_json_parse_failed",
                 error=str(exc),
                 error_class=exc.__class__.__name__,
-                raw_preview=str(raw or "")[:200],
+                raw_chars=len(str(raw or "")),
             )
             return []
         except Exception as exc:  # pragma: no cover - defensive guard
@@ -518,7 +566,7 @@ class WordPackFlow:
                 "wordpack_examples_json_parse_failed",
                 error=str(exc),
                 error_class=exc.__class__.__name__,
-                raw_preview=str(raw or "")[:200],
+                raw_chars=len(str(raw or "")),
             )
             return []
         if isinstance(obj, list):
@@ -529,7 +577,7 @@ class WordPackFlow:
         logger.warning(
             "wordpack_examples_json_invalid_shape",
             obj_type=type(obj).__name__,
-            raw_preview=str(raw or "")[:200],
+            raw_chars=len(str(raw or "")),
         )
         return []
 
@@ -549,7 +597,30 @@ class WordPackFlow:
 
         for cat, num in plan.items():
             prompt = self._build_examples_prompt(lemma, cat, int(num))
-            out = self.llm.complete(prompt) if self.llm is not None else "{}"  # type: ignore[attr-defined]
+            identity = prompt_identity_from_builder(
+                prompt_id=f"wordpack.examples.{cat.value.lower()}",
+                operation=f"wordpack.examples.{cat.value.lower()}",
+                builder=build_examples_prompt,
+                schema={
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["en", "ja", "grammar_ja"],
+                    },
+                },
+                major_settings={**self._llm_info, "category": cat.value, "count": int(num)},
+            )
+            if self.llm is None:
+                out = "{}"
+                completion = None
+            else:
+                completion = complete_typed(
+                    self.llm,
+                    prompt,
+                    identity=identity,
+                    response_mode="json",
+                )
+                out = completion.content
             parsed = self._parse_examples_json(out if isinstance(out, str) else "{}")
             items: list[Examples.ExampleItem] = []
             for it in parsed[: int(num)]:
@@ -566,7 +637,20 @@ class WordPackFlow:
                         category=cat,
                         llm_model=model_name,
                         llm_params=params_str,
+                        generation_provenance=[],
                     )
                 )
             results[cat] = items
+            if completion is not None:
+                completion = with_validation(
+                    completion,
+                    parse=bool(parsed),
+                    schema=bool(parsed),
+                    application=len(items) == int(num),
+                )
+                provenance = safe_provenance(completion)
+                if provenance is not None:
+                    self._generation_provenance.append(provenance)
+                    for item in items:
+                        item.generation_provenance = [provenance]
         return results

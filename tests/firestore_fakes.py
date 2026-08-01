@@ -35,6 +35,7 @@ class FakeDocumentReference:
         self.id = doc_id
 
     def set(self, data: dict[str, Any], merge: bool = False) -> None:
+        self._client.write_log.append(("set", self._collection, self.id))
         bucket = self._client._data.setdefault(self._collection, {})
         if merge and self.id in bucket:
             bucket[self.id].update(data)
@@ -42,12 +43,14 @@ class FakeDocumentReference:
             bucket[self.id] = dict(data)
 
     def create(self, data: dict[str, Any]) -> None:
+        self._client.write_log.append(("create", self._collection, self.id))
         bucket = self._client._data.setdefault(self._collection, {})
         if self.id in bucket:
             raise AlreadyExists(f"document {self._collection}/{self.id} already exists")
         bucket[self.id] = dict(data)
 
     def update(self, data: dict[str, Any]) -> None:
+        self._client.write_log.append(("update", self._collection, self.id))
         bucket = self._client._data.setdefault(self._collection, {})
         if self.id not in bucket:
             raise KeyError(f"document {self._collection}/{self.id} not found")
@@ -72,6 +75,7 @@ class FakeDocumentReference:
         return FakeDocumentSnapshot(self._collection, self.id, payload, self._client)
 
     def delete(self) -> None:
+        self._client.write_log.append(("delete", self._collection, self.id))
         bucket = self._client._data.setdefault(self._collection, {})
         bucket.pop(self.id, None)
 
@@ -416,6 +420,7 @@ class FakeFirestoreClient:
 
     def __init__(self) -> None:
         self._data: dict[str, dict[str, dict[str, Any]]] = {}
+        self.write_log: list[tuple[str, str, str]] = []
 
     def collection(self, name: str) -> FakeCollectionReference:
         return FakeCollectionReference(self, name)

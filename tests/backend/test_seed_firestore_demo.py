@@ -187,7 +187,8 @@ def test_seed_firestore_from_sqlite_moves_wordpacks_and_articles(tmp_path: Path)
     article = store.articles.get_article("article-1")
     assert article is not None
     assert article[0] == "Demo Article"
-    assert article[-1] == [("wp-1", "bottleneck", "existing")]
+    assert article[-2] == [("wp-1", "bottleneck", "existing")]
+    assert article[-1] == []
     stored_meta = store.wordpacks.get_word_pack_metadata("wp-1") or {}
     assert stored_meta.get("metadata", {}).get("guest_demo") is True
 

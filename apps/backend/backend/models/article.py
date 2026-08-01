@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -79,6 +79,7 @@ class Article(BaseModel):
     # LLM 情報（任意）
     llm_model: str | None = None
     llm_params: str | None = None
+    generation_provenance: list[dict[str, Any]] = Field(default_factory=list)
     generation_category: ExampleCategory | None = None
     related_word_packs: list[ArticleWordPackLink] = Field(default_factory=list)
     generation_started_at: str | None = None

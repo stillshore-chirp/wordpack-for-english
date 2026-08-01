@@ -237,6 +237,9 @@ class FirestoreExampleRepository(FirestoreBaseRepository):
             grammar_ja = str((item or {}).get("grammar_ja") or "").strip() or None
             llm_model = str((item or {}).get("llm_model") or "").strip() or None
             llm_params = str((item or {}).get("llm_params") or "").strip() or None
+            generation_provenance = list(
+                (item or {}).get("generation_provenance") or []
+            )
             checked_only_count = normalize_non_negative_int((item or {}).get("checked_only_count"))
             learned_count = normalize_non_negative_int((item or {}).get("learned_count"))
             transcription_typing = normalize_non_negative_int(
@@ -254,6 +257,7 @@ class FirestoreExampleRepository(FirestoreBaseRepository):
                     "grammar_ja": grammar_ja,
                     "llm_model": llm_model,
                     "llm_params": llm_params,
+                    "generation_provenance": generation_provenance,
                     "checked_only_count": checked_only_count,
                     "learned_count": learned_count,
                     "transcription_typing_count": transcription_typing,
