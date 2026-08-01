@@ -511,6 +511,7 @@ def test_generate_examples_uses_llm_meta(client, monkeypatch):
                     category=cat,
                     llm_model=model_name,
                     llm_params=params,
+                    generation_provenance=[{"prompt_revision": "a" * 64}],
                 ),
                 examples_cls.ExampleItem(
                     en="Stub example 2.",
@@ -519,6 +520,7 @@ def test_generate_examples_uses_llm_meta(client, monkeypatch):
                     category=cat,
                     llm_model=model_name,
                     llm_params=params,
+                    generation_provenance=[{"prompt_revision": "a" * 64}],
                 ),
             ]
         }
@@ -542,6 +544,7 @@ def test_generate_examples_uses_llm_meta(client, monkeypatch):
     assert first["llm_model"] == "gpt-5.6-luna"
     assert "reasoning.effort=low" in first["llm_params"]
     assert "text.verbosity=medium" in first["llm_params"]
+    assert first["generation_provenance"] == [{"prompt_revision": "a" * 64}]
     assert first.get("transcription_typing_count", 0) == 0
 
     r_detail = client.get(f"/api/word/packs/{pack_id}")
@@ -550,6 +553,9 @@ def test_generate_examples_uses_llm_meta(client, monkeypatch):
     examples = detail.get("examples", {}).get("Dev", [])
     assert len(examples) >= 2
     assert examples[-1]["llm_model"] == "gpt-5.6-luna"
+    assert examples[-1]["generation_provenance"] == [
+        {"prompt_revision": "a" * 64}
+    ]
     assert examples[-1]["transcription_typing_count"] == 0
 
     # TestClient を context manager として維持し、実運用の ASGI event loop と同様に

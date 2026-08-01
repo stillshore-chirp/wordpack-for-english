@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from pydantic import ValidationError
+
 from . import create_state_graph
 
 from ..infrastructure.llm.json_response_parser import parse_json_response
@@ -146,10 +148,20 @@ class WordPackFlow:
                             and isinstance(llm_data.get("senses"), list)
                             and llm_data.get("senses")
                         )
+                        schema_valid = False
+                        if isinstance(llm_data, dict):
+                            try:
+                                WordPack.model_validate({**llm_data, "lemma": lemma})
+                                schema_valid = True
+                            except ValidationError:
+                                logger.info(
+                                    "wordpack_llm_schema_validation_failed",
+                                    lemma=lemma,
+                                )
                         completion = with_validation(
                             completion,
                             parse=True,
-                            schema=isinstance(llm_data, dict),
+                            schema=schema_valid,
                             application=has_senses,
                         )
                         logger.info(

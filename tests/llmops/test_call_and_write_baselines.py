@@ -62,10 +62,36 @@ def test_wordpack_and_five_initial_example_categories_keep_six_call_baseline() -
 
     assert llm.calls == 6
     assert len(pack.generation_provenance) == 6
+    assert pack.generation_provenance[0]["validation"] == {
+        "parse": True,
+        "schema": True,
+        "application": True,
+    }
     for category in EXAMPLE_CATEGORIES:
         items = getattr(pack.examples, category.value)
         assert len(items) == 2
         assert all(len(item.generation_provenance) == 1 for item in items)
+
+
+def test_wordpack_provenance_records_nested_schema_failure() -> None:
+    llm = _SequencedWordPackLlm(
+        {
+            "senses": "invalid",
+            "pronunciation": {"ipa_RP": "/test/"},
+            "etymology": {"note": "test", "confidence": "low"},
+            "study_card": "test",
+        }
+    )
+    flow = WordPackFlow(llm=llm)
+
+    result = flow._retrieve("converge")
+
+    assert result["llm_data"] is not None
+    assert flow.generation_provenance[0]["validation"] == {
+        "parse": True,
+        "schema": False,
+        "application": False,
+    }
 
 
 def test_additional_example_generation_keeps_one_call_per_category() -> None:

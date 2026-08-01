@@ -28,6 +28,14 @@ def test_manual_live_workflow_is_dispatch_only_and_bounded() -> None:
     assert '--confirm "${LIVE_EVALUATION_CONFIRM}"' in workflow
     live_run = workflow.split("run: |", 2)[-1]
     assert "${{ inputs.confirm }}" not in live_run
+    live_job = workflow.split("\n  live:\n", 1)[1]
+    job_env = re.search(r"(?ms)^    env:\s*\n(.*?)(?=^    steps:)", live_job)
+    assert job_env is not None
+    assert "OPENAI_API_KEY" not in job_env.group(1)
+    evaluation_step = live_job.split(
+        "      - name: Run explicitly confirmed bounded live evaluation", 1
+    )[1]
+    assert "OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}" in evaluation_step
 
 
 def test_normal_ci_and_deploy_do_not_reference_llmops_secrets_or_live_eval() -> None:
