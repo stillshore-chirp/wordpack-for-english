@@ -401,6 +401,10 @@ class WordPack(BaseModel):
         default_factory=list,
         description="raw prompt/output を含まない生成来歴",
     )
+    selection_provenance: list[dict[str, Any]] = Field(
+        default_factory=list,
+        description="カテゴリ生成で lemma を選定した際の来歴",
+    )
     guest_public: bool = Field(
         default=False,
         description="ゲスト閲覧対象かどうか（WordPack単位の公開フラグ）",

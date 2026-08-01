@@ -246,14 +246,33 @@ def evaluate_wordpack_payload(
                 operation="wordpack",
             )
         )
-    findings.extend(
-        _validate_provenance(
-            wordpack.generation_provenance,
-            expected_model=expected_model,
-            expected_operation="wordpack.generate",
-            finding_operation="wordpack",
+    if wordpack.generation_provenance:
+        findings.extend(
+            _validate_provenance(
+                wordpack.generation_provenance,
+                expected_model=expected_model,
+                expected_operation="wordpack.generate",
+                finding_operation="wordpack",
+            )
         )
-    )
+    elif not wordpack.selection_provenance:
+        findings.extend(
+            _validate_provenance(
+                [],
+                expected_model=expected_model,
+                expected_operation="wordpack.generate",
+                finding_operation="wordpack",
+            )
+        )
+    if wordpack.selection_provenance:
+        findings.extend(
+            _validate_provenance(
+                wordpack.selection_provenance,
+                expected_model=expected_model,
+                expected_operation="category.pick_lemma",
+                finding_operation="category.pick_lemma",
+            )
+        )
     seen: set[str] = set()
     for category in EXAMPLE_CATEGORIES:
         items = list(getattr(wordpack.examples, category))

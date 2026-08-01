@@ -269,7 +269,8 @@ class CategoryGenerateAndImportFlow:
             study_card="",
             citations=[],
             confidence="low",
-            generation_provenance=list(self._selection_provenance),
+            generation_provenance=[],
+            selection_provenance=list(self._selection_provenance),
         )
         wp_id = generate_word_pack_id()
         with span(

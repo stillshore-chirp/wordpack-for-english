@@ -93,6 +93,28 @@ def test_category_flow_records_effective_llm_settings(
     }
 
 
+def test_category_flow_stores_lemma_selection_provenance_separately(
+    firestore_store: AppFirestoreStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(category_module, "store", firestore_store)
+    dummy_llm = SimpleNamespace(complete=lambda prompt: "{}")
+    monkeypatch.setattr(category_module, "get_llm_provider", lambda **_: dummy_llm)
+    flow = CategoryGenerateAndImportFlow()
+    selection = {
+        "operation": "category.pick_lemma",
+        "prompt_id": "category.pick_lemma",
+    }
+    flow._selection_provenance = [selection]
+
+    word_pack_id = flow._ensure_empty_wordpack("selection-proof")
+
+    stored = firestore_store.get_word_pack(word_pack_id)
+    assert stored is not None
+    payload = json.loads(stored[1])
+    assert payload["generation_provenance"] == []
+    assert payload["selection_provenance"] == [selection]
+
+
 def test_article_import_flow_links_with_firestore_store(
     firestore_store: AppFirestoreStore, monkeypatch: pytest.MonkeyPatch
 ) -> None:

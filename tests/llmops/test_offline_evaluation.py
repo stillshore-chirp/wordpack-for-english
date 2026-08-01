@@ -23,7 +23,6 @@ from backend.infrastructure.llm.prompts.examples import (
 from backend.infrastructure.llm.prompts.wordpack import build_wordpack_prompt
 from backend.infrastructure.llm.wordpack_generator import build_llm_info
 from backend.infrastructure.llm import wordpack_generator
-from backend.llm_models import DEFAULT_LLM_MODEL
 from backend.llmops.identity import prompt_identity_from_builder
 from scripts.llmops.estimate_run import estimate
 from scripts.llmops.offline_report import (
@@ -150,6 +149,27 @@ def test_evaluator_rejects_a_wordpack_with_an_unexpected_lemma() -> None:
     )
 
     assert any(finding["code"] == "lemma_mismatch" for finding in findings)
+
+
+def test_evaluator_accepts_category_selection_provenance_in_its_own_slot() -> None:
+    fixture = json.loads(
+        Path("evals/fixtures/wordpack_converge.json").read_text(encoding="utf-8")
+    )
+    payload = fixture["wordpack"]
+    selection = payload["generation_provenance"][0]
+    selection["prompt_id"] = "category.pick_lemma"
+    selection["operation"] = "category.pick_lemma"
+    payload["generation_provenance"] = []
+    payload["selection_provenance"] = [selection]
+
+    findings = evaluate_wordpack_payload(
+        payload,
+        expected_lemma="converge",
+        expected_model="gpt-5.6-luna",
+        expected_examples_per_category=2,
+    )
+
+    assert findings == []
 
 
 @pytest.mark.parametrize(
