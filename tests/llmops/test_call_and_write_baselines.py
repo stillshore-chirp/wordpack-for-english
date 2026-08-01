@@ -4,6 +4,7 @@ from copy import deepcopy
 import json
 from pathlib import Path
 
+from backend.config import settings
 from backend.flows.word_pack import WordPackFlow
 from backend.infrastructure.firestore.repositories.app_store import AppFirestoreStore
 from backend.models.word import ExampleCategory
@@ -19,7 +20,7 @@ EXAMPLE_CATEGORIES = (
 
 
 class _SequencedWordPackLlm:
-    def __init__(self, wordpack_payload: dict[str, object]) -> None:
+    def __init__(self, wordpack_payload: object) -> None:
         self.calls = 0
         self._wordpack_payload = wordpack_payload
 
@@ -87,6 +88,42 @@ def test_wordpack_provenance_records_nested_schema_failure() -> None:
     result = flow._retrieve("converge")
 
     assert result["llm_data"] is not None
+    assert flow.generation_provenance[0]["validation"] == {
+        "parse": True,
+        "schema": False,
+        "application": False,
+    }
+
+
+def test_wordpack_provenance_rejects_senses_with_only_blank_glosses() -> None:
+    payload = _fixture()
+    payload["senses"] = [
+        {
+            **payload["senses"][0],
+            "gloss_ja": "   ",
+        }
+    ]
+    flow = WordPackFlow(llm=_SequencedWordPackLlm(payload))
+
+    result = flow._retrieve("converge")
+
+    assert result["llm_data"] is not None
+    assert flow.generation_provenance[0]["validation"] == {
+        "parse": True,
+        "schema": True,
+        "application": False,
+    }
+
+
+def test_wordpack_provenance_records_non_object_json_schema_failure(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(settings, "strict_mode", False)
+    flow = WordPackFlow(llm=_SequencedWordPackLlm([]))
+
+    result = flow._retrieve("converge")
+
+    assert result["llm_data"] == []
     assert flow.generation_provenance[0]["validation"] == {
         "parse": True,
         "schema": False,

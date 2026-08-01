@@ -154,7 +154,10 @@ class WordPackFlow:
                             try:
                                 validated = GeneratedWordPackPayload.model_validate(llm_data)
                                 schema_valid = True
-                                application_valid = bool(validated.senses)
+                                application_valid = any(
+                                    sense.gloss_ja.strip()
+                                    for sense in validated.senses
+                                )
                             except ValidationError:
                                 logger.info(
                                     "wordpack_llm_schema_validation_failed",
@@ -169,7 +172,10 @@ class WordPackFlow:
                         logger.info(
                             "wordpack_llm_json_parsed",
                             lemma=lemma,
-                            has_senses=isinstance(llm_data.get("senses"), list),
+                            has_senses=(
+                                isinstance(llm_data, dict)
+                                and isinstance(llm_data.get("senses"), list)
+                            ),
                         )
                         citations.append(
                             Citation(
@@ -213,8 +219,7 @@ class WordPackFlow:
 
         # strict: LLM 出力が空/未解析ならエラー
         if settings.strict_mode and (
-            llm_data is None
-            or (isinstance(llm_data, dict) and not llm_data.get("senses"))
+            not isinstance(llm_data, dict) or not llm_data.get("senses")
         ):
             raise RuntimeError("LLM returned no usable data (strict mode)")
 
