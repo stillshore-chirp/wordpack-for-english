@@ -88,6 +88,17 @@ jobs:
             python -m pytest
           fi
 
+      - name: Add optional offline LLMOps summary
+        if: matrix.python-version == '3.14'
+        continue-on-error: true
+        env:
+          PYTHONPATH: apps/backend
+        run: |
+          python scripts/llmops/offline_report.py \
+            --json-output /tmp/llmops-offline-report.json \
+            --markdown-output /tmp/llmops-offline-report.md \
+            --summary-file "${GITHUB_STEP_SUMMARY}"
+
   backend_container:
     name: Backend container smoke (Python 3.14)
     runs-on: ubuntu-latest

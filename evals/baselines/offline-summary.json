@@ -1,0 +1,18 @@
+{
+  "fixture_regressions": 0,
+  "required_cases": ["wordpack-converge-contract-v1"],
+  "prompt_revisions": {
+    "wordpack.core": "ec92ac5f4fd5f297bf5c6654e4adae571384f51c29eb62d07def0efaed7612d7",
+    "wordpack.examples": "d379314d461980db87c8bb5ba5b816198a13490c9b8bb6975fd3bd7eb72d3edb"
+  },
+  "schema_revisions": {
+    "wordpack.core": "68d653a762724fcb2652be452a20550a04492b916f78bceb501e1a6bb16a6ace",
+    "wordpack.examples": "c6dc8b6915fcc9c51516ef709f21e1e14d25e03716a8f8761edaa406e994a600"
+  },
+  "model_profile": {
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "high",
+    "text_verbosity": "medium",
+    "max_output_tokens": 25000
+  }
+}
