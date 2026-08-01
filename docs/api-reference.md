@@ -130,6 +130,8 @@ Response:
 
 指定 WordPack の詳細を返します。ゲスト閲覧では非公開 WordPack は 404 です。ログイン済みユーザーは既定で legacy shared data を閲覧できますが、`ENFORCE_OWNER_SCOPING=true` では `owner_user_id` の一致を要求します。
 
+新規生成データには `generation_provenance` が含まれ、各例文にも同名 field を持ちます。これは prompt revision、model、usage、fallback、validation、相関情報、hash からなる compact metadata で、raw prompt / output は含みません。導入前の保存データでは空配列です。
+
 ### `DELETE /api/word/packs/{id}`
 
 指定 WordPack を削除します。ログイン済みユーザーのみ利用できます。
@@ -237,6 +239,8 @@ Request:
 
 指定 Reader 記事の詳細を返します。ゲスト閲覧では非公開記事は 404 です。公開記事の関連 WordPack は、ゲスト公開中の WordPack だけを返します。
 
+新規生成記事は `generation_provenance` にタイトル、翻訳、解説、lemma 抽出の呼び出し来歴を持ちます。導入前の保存データでは空配列です。
+
 ### `POST /api/article/{id}/guest-public`
 
 Reader 記事のゲスト公開フラグを更新します。
@@ -267,6 +271,8 @@ Quiz API は保存済み WordPack や lemma から長文読解 Quiz を生成、
 ### `GET /api/quiz/{id}`
 
 指定 Quiz の詳細を返します。ゲスト閲覧では非公開 Quiz は 404 です。Attempt 保存はログイン済みユーザーのみ利用できます。
+
+新規生成 Quiz は `generation_provenance` に生成・必要時の修復呼び出し来歴を持ちます。導入前の保存データでは空配列です。
 
 ### `POST /api/quiz/{id}/guest-public`
 

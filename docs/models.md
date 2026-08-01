@@ -4,6 +4,8 @@
 
 JSON 生成を強制したい呼び出しでは、Responses API の `text.format={"type":"json_object"}` を使います。`response_format` は Responses API には送信しません。
 
+Responses API request は server-side conversation state を使わないため `store=false` を明示します。response ID、resolved model、status、usage、fallback と生成設定は raw content を含まない generation provenance として既存生成物へ同梱します。詳細は [LLMOps](llmops/index.md) を参照してください。
+
 ## 制御できるパラメータ
 
 - `model`: `gpt-5.6-luna`

@@ -15,6 +15,7 @@
 | `docs/authentication.md` | Google OAuth、通常セッション、ゲストセッション、Cookie、認証失敗時の確認を書く。 |
 | `docs/firestore.md` | Firestore インデックス、エミュレータ、シード、接続先、削除運用を書く。 |
 | `docs/testing/` | テスト種別ごとの実行手順、前提、成果物、基準を書く。入口は `docs/testing/index.md`。 |
+| `docs/llmops/` | Prompt Identity、生成来歴、無料のオフライン評価、完全手動の Live Evaluation、privacy 方針を書く。 |
 | `docs/api-reference.md` | REST API の一覧、権限、request / response 例、入力制約を書く。 |
 | `docs/guest_public_api.md` | ゲスト公開フラグ API の詳細を書く。 |
 | `OPERATIONS.md` | 本番監視、SLO、障害切り分け、復旧手順を書く。 |
