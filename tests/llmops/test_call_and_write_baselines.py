@@ -135,6 +135,43 @@ def test_wordpack_provenance_rejects_senses_with_only_blank_glosses(
     }
 
 
+@pytest.mark.parametrize(
+    "blank_field",
+    [
+        "sense.definition_ja",
+        "sense.nuances_ja",
+        "sense.notes_ja",
+        "sense_title",
+        "study_card",
+        "etymology.note",
+        "pronunciation.ipa_RP",
+    ],
+)
+def test_wordpack_provenance_rejects_whitespace_only_required_text(
+    monkeypatch,
+    blank_field: str,
+) -> None:
+    monkeypatch.setattr(settings, "strict_mode", False)
+    payload = _fixture()
+    if blank_field.startswith("sense."):
+        payload["senses"][0][blank_field.removeprefix("sense.")] = "   "
+    elif blank_field == "etymology.note":
+        payload["etymology"]["note"] = "   "
+    elif blank_field == "pronunciation.ipa_RP":
+        payload["pronunciation"]["ipa_RP"] = "   "
+    else:
+        payload[blank_field] = "   "
+    flow = WordPackFlow(llm=_SequencedWordPackLlm(payload))
+
+    flow._retrieve("converge")
+
+    assert flow.generation_provenance[0]["validation"] == {
+        "parse": True,
+        "schema": True,
+        "application": False,
+    }
+
+
 def test_wordpack_provenance_records_non_object_json_schema_failure(
     monkeypatch,
 ) -> None:
@@ -169,6 +206,31 @@ def test_example_provenance_records_wrapper_and_row_schema_failures() -> None:
             return json.dumps({"examples": [{"unexpected": "value"}]})
 
     flow = WordPackFlow(llm=InvalidExampleLlm())
+
+    generated = flow.generate_examples_for_categories(
+        "converge", {ExampleCategory.Dev: 1}
+    )
+
+    assert generated[ExampleCategory.Dev] == []
+    assert flow.generation_provenance[0]["validation"] == {
+        "parse": True,
+        "schema": False,
+        "application": False,
+    }
+
+
+def test_example_generation_rejects_rows_missing_required_grammar() -> None:
+    class MissingGrammarLlm:
+        def complete(self, _prompt: str) -> str:
+            return json.dumps(
+                {
+                    "examples": [
+                        {"en": "Teams converge today.", "ja": "チームは収束する。"}
+                    ]
+                }
+            )
+
+    flow = WordPackFlow(llm=MissingGrammarLlm())
 
     generated = flow.generate_examples_for_categories(
         "converge", {ExampleCategory.Dev: 1}

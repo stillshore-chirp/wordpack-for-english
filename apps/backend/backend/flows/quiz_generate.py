@@ -343,7 +343,14 @@ class QuizGenerateFlow:
         raw = completion.content
         provenance: list[dict[str, Any]] = []
         if not raw.strip():
-            failed = safe_provenance(with_validation(completion, parse=False))
+            failed = safe_provenance(
+                with_validation(
+                    completion,
+                    parse=False,
+                    schema=False,
+                    application=False,
+                )
+            )
             if failed is not None:
                 provenance.append(failed)
             logger.warning("quiz_generation_failed", reason_code="QUIZ_LLM_EMPTY")
@@ -351,14 +358,28 @@ class QuizGenerateFlow:
         try:
             data = parse_json_response(raw, prefer_json_object=True)
         except Exception as exc:
-            failed = safe_provenance(with_validation(completion, parse=False))
+            failed = safe_provenance(
+                with_validation(
+                    completion,
+                    parse=False,
+                    schema=False,
+                    application=False,
+                )
+            )
             if failed is not None:
                 provenance.append(failed)
             completion = _repair_json(llm, raw, exc, llm_info=llm_info)
             try:
                 data = parse_json_response(completion.content, prefer_json_object=True)
             except Exception as repair_exc:
-                failed = safe_provenance(with_validation(completion, parse=False))
+                failed = safe_provenance(
+                    with_validation(
+                        completion,
+                        parse=False,
+                        schema=False,
+                        application=False,
+                    )
+                )
                 if failed is not None:
                     provenance.append(failed)
                 logger.warning("quiz_generation_failed", reason_code="QUIZ_JSON_PARSE_FAILED")

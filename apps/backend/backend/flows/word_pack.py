@@ -39,6 +39,54 @@ from ..pronunciation import generate_pronunciation
 from ..sense_title import choose_sense_title
 
 
+def _has_required_wordpack_text(payload: GeneratedWordPackPayload) -> bool:
+    required_text = [
+        payload.sense_title,
+        payload.study_card,
+        payload.etymology.note,
+        payload.pronunciation.ipa_RP,
+        *(
+            value
+            for sense in payload.senses
+            for value in (
+                sense.id,
+                sense.gloss_ja,
+                sense.definition_ja,
+                sense.nuances_ja,
+                sense.register_,
+                sense.notes_ja,
+            )
+        ),
+        *(
+            value
+            for sense in payload.senses
+            for values in (sense.patterns, sense.synonyms, sense.antonyms)
+            for value in values
+        ),
+        *(
+            value
+            for group in (
+                payload.collocations.general,
+                payload.collocations.academic,
+            )
+            for values in (group.verb_object, group.adj_noun, group.prep_noun)
+            for value in values
+        ),
+        *(
+            value
+            for contrast in payload.contrast
+            for value in (contrast.with_, contrast.diff_ja)
+        ),
+    ]
+    optional_text = [
+        value
+        for sense in payload.senses
+        for value in (sense.term_overview_ja, sense.term_core_ja)
+        if value is not None
+    ]
+    return all(value.strip() for value in (*required_text, *optional_text))
+
+
 # --- 例文生成プロンプト: Notes 分割（共通/カテゴリ別） ---
 class WordPackFlow:
     """Word pack generation flow (no dummy outputs).
@@ -154,10 +202,7 @@ class WordPackFlow:
                             try:
                                 validated = GeneratedWordPackPayload.model_validate(llm_data)
                                 schema_valid = True
-                                application_valid = any(
-                                    sense.gloss_ja.strip()
-                                    for sense in validated.senses
-                                )
+                                application_valid = _has_required_wordpack_text(validated)
                             except ValidationError:
                                 logger.info(
                                     "wordpack_llm_schema_validation_failed",
@@ -652,7 +697,8 @@ class WordPackFlow:
                 out if isinstance(out, str) else "{}"
             )
             items: list[Examples.ExampleItem] = []
-            for it in parsed[: int(num)]:
+            applicable_rows = parsed[: int(num)] if schema_valid else []
+            for it in applicable_rows:
                 en = str(it.get("en") or "").strip()
                 ja = str(it.get("ja") or "").strip()
                 if not en or not ja:
@@ -675,7 +721,7 @@ class WordPackFlow:
                     completion,
                     parse=parse_valid,
                     schema=schema_valid,
-                    application=len(items) == int(num),
+                    application=schema_valid and len(items) == int(num),
                 )
                 provenance = safe_provenance(completion)
                 if provenance is not None:

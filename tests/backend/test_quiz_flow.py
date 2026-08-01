@@ -229,6 +229,37 @@ def test_quiz_generate_flow_rejects_whitespace_only_required_text(
     assert store.saved is None
 
 
+def test_quiz_repair_records_complete_boolean_validation_outcomes() -> None:
+    valid_payload = FakeQuizLlm().complete("")
+
+    class RepairingQuizLlm:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, _prompt: str) -> str:
+            self.calls += 1
+            return "not-json" if self.calls == 1 else valid_payload
+
+    req = QuizGenerateRequest.model_validate(
+        {
+            "lemmas": ["latency"],
+            "section_count": 1,
+            "questions_per_section": 1,
+            "model": "gpt-5.6-luna",
+        }
+    )
+
+    quiz = QuizGenerateFlow(
+        store=FakeQuizStore(),
+        llm=RepairingQuizLlm(),
+    ).run(req)
+
+    assert [entry["validation"] for entry in quiz.generation_provenance] == [
+        {"parse": False, "schema": False, "application": False},
+        {"parse": True, "schema": True, "application": True},
+    ]
+
+
 def test_quiz_schema_failure_log_excludes_generated_input(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
