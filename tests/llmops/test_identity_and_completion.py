@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import replace
 import json
+import time
 from types import SimpleNamespace
 
 import pytest
@@ -304,6 +306,14 @@ def test_langfuse_initialization_failure_does_not_block_completion(monkeypatch: 
         "get_langfuse",
         lambda: (_ for _ in ()).throw(RuntimeError("unavailable")),
     )
+
+    @contextmanager
+    def unexpected_span(**_kwargs):
+        raise AssertionError("span must not retry failed Langfuse initialization")
+        yield
+
+    monkeypatch.setattr(provider_module, "span", unexpected_span)
+    monkeypatch.setattr(provider_module.settings, "strict_mode", True)
     provider = provider_module._OpenAILLM(
         api_key="fake",
         model="gpt-5.6-luna",
@@ -315,6 +325,45 @@ def test_langfuse_initialization_failure_does_not_block_completion(monkeypatch: 
 
     assert result.content == '{"ok": true}'
     assert result.response_status == "completed"
+
+
+def test_timeout_preserves_in_progress_parameter_fallback_attempt_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class Responses:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise RuntimeError("Unsupported parameter: text.verbosity")
+            if len(calls) == 2:
+                time.sleep(0.04)
+            return SimpleNamespace(output_text='{"ok": true}', status="completed")
+
+    class Client:
+        def __init__(self, **_kwargs) -> None:
+            self.responses = Responses()
+
+    monkeypatch.setattr(provider_module, "OpenAI", Client)
+    monkeypatch.setattr(provider_module, "get_langfuse", lambda: None)
+    monkeypatch.setattr(provider_module.settings, "strict_mode", True)
+    monkeypatch.setattr(provider_module.settings, "llm_max_retries", 2)
+    monkeypatch.setattr(provider_module.settings, "llm_timeout_ms", 10)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        monkeypatch.setattr(provider_module, "_get_llm_executor", lambda: executor)
+        provider = provider_module._OpenAILLM(
+            api_key="fake",
+            model="gpt-5.6-luna",
+            reasoning={"effort": "high"},
+            text={"verbosity": "medium"},
+        )
+        wrapped = provider_module._llm_with_policy(provider)
+
+        result = wrapped.complete_result("secret prompt", identity=_identity())
+
+    assert len(calls) == 3
+    assert result.attempt_count == 3
 
 
 def test_provenance_never_contains_raw_content_and_serialization_failure_is_nonfatal() -> None:

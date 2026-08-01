@@ -7,7 +7,7 @@ import time
 from concurrent.futures import TimeoutError as FuturesTimeout
 from contextlib import contextmanager
 from dataclasses import replace
-from typing import Any, Iterator, Optional
+from typing import Any, Callable, Iterator, Optional
 
 from ..config import settings
 from ..llm_models import (
@@ -26,6 +26,11 @@ try:  # pragma: no cover - ネットワーク依存の外部SDK
     from openai import OpenAI  # type: ignore
 except Exception:  # pragma: no cover - 任意依存
     OpenAI = None  # type: ignore
+
+
+_PROVIDER_ATTEMPT_OBSERVER: contextvars.ContextVar[
+    Callable[[int], None] | None
+] = contextvars.ContextVar("provider_attempt_observer", default=None)
 
 
 class _LLMBase:
@@ -129,14 +134,19 @@ def _langfuse_span(name: str, model: str, prompt: str) -> Iterator[Any]:
     """Langfuse span を開始し、呼び出し元へコンテキストを提供する。"""
 
     try:
-        trace_factory = getattr(get_langfuse(), "trace", None)
+        langfuse = get_langfuse()
+        if langfuse is None:
+            yield None
+            return
+        trace_factory = getattr(langfuse, "trace", None)
         trace = None if trace_factory is None else trace_factory(name="LLM call")
     except Exception as exc:
         logger.warning(
             "langfuse_trace_initialization_failed",
             error_type=type(exc).__name__,
         )
-        trace = None
+        yield None
+        return
     with span(trace=trace, name=name, input=_prepare_span_input(model, prompt)) as current:
         yield current
 
@@ -386,6 +396,9 @@ class _OpenAILLM(_LLMBase):  # pragma: no cover - オンライン利用が前提
         with _langfuse_span("openai.responses.create", self._model, prompt) as current_span:
             for attempt_index, attempt in enumerate(attempts):
                 try:
+                    attempt_observer = _PROVIDER_ATTEMPT_OBSERVER.get()
+                    if attempt_observer is not None:
+                        attempt_observer(attempt_index + 1)
                     resp = self._create_response(
                         prompt=prompt,
                         use_json=bool(attempt["use_json"]),
@@ -548,13 +561,29 @@ def _llm_with_policy(llm: _LLMBase, *, max_attempts: int | None = None) -> _LLMB
             attempt_limit = max_attempts or max(1, settings.llm_max_retries)
             for policy_attempt in range(1, attempt_limit + 1):
                 future = None
+                provider_attempts = {"count": 0}
                 try:
                     ctx = contextvars.copy_context()
+
+                    def invoke_provider() -> CompletionResult:
+                        def observe_attempt(count: int) -> None:
+                            provider_attempts["count"] = max(
+                                provider_attempts["count"], count
+                            )
+
+                        token = _PROVIDER_ATTEMPT_OBSERVER.set(observe_attempt)
+                        try:
+                            return llm.complete_result(
+                                prompt,
+                                identity=identity,
+                                response_mode=response_mode,
+                            )
+                        finally:
+                            _PROVIDER_ATTEMPT_OBSERVER.reset(token)
+
                     future = executor.submit(
                         ctx.run,
-                        lambda: llm.complete_result(
-                            prompt, identity=identity, response_mode=response_mode
-                        ),
+                        invoke_provider,
                     )
                     result = future.result(timeout=settings.llm_timeout_ms / 1000.0)
                     return replace(
@@ -564,7 +593,9 @@ def _llm_with_policy(llm: _LLMBase, *, max_attempts: int | None = None) -> _LLMB
                 except Exception as exc:
                     last_exc = exc
                     completed_attempts += max(
-                        1, int(getattr(exc, "llm_attempt_count", 1))
+                        1,
+                        provider_attempts["count"],
+                        int(getattr(exc, "llm_attempt_count", 1)),
                     )
                     logger.info(
                         "llm_complete_error",
