@@ -217,6 +217,14 @@ def evaluate_wordpack_payload(
                 operation="wordpack",
             )
         )
+    if wordpack.lemma.strip().casefold() != expected_lemma.strip().casefold():
+        findings.append(
+            _finding(
+                "lemma_mismatch",
+                f"expected {expected_lemma}, got {wordpack.lemma}",
+                operation="wordpack",
+            )
+        )
     findings.extend(
         _validate_provenance(
             wordpack.generation_provenance,

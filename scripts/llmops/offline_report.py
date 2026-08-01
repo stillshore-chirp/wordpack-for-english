@@ -102,9 +102,27 @@ def build_report(
     cases = [evaluate_fixture(path) for path in sorted(fixtures_dir.glob("*.json"))]
     regressions = sum(len(case["findings"]) for case in cases)
     snapshot = current_snapshot()
+    baseline_loaded = False
     try:
-        baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
-    except Exception:
+        loaded_baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
+        if not isinstance(loaded_baseline, dict):
+            raise ValueError("baseline must be an object")
+        required_values = (
+            loaded_baseline.get("prompt_revisions"),
+            loaded_baseline.get("schema_revisions"),
+            loaded_baseline.get("model_profile"),
+        )
+        required_case_values = loaded_baseline.get("required_cases")
+        required_cases_valid = isinstance(required_case_values, list) and any(
+            str(case_id).strip() for case_id in required_case_values
+        )
+        if not all(isinstance(value, dict) and value for value in required_values):
+            raise ValueError("baseline is missing required mappings")
+        if not required_cases_valid:
+            raise ValueError("baseline is missing required fields")
+        baseline = loaded_baseline
+        baseline_loaded = True
+    except (OSError, UnicodeError, TypeError, ValueError):
         baseline = {}
     raw_required_cases = baseline.get("required_cases")
     required_cases = (
@@ -123,12 +141,15 @@ def build_report(
     }
     missing_required_cases = sorted(required_cases - observed_cases)
     regressions += len(missing_required_cases)
+    if not baseline_loaded:
+        regressions += 1
     return {
         "prompt_changed": "Yes" if baseline.get("prompt_revisions") != snapshot["prompt_revisions"] else "No",
         "model_profile_changed": "Yes" if baseline.get("model_profile") != snapshot["model_profile"] else "No",
         "schema_changed": "Yes" if baseline.get("schema_revisions") != snapshot["schema_revisions"] else "No",
         "offline_contract_tests": "Passed" if regressions == 0 and cases else "Failed",
         "fixture_regressions": regressions,
+        "baseline_status": "Passed" if baseline_loaded else "Failed",
         "missing_required_cases": missing_required_cases,
         "paid_llm_requests": 0,
         "snapshot": snapshot,
@@ -146,6 +167,7 @@ def render_markdown(report: dict[str, object]) -> str:
             f"- Schema changed: {report['schema_changed']}",
             f"- Offline contract tests: {report['offline_contract_tests']}",
             f"- Fixture regressions: {report['fixture_regressions']}",
+            f"- Baseline status: {report['baseline_status']}",
             "- Missing required cases: "
             + (", ".join(report["missing_required_cases"]) or "None"),
             "- Paid LLM requests: 0",

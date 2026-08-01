@@ -132,6 +132,23 @@ def test_evaluator_rejects_provenance_from_another_operation() -> None:
     }
 
 
+def test_evaluator_rejects_a_wordpack_with_an_unexpected_lemma() -> None:
+    fixture = json.loads(
+        Path("evals/fixtures/wordpack_converge.json").read_text(encoding="utf-8")
+    )
+    payload = fixture["wordpack"]
+    payload["lemma"] = "diverge"
+
+    findings = evaluate_wordpack_payload(
+        payload,
+        expected_lemma="converge",
+        expected_model="gpt-5.6-luna",
+        expected_examples_per_category=2,
+    )
+
+    assert any(finding["code"] == "lemma_mismatch" for finding in findings)
+
+
 @pytest.mark.parametrize(
     ("validation", "expected_code"),
     [
@@ -201,12 +218,26 @@ def test_live_examples_apply_production_truncation_before_usability_check() -> N
     ]
 
 
+def test_live_wordpack_classifies_non_object_json_as_parsed_but_schema_invalid() -> None:
+    payload, parse_ok, schema_ok, generated = live_eval._parse_wordpack_completion(
+        "[]",
+        parser=json.loads,
+        payload_model=GeneratedWordPackPayload,
+    )
+
+    assert payload == {}
+    assert parse_ok is True
+    assert schema_ok is False
+    assert generated is None
+
+
 def test_offline_report_generates_json_and_short_markdown_summary() -> None:
     report = build_report(Path("evals/fixtures"))
     markdown = render_markdown(report)
     json.dumps(report)
     assert report["offline_contract_tests"] == "Passed"
     assert report["fixture_regressions"] == 0
+    assert report["baseline_status"] == "Passed"
     assert report["missing_required_cases"] == []
     assert "Paid LLM requests: 0" in markdown
 
@@ -265,6 +296,25 @@ def test_offline_report_fails_when_required_fixture_is_replaced(
     assert report["offline_contract_tests"] == "Failed"
     assert report["fixture_regressions"] == 1
     assert report["missing_required_cases"] == ["wordpack-converge-contract-v1"]
+
+
+@pytest.mark.parametrize("baseline_contents", [None, "not-json", "[]", "{}"])
+def test_offline_report_fails_when_baseline_cannot_be_loaded(
+    tmp_path: Path,
+    baseline_contents: str | None,
+) -> None:
+    baseline_path = tmp_path / "offline-summary.json"
+    if baseline_contents is not None:
+        baseline_path.write_text(baseline_contents, encoding="utf-8")
+
+    report = build_report(
+        Path("evals/fixtures"),
+        baseline_path=baseline_path,
+    )
+
+    assert report["offline_contract_tests"] == "Failed"
+    assert report["fixture_regressions"] == 1
+    assert report["baseline_status"] == "Failed"
 
 
 def test_llmops_clis_start_without_application_session_secret(tmp_path: Path) -> None:

@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import sys
+from typing import Any, Callable
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
 for import_root in (REPOSITORY_ROOT, REPOSITORY_ROOT / "apps" / "backend"):
@@ -59,6 +60,27 @@ def _retained_example_rows(rows: object, count: int) -> list[dict[str, object]]:
         grammar_ja = str(row.get("grammar_ja") or "").strip() or None
         retained.append({**row, "en": en, "ja": ja, "grammar_ja": grammar_ja})
     return retained
+
+
+def _parse_wordpack_completion(
+    content: str,
+    *,
+    parser: Callable[[str], object],
+    payload_model: Any,
+) -> tuple[dict[str, object], bool, bool, object | None]:
+    """構文解析とtop-level/schema検証を別々の結果として返す。"""
+
+    try:
+        parsed = parser(content)
+    except Exception:
+        return {}, False, False, None
+    if not isinstance(parsed, dict):
+        return {}, True, False, None
+    try:
+        generated = payload_model.model_validate(parsed)
+    except Exception:
+        return parsed, True, False, None
+    return parsed, True, True, generated
 
 
 def _arguments() -> argparse.Namespace:
@@ -163,27 +185,18 @@ def main(*, provider_factory=None) -> int:
                 major_settings=_live_major_settings(settings.llm_model),
             )
             completion = bounded_completion(wordpack_prompt, identity=identity)
-            payload: dict[str, object] = {}
-            parse_ok = False
-            schema_ok = False
-            generated_wordpack: GeneratedWordPackPayload | None = None
-            try:
-                parsed_wordpack = parse_json_response(completion.content)
-                if isinstance(parsed_wordpack, dict):
-                    payload = parsed_wordpack
-                    parse_ok = True
-            except Exception:
-                # Invalid generated JSON is a quality finding; the paid run continues
-                # so the report preserves all bounded case results.
-                pass
-            if parse_ok:
-                try:
-                    generated_wordpack = GeneratedWordPackPayload.model_validate(payload)
-                    schema_ok = True
-                except Exception:
-                    # Schema failures are recorded in provenance and evaluated below;
-                    # they do not abort the remaining bounded requests.
-                    pass
+            payload, parse_ok, schema_ok, parsed_wordpack = (
+                _parse_wordpack_completion(
+                    completion.content,
+                    parser=parse_json_response,
+                    payload_model=GeneratedWordPackPayload,
+                )
+            )
+            generated_wordpack = (
+                parsed_wordpack
+                if isinstance(parsed_wordpack, GeneratedWordPackPayload)
+                else None
+            )
             application_ok = _has_usable_senses(
                 generated_wordpack.senses if generated_wordpack else []
             )
