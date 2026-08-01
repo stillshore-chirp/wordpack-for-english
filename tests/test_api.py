@@ -915,12 +915,16 @@ def test_word_pack_sanitizes_control_chars_in_llm_json(monkeypatch: pytest.Monke
             # gloss_ja に RAW 制御文字 (U+0001) を混入させ、未エスケープ JSON を返す
             cc = chr(1)
             return (
-                '{"senses":[{"id":"s1","gloss_ja":"テ' + cc + 'スト語義","patterns":["p"]}],'
+                '{"senses":[{"id":"s1","gloss_ja":"テ' + cc + 'スト語義",'
+                '"definition_ja":"制御文字を含む語義です。",'
+                '"nuances_ja":"サニタイズ動作の確認に使います。",'
+                '"patterns":["p"],"synonyms":[],"antonyms":[],'
+                '"register":"neutral","notes_ja":"テスト用です。"}],'
                 '"sense_title":"タイトル",'
                 '"collocations":{"general":{"verb_object":[],"adj_noun":[],"prep_noun":[]},"academic":{"verb_object":[],"adj_noun":[],"prep_noun":[]}},'
                 '"contrast":[],'
                 '"examples":{"Dev":[],"CS":[],"LLM":[],"Business":[],"Common":[]},'
-                '"etymology":{"note":"","confidence":"low"},'
+                '"etymology":{"note":"テスト語源","confidence":"low"},'
                 '"study_card":"カード",'
                 '"pronunciation":{"ipa_RP":"/t/"}'
                 "}"

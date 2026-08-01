@@ -226,9 +226,12 @@ def test_offline_report_fails_when_required_fixture_is_replaced(
 
 
 def test_llmops_clis_start_without_application_session_secret(tmp_path: Path) -> None:
+    repository_root = Path(__file__).resolve().parents[2]
     clean_env = os.environ.copy()
     clean_env.pop("SESSION_SECRET_KEY", None)
-    clean_env["PYTHONPATH"] = "apps/backend"
+    clean_env["PYTHONPATH"] = os.pathsep.join(
+        (str(repository_root), str(repository_root / "apps" / "backend"))
+    )
     import_check = subprocess.run(
         [
             sys.executable,
@@ -242,6 +245,7 @@ def test_llmops_clis_start_without_application_session_secret(tmp_path: Path) ->
         capture_output=True,
         text=True,
         env=clean_env,
+        cwd=repository_root,
     )
     assert import_check.returncode == 0, import_check.stderr
 
@@ -256,6 +260,7 @@ def test_llmops_clis_start_without_application_session_secret(tmp_path: Path) ->
         capture_output=True,
         text=True,
         env=clean_env,
+        cwd=repository_root,
     )
     assert report.returncode == 0, report.stderr
     assert (tmp_path / "report.json").is_file()
