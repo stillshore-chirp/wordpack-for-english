@@ -3,6 +3,39 @@ from __future__ import annotations
 from ....models.word import ExampleCategory
 
 
+def examples_response_schema() -> dict[str, object]:
+    return {
+        "type": "object",
+        "required": ["examples"],
+        "properties": {
+            "examples": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": ["en", "ja", "grammar_ja"],
+                    "properties": {
+                        "en": {"type": "string", "minLength": 1},
+                        "ja": {"type": "string", "minLength": 1},
+                        "grammar_ja": {"type": "string", "minLength": 1},
+                    },
+                },
+            }
+        },
+    }
+
+
+def is_valid_examples_response(value: object) -> bool:
+    if not isinstance(value, dict) or not isinstance(value.get("examples"), list):
+        return False
+    for item in value["examples"]:
+        if not isinstance(item, dict):
+            return False
+        for field in ("en", "ja", "grammar_ja"):
+            if not isinstance(item.get(field), str) or not item[field].strip():
+                return False
+    return True
+
+
 def examples_common_notes_text() -> str:
     return (
         "注意事項:\n"

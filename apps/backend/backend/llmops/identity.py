@@ -66,7 +66,6 @@ def _dependency_definition(value: Any, seen: set[str]) -> Any:
     return {
         "kind": "value",
         "type": f"{type(value).__module__}.{type(value).__qualname__}",
-        "value": str(value),
     }
 
 

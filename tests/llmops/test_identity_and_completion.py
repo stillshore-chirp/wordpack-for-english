@@ -19,6 +19,9 @@ from backend.llmops.identity import prompt_identity_from_builder
 from backend.providers import llm as provider_module
 
 
+_RUNTIME_OBJECT = SimpleNamespace(unrelated="first")
+
+
 def _builder(value: str) -> str:
     return f"Prompt: {value}"
 
@@ -29,6 +32,10 @@ def _prompt_fragment() -> str:
 
 def _builder_with_fragment(value: str) -> str:
     return f"{_prompt_fragment()}: {value}"
+
+
+def _builder_with_runtime_object(value: str) -> str:
+    return f"Prompt: {value}" if _RUNTIME_OBJECT is not None else value
 
 
 def _identity(operation: str = "test.operation"):
@@ -82,6 +89,36 @@ def test_prompt_identity_changes_with_referenced_helper_source(
     )
 
     assert first.prompt_revision != changed.prompt_revision
+
+
+def test_prompt_identity_ignores_unrelated_arbitrary_runtime_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = prompt_identity_from_builder(
+        prompt_id="test.runtime",
+        operation="test.runtime",
+        builder=_builder_with_runtime_object,
+        schema={"type": "string"},
+        major_settings={"model": "gpt-5.6-luna"},
+    )
+    monkeypatch.setattr(_RUNTIME_OBJECT, "unrelated", "second")
+    unchanged = prompt_identity_from_builder(
+        prompt_id="test.runtime",
+        operation="test.runtime",
+        builder=_builder_with_runtime_object,
+        schema={"type": "string"},
+        major_settings={"model": "gpt-5.6-luna"},
+    )
+    changed = prompt_identity_from_builder(
+        prompt_id="test.runtime",
+        operation="test.runtime",
+        builder=_builder_with_runtime_object,
+        schema={"type": "string"},
+        major_settings={"model": "gpt-5.6-luna-next"},
+    )
+
+    assert unchanged.prompt_revision == first.prompt_revision
+    assert changed.prompt_revision != first.prompt_revision
 
 
 def test_legacy_test_double_is_called_once_and_parallel_results_do_not_mix() -> None:

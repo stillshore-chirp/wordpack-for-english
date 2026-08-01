@@ -106,6 +106,25 @@ def test_additional_example_generation_keeps_one_call_per_category() -> None:
     assert len(generated[ExampleCategory.Dev]) == 2
 
 
+def test_example_provenance_records_wrapper_and_row_schema_failures() -> None:
+    class InvalidExampleLlm:
+        def complete(self, _prompt: str) -> str:
+            return json.dumps({"examples": [{"unexpected": "value"}]})
+
+    flow = WordPackFlow(llm=InvalidExampleLlm())
+
+    generated = flow.generate_examples_for_categories(
+        "converge", {ExampleCategory.Dev: 1}
+    )
+
+    assert generated[ExampleCategory.Dev] == []
+    assert flow.generation_provenance[0]["validation"] == {
+        "parse": True,
+        "schema": False,
+        "application": False,
+    }
+
+
 def _wordpack_write_count(*, include_provenance: bool) -> tuple[int, set[str]]:
     client = FakeFirestoreClient()
     store = AppFirestoreStore(client=client)

@@ -19,7 +19,10 @@ except ModuleNotFoundError:  # direct script execution
 prepare_backend_cli_environment()
 
 from evals.evaluators.contracts import evaluate_fixture
-from backend.infrastructure.llm.prompts.examples import build_examples_prompt
+from backend.infrastructure.llm.prompts.examples import (
+    build_examples_prompt,
+    examples_response_schema,
+)
 from backend.infrastructure.llm.prompts.wordpack import build_wordpack_prompt
 from backend.llm_models import (
     DEFAULT_LLM_MODEL,
@@ -32,13 +35,6 @@ from backend.settings.base import Settings
 
 
 def current_snapshot() -> dict[str, object]:
-    examples_schema = {
-        "type": "array",
-        "items": {
-            "type": "object",
-            "required": ["en", "ja", "grammar_ja"],
-        },
-    }
     identities = {
         "wordpack.core": prompt_identity_from_builder(
             prompt_id="wordpack.core",
@@ -50,7 +46,7 @@ def current_snapshot() -> dict[str, object]:
             prompt_id="wordpack.examples",
             operation="wordpack.examples",
             builder=build_examples_prompt,
-            schema=examples_schema,
+            schema=examples_response_schema(),
         ),
     }
     return {

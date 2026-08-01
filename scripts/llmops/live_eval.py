@@ -43,6 +43,13 @@ def _arguments() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _write_report(path: Path, report: dict[str, object]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
+
+
 def main() -> int:
     args = _arguments()
     preflight = estimate(
@@ -53,8 +60,7 @@ def main() -> int:
     )
     report: dict[str, object] = {"mode": args.mode, "preflight": preflight, "results": []}
     if args.mode == "estimate":
-        args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        _write_report(args.output, report)
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
     if args.confirm != CONFIRM_PHRASE:
@@ -64,7 +70,11 @@ def main() -> int:
 
     from backend.config import settings
     from backend.infrastructure.llm.json_response_parser import parse_json_response
-    from backend.infrastructure.llm.prompts.examples import build_examples_prompt
+    from backend.infrastructure.llm.prompts.examples import (
+        build_examples_prompt,
+        examples_response_schema,
+        is_valid_examples_response,
+    )
     from backend.infrastructure.llm.prompts.wordpack import build_wordpack_prompt
     from backend.llmops import complete_typed, prompt_identity_from_builder
     from backend.llmops.completion import safe_provenance, with_validation
@@ -94,71 +104,129 @@ def main() -> int:
         return complete_typed(llm, prompt, identity=identity)
 
     results: list[dict[str, object]] = []
-    for case in cases:
-        lemma = str(case["lemma"])
-        count = int(case.get("examples_per_category") or 2)
-        wordpack_prompt = build_wordpack_prompt(lemma)
-        identity = prompt_identity_from_builder(
-            prompt_id="wordpack.core",
-            operation="wordpack.generate",
-            builder=build_wordpack_prompt,
-            schema=WordPack.model_json_schema(),
-            major_settings={"model": settings.llm_model},
-        )
-        completion = bounded_completion(wordpack_prompt, identity=identity)
-        try:
-            payload = parse_json_response(completion.content)
-            parse_ok = isinstance(payload, dict)
-        except Exception:
-            payload = {}
-            parse_ok = False
-        provenance = safe_provenance(with_validation(completion, parse=parse_ok))
-        payload["lemma"] = lemma
-        payload["llm_model"] = settings.llm_model
-        payload["generation_provenance"] = [provenance] if provenance else []
-        examples: dict[str, list[dict[str, object]]] = {}
-        for category_name in EXAMPLE_CATEGORY_NAMES:
-            category = ExampleCategory(category_name)
-            prompt = build_examples_prompt(lemma, category, count)
-            example_identity = prompt_identity_from_builder(
-                prompt_id=f"wordpack.examples.{category.value.lower()}",
-                operation=f"wordpack.examples.{category.value.lower()}",
-                builder=build_examples_prompt,
-                schema={"type": "array"},
-                major_settings={"model": settings.llm_model, "category": category.value, "count": count},
+    def persist_live_report(*, failure: BaseException | None = None) -> None:
+        report["results"] = results
+        report["paid_llm_requests"] = paid_requests
+        report["reserved_output_tokens"] = reserved_output_tokens
+        report["single_physical_attempt_per_completion"] = True
+        if failure is not None:
+            report["failure"] = {
+                "stage": "live_evaluation",
+                "error_type": type(failure).__name__,
+            }
+        _write_report(args.output, report)
+
+    try:
+        for case in cases:
+            lemma = str(case["lemma"])
+            count = int(case.get("examples_per_category") or 2)
+            wordpack_prompt = build_wordpack_prompt(lemma)
+            identity = prompt_identity_from_builder(
+                prompt_id="wordpack.core",
+                operation="wordpack.generate",
+                builder=build_wordpack_prompt,
+                schema=WordPack.model_json_schema(),
+                major_settings={"model": settings.llm_model},
             )
-            example_result = bounded_completion(prompt, identity=example_identity)
+            completion = bounded_completion(wordpack_prompt, identity=identity)
+            payload: dict[str, object] = {}
+            parse_ok = False
+            schema_ok = False
             try:
-                parsed = parse_json_response(example_result.content, prefer_json_object=False)
-                rows = parsed.get("examples", []) if isinstance(parsed, dict) else parsed
-                rows = rows if isinstance(rows, list) else []
+                parsed_wordpack = parse_json_response(completion.content)
+                if isinstance(parsed_wordpack, dict):
+                    payload = parsed_wordpack
+                    parse_ok = True
             except Exception:
-                rows = []
-            example_provenance = safe_provenance(with_validation(example_result, parse=bool(rows)))
-            examples[category.value] = [
+                pass
+            if parse_ok:
+                try:
+                    WordPack.model_validate({**payload, "lemma": lemma})
+                    schema_ok = True
+                except Exception:
+                    pass
+            application_ok = bool(
+                schema_ok
+                and isinstance(payload.get("senses"), list)
+                and payload["senses"]
+            )
+            provenance = safe_provenance(
+                with_validation(
+                    completion,
+                    parse=parse_ok,
+                    schema=schema_ok,
+                    application=application_ok,
+                )
+            )
+            payload["lemma"] = lemma
+            payload["llm_model"] = settings.llm_model
+            payload["generation_provenance"] = [provenance] if provenance else []
+            examples: dict[str, list[dict[str, object]]] = {}
+            for category_name in EXAMPLE_CATEGORY_NAMES:
+                category = ExampleCategory(category_name)
+                prompt = build_examples_prompt(lemma, category, count)
+                example_identity = prompt_identity_from_builder(
+                    prompt_id=f"wordpack.examples.{category.value.lower()}",
+                    operation=f"wordpack.examples.{category.value.lower()}",
+                    builder=build_examples_prompt,
+                    schema=examples_response_schema(),
+                    major_settings={
+                        "model": settings.llm_model,
+                        "category": category.value,
+                        "count": count,
+                    },
+                )
+                example_result = bounded_completion(prompt, identity=example_identity)
+                parsed: object = {}
+                parse_ok = False
+                try:
+                    parsed = parse_json_response(
+                        example_result.content, prefer_json_object=False
+                    )
+                    parse_ok = True
+                except Exception:
+                    pass
+                rows = parsed.get("examples", []) if isinstance(parsed, dict) else []
+                rows = rows if isinstance(rows, list) else []
+                schema_ok = is_valid_examples_response(parsed)
+                example_provenance = safe_provenance(
+                    with_validation(
+                        example_result,
+                        parse=parse_ok,
+                        schema=schema_ok,
+                        application=schema_ok and len(rows) == count,
+                    )
+                )
+                examples[category.value] = [
+                    {
+                        **row,
+                        "category": category.value,
+                        "llm_model": settings.llm_model,
+                        "generation_provenance": (
+                            [example_provenance] if example_provenance else []
+                        ),
+                    }
+                    for row in rows[:count]
+                    if isinstance(row, dict)
+                ]
+            payload["examples"] = examples
+            findings = evaluate_wordpack_payload(
+                payload,
+                expected_lemma=lemma,
+                expected_model=settings.llm_model,
+                expected_examples_per_category=count,
+            )
+            results.append(
                 {
-                    **row,
-                    "category": category.value,
-                    "llm_model": settings.llm_model,
-                    "generation_provenance": [example_provenance] if example_provenance else [],
+                    "case_id": case["case_id"],
+                    "passed": not findings,
+                    "findings": findings,
                 }
-                for row in rows[:count]
-                if isinstance(row, dict)
-            ]
-        payload["examples"] = examples
-        findings = evaluate_wordpack_payload(
-            payload,
-            expected_lemma=lemma,
-            expected_model=settings.llm_model,
-            expected_examples_per_category=count,
-        )
-        results.append({"case_id": case["case_id"], "passed": not findings, "findings": findings})
-    report["results"] = results
-    report["paid_llm_requests"] = paid_requests
-    report["reserved_output_tokens"] = reserved_output_tokens
-    report["single_physical_attempt_per_completion"] = True
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            )
+    except Exception as exc:
+        persist_live_report(failure=exc)
+        raise
+    persist_live_report()
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0
 

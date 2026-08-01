@@ -9,8 +9,11 @@ import sys
 import pytest
 
 from evals.evaluators.contracts import evaluate_fixture
+from backend.config import settings
+from backend import providers
 from scripts.llmops.estimate_run import estimate
 from scripts.llmops.offline_report import build_report, render_markdown
+from scripts.llmops import live_eval
 
 
 def test_required_wordpack_and_five_category_fixture_passes_without_network() -> None:
@@ -90,3 +93,51 @@ def test_live_estimate_has_zero_paid_requests_and_enforces_hard_limits() -> None
             max_requests=6,
             max_output_tokens=5,
         )
+
+
+def test_live_failure_persists_reserved_budget_and_failure_artifact(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FailingProvider:
+        def complete_result(self, *_args: object, **_kwargs: object) -> object:
+            raise TimeoutError("provider timed out")
+
+    output = tmp_path / "failed-live-report.json"
+    monkeypatch.setattr(
+        providers,
+        "get_llm_provider",
+        lambda **_kwargs: FailingProvider(),
+    )
+    monkeypatch.setattr(settings, "llm_max_tokens", settings.llm_max_tokens)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-only-key")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "live_eval.py",
+            "--mode",
+            "live",
+            "--confirm",
+            live_eval.CONFIRM_PHRASE,
+            "--max-cases",
+            "1",
+            "--max-requests",
+            "6",
+            "--max-output-tokens",
+            "25000",
+            "--output",
+            str(output),
+        ],
+    )
+
+    with pytest.raises(TimeoutError, match="provider timed out"):
+        live_eval.main()
+
+    report = json.loads(output.read_text(encoding="utf-8"))
+    assert report["paid_llm_requests"] == 1
+    assert report["reserved_output_tokens"] > 0
+    assert report["results"] == []
+    assert report["failure"] == {
+        "stage": "live_evaluation",
+        "error_type": "TimeoutError",
+    }

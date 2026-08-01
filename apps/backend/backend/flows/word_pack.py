@@ -10,7 +10,11 @@ from pydantic import ValidationError
 from . import create_state_graph
 
 from ..infrastructure.llm.json_response_parser import parse_json_response
-from ..infrastructure.llm.prompts.examples import build_examples_prompt
+from ..infrastructure.llm.prompts.examples import (
+    build_examples_prompt,
+    examples_response_schema,
+    is_valid_examples_response,
+)
 from ..infrastructure.llm.prompts.wordpack import build_wordpack_prompt
 from ..llmops.completion import complete_typed, safe_provenance, with_validation
 from ..llmops.identity import prompt_identity_from_builder
@@ -560,6 +564,12 @@ class WordPackFlow:
         return prompt
 
     def _parse_examples_json(self, raw: str) -> list[dict[str, str]]:
+        rows, _, _ = self._parse_examples_json_result(raw)
+        return rows
+
+    def _parse_examples_json_result(
+        self, raw: str
+    ) -> tuple[list[dict[str, str]], bool, bool]:
         try:
             obj = parse_json_response(raw or "", prefer_json_object=False)
         except json.JSONDecodeError as exc:
@@ -572,7 +582,7 @@ class WordPackFlow:
                 error_class=exc.__class__.__name__,
                 raw_chars=len(str(raw or "")),
             )
-            return []
+            return [], False, False
         except Exception as exc:  # pragma: no cover - defensive guard
             logger.warning(
                 "wordpack_examples_json_parse_failed",
@@ -580,18 +590,22 @@ class WordPackFlow:
                 error_class=exc.__class__.__name__,
                 raw_chars=len(str(raw or "")),
             )
-            return []
+            return [], False, False
         if isinstance(obj, list):
-            return [x for x in obj if isinstance(x, dict)]
+            return [x for x in obj if isinstance(x, dict)], True, False
         if isinstance(obj, dict) and isinstance(obj.get("examples"), list):
-            return [x for x in obj.get("examples") if isinstance(x, dict)]
+            return (
+                [x for x in obj.get("examples") if isinstance(x, dict)],
+                True,
+                is_valid_examples_response(obj),
+            )
         # 形は不正だが JSON としては読めるケースも、例文ゼロ扱いにフォールバックする。
         logger.warning(
             "wordpack_examples_json_invalid_shape",
             obj_type=type(obj).__name__,
             raw_chars=len(str(raw or "")),
         )
-        return []
+        return [], True, False
 
     def generate_examples_for_categories(
         self, lemma: str, plan: dict[ExampleCategory, int]
@@ -613,13 +627,7 @@ class WordPackFlow:
                 prompt_id=f"wordpack.examples.{cat.value.lower()}",
                 operation=f"wordpack.examples.{cat.value.lower()}",
                 builder=build_examples_prompt,
-                schema={
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "required": ["en", "ja", "grammar_ja"],
-                    },
-                },
+                schema=examples_response_schema(),
                 major_settings={**self._llm_info, "category": cat.value, "count": int(num)},
             )
             if self.llm is None:
@@ -633,7 +641,9 @@ class WordPackFlow:
                     response_mode="json",
                 )
                 out = completion.content
-            parsed = self._parse_examples_json(out if isinstance(out, str) else "{}")
+            parsed, parse_valid, schema_valid = self._parse_examples_json_result(
+                out if isinstance(out, str) else "{}"
+            )
             items: list[Examples.ExampleItem] = []
             for it in parsed[: int(num)]:
                 en = str(it.get("en") or "").strip()
@@ -656,8 +666,8 @@ class WordPackFlow:
             if completion is not None:
                 completion = with_validation(
                     completion,
-                    parse=bool(parsed),
-                    schema=bool(parsed),
+                    parse=parse_valid,
+                    schema=schema_valid,
                     application=len(items) == int(num),
                 )
                 provenance = safe_provenance(completion)
