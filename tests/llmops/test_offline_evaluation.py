@@ -199,6 +199,21 @@ def test_live_identity_settings_match_production_defaults() -> None:
     ) == {**production, "category": "Dev", "count": 2}
 
 
+def test_default_and_explicit_generation_controls_have_identical_metadata() -> None:
+    implicit = build_llm_info({})
+    explicit = build_llm_info(
+        {
+            "reasoning": {"effort": "high"},
+            "text": {"verbosity": "medium"},
+        }
+    )
+
+    assert implicit == explicit == {
+        "model": settings.llm_model,
+        "params": "reasoning.effort=high;text.verbosity=medium",
+    }
+
+
 def test_shared_wordpack_application_rejects_other_blank_required_text() -> None:
     fixture = json.loads(
         Path("evals/fixtures/wordpack_converge.json").read_text(encoding="utf-8")
@@ -284,7 +299,7 @@ def test_offline_report_generates_json_and_short_markdown_summary() -> None:
 
 
 def test_offline_snapshot_matches_production_prompt_identities() -> None:
-    llm_info = {"model": DEFAULT_LLM_MODEL, "params": None}
+    llm_info = build_llm_info({})
     expected = {
         "wordpack.core": prompt_identity_from_builder(
             prompt_id="wordpack.core",

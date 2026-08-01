@@ -33,6 +33,7 @@ from backend.llm_models import (
     DEFAULT_LLM_MODEL,
     DEFAULT_REASONING_EFFORT,
     DEFAULT_TEXT_VERBOSITY,
+    effective_llm_generation_params,
 )
 from backend.llmops.identity import prompt_identity_from_builder
 from backend.models.word import ExampleCategory
@@ -48,7 +49,10 @@ PRODUCTION_EXAMPLE_CATEGORIES = (
 
 
 def current_snapshot() -> dict[str, object]:
-    production_llm_info = {"model": DEFAULT_LLM_MODEL, "params": None}
+    production_llm_info = {
+        "model": DEFAULT_LLM_MODEL,
+        "params": effective_llm_generation_params(),
+    }
     identities = {
         "wordpack.core": prompt_identity_from_builder(
             prompt_id="wordpack.core",

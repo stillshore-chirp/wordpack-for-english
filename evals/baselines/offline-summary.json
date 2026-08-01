@@ -2,13 +2,13 @@
   "fixture_regressions": 0,
   "required_cases": ["wordpack-converge-contract-v1"],
   "prompt_revisions": {
-    "wordpack.core": "f3503d5c9b9170ec2da5a3016690b171a53c28331bb006946bb496a9aa9d9487",
-    "quiz.generate": "47ed1ca7038a2c60cf7da239ef062b7ee05b761895c6269024ac128f6d197487",
-    "wordpack.examples.dev": "e1f41fd63fa0f2eee0c42e197ca1d1344e2e9875384995c5a075460ac231f25d",
-    "wordpack.examples.cs": "f9d62b3eb149d8520f509231d9a2d5b4532bea1a89c2985ce274fdf57f8e2486",
-    "wordpack.examples.llm": "0b480631024cf583711bef979f34efb911d0dca8162796174d8ed80253d796f5",
-    "wordpack.examples.business": "019ad11b2ac0d6dfd587a36771d2f13a31d699d357063c2b97a097d82f5adf93",
-    "wordpack.examples.common": "640123fee36d3f3022600b4bbb1f486aa801e60474186713dc0600d7a6116af8"
+    "wordpack.core": "d2511f9acb60bc6a6c1c46462cfa7539c4b97f71e80714fb1f19f627e9bd5a28",
+    "quiz.generate": "f7a5d218b23a0cb70bcf542209b15516605e91ea6eca8376bbce6c38bdd5d53f",
+    "wordpack.examples.dev": "a96cfdff059d4905b732d9ede9a74ac3f93f6284bdf225a1ef7a90216528b286",
+    "wordpack.examples.cs": "14ad9d21df044018a0c8268f5fd0aea29ae66048cc0464217cd9508a458effab",
+    "wordpack.examples.llm": "9b355f1024bda5a6b1f8b150b635df5fa1fd7fa180e72486003d4bb1bbf04122",
+    "wordpack.examples.business": "f7a4f125482b19f8ef928f7acfd744473a7c1f75d333b8e9e3eaf5f83e7afc56",
+    "wordpack.examples.common": "4a5ce8883ef9bd6872132d31b18a655da3099e4279c0d3d4510f19137f5a0550"
   },
   "schema_revisions": {
     "wordpack.core": "cd88b89c05f61d58fb9b701298ec1b1bc0fbdb4e576e5f2f8f825ee809e2e8d6",

@@ -83,7 +83,10 @@ def test_category_flow_records_effective_llm_settings(
         text={"verbosity": "low"},
     )
 
-    assert default_flow._llm_info == {"model": settings.llm_model, "params": None}
+    assert default_flow._llm_info == {
+        "model": settings.llm_model,
+        "params": "reasoning.effort=high;text.verbosity=medium",
+    }
     assert override_flow._llm_info == {
         "model": settings.llm_model,
         "params": "reasoning.effort=medium;text.verbosity=low",

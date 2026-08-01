@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Mapping
+
 SUPPORTED_LLM_MODELS: tuple[str, ...] = ("gpt-5.6-luna",)
 DEFAULT_LLM_MODEL = SUPPORTED_LLM_MODELS[0]
 
@@ -15,6 +17,26 @@ DEFAULT_REASONING_EFFORT = "high"
 
 SUPPORTED_TEXT_VERBOSITIES: tuple[str, ...] = ("low", "medium", "high")
 DEFAULT_TEXT_VERBOSITY = "medium"
+
+
+def effective_llm_generation_params(
+    *,
+    reasoning: object = None,
+    text: object = None,
+) -> str:
+    """provider が実際に使う既定値を含む生成制御を安定表現へ正規化する。"""
+
+    effort = DEFAULT_REASONING_EFFORT
+    if isinstance(reasoning, Mapping):
+        selected_effort = str(reasoning.get("effort") or "").strip()
+        if selected_effort:
+            effort = selected_effort
+    verbosity = DEFAULT_TEXT_VERBOSITY
+    if isinstance(text, Mapping):
+        selected_verbosity = str(text.get("verbosity") or "").strip()
+        if selected_verbosity:
+            verbosity = selected_verbosity
+    return f"reasoning.effort={effort};text.verbosity={verbosity}"
 
 
 def ensure_supported_llm_model(model: str | None) -> str:

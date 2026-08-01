@@ -22,6 +22,8 @@ except ModuleNotFoundError:  # direct script execution
 
 prepare_backend_cli_environment()
 
+from backend.llm_models import effective_llm_generation_params
+
 CONFIRM_PHRASE = "RUN_PAID_LIVE_EVALUATION"
 EXAMPLE_CATEGORY_NAMES = (
     "Dev",
@@ -35,7 +37,11 @@ EXAMPLE_CATEGORY_NAMES = (
 def _live_major_settings(model: str, **extra: object) -> dict[str, object]:
     """本番の build_llm_info と同じ既定値で prompt revision を作る。"""
 
-    return {"model": model, "params": None, **extra}
+    return {
+        "model": model,
+        "params": effective_llm_generation_params(),
+        **extra,
+    }
 
 
 def _retained_example_rows(rows: object, count: int) -> list[dict[str, object]]:
