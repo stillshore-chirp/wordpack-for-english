@@ -50,7 +50,7 @@ def _write_report(path: Path, report: dict[str, object]) -> None:
     )
 
 
-def main() -> int:
+def main(*, provider_factory=None) -> int:
     args = _arguments()
     preflight = estimate(
         args.cases_file,
@@ -79,7 +79,6 @@ def main() -> int:
     from backend.llmops import complete_typed, prompt_identity_from_builder
     from backend.llmops.completion import safe_provenance, with_validation
     from backend.models.word import ExampleCategory, WordPack
-    from backend.providers import get_llm_provider
     from evals.evaluators.contracts import evaluate_wordpack_payload
 
     cases = list(json.loads(args.cases_file.read_text(encoding="utf-8")).get("cases") or [])[: args.max_cases]
@@ -88,7 +87,11 @@ def main() -> int:
     # Paid evaluation disables both provider profile fallbacks and policy retries.
     # Therefore one logical completion is exactly one physical API attempt, including
     # after a timeout where the in-flight request cannot be cancelled reliably.
-    llm = get_llm_provider(single_attempt=True)
+    if provider_factory is None:
+        from backend.providers import get_llm_provider
+
+        provider_factory = get_llm_provider
+    llm = provider_factory(single_attempt=True)
     paid_requests = 0
     reserved_output_tokens = 0
 
