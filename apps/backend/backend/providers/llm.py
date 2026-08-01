@@ -238,7 +238,7 @@ class _OpenAILLM(_LLMBase):  # pragma: no cover - オンライン利用が前提
         use_json: bool,
         include_reasoning: bool,
         include_text_options: bool,
-    ) -> Any:
+    ) -> tuple[Any, dict[str, Any]]:
         kwargs: dict[str, Any] = {
             "model": self._model,
             "input": prompt,
@@ -255,7 +255,7 @@ class _OpenAILLM(_LLMBase):  # pragma: no cover - オンライン利用が前提
             text_options["format"] = {"type": "json_object"}
         if text_options:
             kwargs["text"] = text_options
-        return self._client.responses.create(**kwargs)
+        return self._client.responses.create(**kwargs), kwargs
 
     @staticmethod
     def _is_param_unsupported_error(exc: Exception) -> bool:
@@ -399,7 +399,7 @@ class _OpenAILLM(_LLMBase):  # pragma: no cover - オンライン利用が前提
                     attempt_observer = _PROVIDER_ATTEMPT_OBSERVER.get()
                     if attempt_observer is not None:
                         attempt_observer(attempt_index + 1)
-                    resp = self._create_response(
+                    resp, request_parameters = self._create_response(
                         prompt=prompt,
                         use_json=bool(attempt["use_json"]),
                         include_reasoning=bool(attempt["include_reasoning"]),
@@ -428,11 +428,11 @@ class _OpenAILLM(_LLMBase):  # pragma: no cover - オンライン利用が前提
                         response_mode=response_mode,
                     )
                     effective_parameters = {
-                        "reasoning": self._reasoning if attempt["include_reasoning"] else None,
-                        "text": self._text if attempt["include_text_options"] else None,
+                        "reasoning": request_parameters.get("reasoning"),
+                        "text": request_parameters.get("text"),
                         "json_forced": bool(attempt["use_json"]),
-                        "max_output_tokens": int(getattr(settings, "llm_max_tokens", 25000)),
-                        "store": False,
+                        "max_output_tokens": request_parameters["max_output_tokens"],
+                        "store": request_parameters["store"],
                         "profile": str(attempt["label"]),
                     }
                     incomplete = self._get_value(resp, "incomplete_details")

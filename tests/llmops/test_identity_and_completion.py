@@ -194,6 +194,10 @@ def test_openai_typed_result_records_usage_fallback_and_store_false(monkeypatch:
     assert result.failed_profiles == ("json_with_controls",)
     assert result.fallback_reason == "PARAM_UNSUPPORTED"
     assert result.effective_parameters["profile"] == "json_without_optional_controls"
+    assert result.effective_parameters["reasoning"] is None
+    assert result.effective_parameters["text"] == calls[1]["text"] == {
+        "format": {"type": "json_object"}
+    }
 
 
 def test_bounded_provider_disables_all_physical_retry_paths(monkeypatch: pytest.MonkeyPatch) -> None:
