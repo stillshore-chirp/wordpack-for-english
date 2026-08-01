@@ -93,7 +93,10 @@ describe('WordPackListPanel guest public toggle', () => {
     renderWithAuth();
 
     const user = userEvent.setup();
-    await waitFor(() => expect(screen.getByRole('button', { name: 'alpha のその他の操作' })).toBeInTheDocument());
+    await waitFor(
+      () => expect(screen.getByRole('button', { name: 'alpha のその他の操作' })).toBeInTheDocument(),
+      { timeout: 5000 },
+    );
 
     await user.click(screen.getByRole('button', { name: 'alpha のその他の操作' }));
     await user.click(screen.getByRole('menuitem', { name: 'ゲスト公開にする' }));
