@@ -71,7 +71,24 @@ def main() -> int:
     cases = list(json.loads(args.cases_file.read_text(encoding="utf-8")).get("cases") or [])[: args.max_cases]
     requests = int(preflight["estimated_requests"])
     settings.llm_max_tokens = max(1, args.max_output_tokens // max(1, requests))
-    llm = get_llm_provider()
+    # Paid evaluation disables both provider profile fallbacks and policy retries.
+    # Therefore one logical completion is exactly one physical API attempt, including
+    # after a timeout where the in-flight request cannot be cancelled reliably.
+    llm = get_llm_provider(single_attempt=True)
+    paid_requests = 0
+    reserved_output_tokens = 0
+
+    def bounded_completion(prompt: str, *, identity):
+        nonlocal paid_requests, reserved_output_tokens
+        if paid_requests >= args.max_requests:
+            raise RuntimeError("physical API request budget exhausted")
+        next_reserved = reserved_output_tokens + settings.llm_max_tokens
+        if next_reserved > args.max_output_tokens:
+            raise RuntimeError("output token budget exhausted")
+        paid_requests += 1
+        reserved_output_tokens = next_reserved
+        return complete_typed(llm, prompt, identity=identity)
+
     results: list[dict[str, object]] = []
     for case in cases:
         lemma = str(case["lemma"])
@@ -84,7 +101,7 @@ def main() -> int:
             schema=WordPack.model_json_schema(),
             major_settings={"model": settings.llm_model},
         )
-        completion = complete_typed(llm, wordpack_prompt, identity=identity)
+        completion = bounded_completion(wordpack_prompt, identity=identity)
         try:
             payload = parse_json_response(completion.content)
             parse_ok = isinstance(payload, dict)
@@ -106,7 +123,7 @@ def main() -> int:
                 schema={"type": "array"},
                 major_settings={"model": settings.llm_model, "category": category.value, "count": count},
             )
-            example_result = complete_typed(llm, prompt, identity=example_identity)
+            example_result = bounded_completion(prompt, identity=example_identity)
             try:
                 parsed = parse_json_response(example_result.content, prefer_json_object=False)
                 rows = parsed.get("examples", []) if isinstance(parsed, dict) else parsed
@@ -133,7 +150,9 @@ def main() -> int:
         )
         results.append({"case_id": case["case_id"], "passed": not findings, "findings": findings})
     report["results"] = results
-    report["paid_llm_requests"] = requests
+    report["paid_llm_requests"] = paid_requests
+    report["reserved_output_tokens"] = reserved_output_tokens
+    report["single_physical_attempt_per_completion"] = True
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(json.dumps(report, ensure_ascii=False, indent=2))

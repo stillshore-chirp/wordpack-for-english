@@ -118,6 +118,80 @@ def test_openai_typed_result_records_usage_fallback_and_store_false(monkeypatch:
     assert result.effective_parameters["profile"] == "json_without_optional_controls"
 
 
+def test_bounded_provider_disables_all_physical_retry_paths(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[dict[str, object]] = []
+    client_options: list[dict[str, object]] = []
+
+    class Responses:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            raise RuntimeError("Unsupported parameter: text.verbosity")
+
+    class Client:
+        def __init__(self, **kwargs) -> None:
+            client_options.append(kwargs)
+            self.responses = Responses()
+
+    monkeypatch.setattr(provider_module, "OpenAI", Client)
+    monkeypatch.setattr(provider_module, "get_langfuse", lambda: None)
+    monkeypatch.setattr(provider_module.settings, "strict_mode", True)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        monkeypatch.setattr(provider_module, "_get_llm_executor", lambda: executor)
+        provider = provider_module._OpenAILLM(
+            api_key="fake",
+            model="gpt-5.6-luna",
+            reasoning={"effort": "high"},
+            text={"verbosity": "medium"},
+            allow_parameter_fallbacks=False,
+            sdk_max_retries=0,
+        )
+        bounded = provider_module._llm_with_policy(provider, max_attempts=1)
+
+        with pytest.raises(RuntimeError, match="typed completion failed"):
+            bounded.complete_result("secret prompt", identity=_identity())
+
+    assert len(calls) == 1
+    assert client_options == [{"api_key": "fake", "max_retries": 0}]
+
+
+def test_typed_attempt_count_accumulates_provider_and_policy_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    class Responses:
+        def create(self, **kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                raise RuntimeError("temporary failure")
+            if len(calls) == 2:
+                raise RuntimeError("Unsupported parameter: text.verbosity")
+            return SimpleNamespace(output_text='{"ok": true}', status="completed")
+
+    class Client:
+        def __init__(self, api_key: str) -> None:
+            self.responses = Responses()
+
+    monkeypatch.setattr(provider_module, "OpenAI", Client)
+    monkeypatch.setattr(provider_module, "get_langfuse", lambda: None)
+    monkeypatch.setattr(provider_module.settings, "strict_mode", True)
+    monkeypatch.setattr(provider_module.settings, "llm_max_retries", 2)
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        monkeypatch.setattr(provider_module, "_get_llm_executor", lambda: executor)
+        provider = provider_module._OpenAILLM(
+            api_key="fake",
+            model="gpt-5.6-luna",
+            reasoning={"effort": "high"},
+            text={"verbosity": "medium"},
+        )
+        wrapped = provider_module._llm_with_policy(provider)
+
+        result = wrapped.complete_result("secret prompt", identity=_identity())
+
+    assert len(calls) == 3
+    assert result.attempt_count == 3
+
+
 def test_default_langfuse_payloads_contain_hashes_but_not_raw_content(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(provider_module.settings, "langfuse_log_full_prompt", False)
     monkeypatch.setattr(provider_module.settings, "langfuse_log_full_output", False)

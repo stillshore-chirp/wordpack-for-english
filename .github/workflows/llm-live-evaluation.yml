@@ -88,20 +88,25 @@ jobs:
       - name: Install backend dependencies
         run: pip install -r requirements.txt
       - name: Run explicitly confirmed bounded live evaluation
+        env:
+          LIVE_EVALUATION_CONFIRM: ${{ inputs.confirm }}
+          LIVE_EVALUATION_MAX_CASES: ${{ inputs.max_cases }}
+          LIVE_EVALUATION_MAX_REQUESTS: ${{ inputs.max_requests }}
+          LIVE_EVALUATION_MAX_OUTPUT_TOKENS: ${{ inputs.max_output_tokens }}
         run: |
           python scripts/llmops/live_eval.py \
             --mode live \
-            --confirm "${{ inputs.confirm }}" \
-            --max-cases "${{ inputs.max_cases }}" \
-            --max-requests "${{ inputs.max_requests }}" \
-            --max-output-tokens "${{ inputs.max_output_tokens }}" \
+            --confirm "${LIVE_EVALUATION_CONFIRM}" \
+            --max-cases "${LIVE_EVALUATION_MAX_CASES}" \
+            --max-requests "${LIVE_EVALUATION_MAX_REQUESTS}" \
+            --max-output-tokens "${LIVE_EVALUATION_MAX_OUTPUT_TOKENS}" \
             --output artifacts/llm-live-evaluation.json
           {
             echo "## Manual LLM live evaluation"
             echo "- Mode: live"
-            echo "- Max cases: ${{ inputs.max_cases }}"
-            echo "- Max requests: ${{ inputs.max_requests }}"
-            echo "- Output token budget: ${{ inputs.max_output_tokens }}"
+            echo "- Max cases: ${LIVE_EVALUATION_MAX_CASES}"
+            echo "- Max requests: ${LIVE_EVALUATION_MAX_REQUESTS}"
+            echo "- Output token budget: ${LIVE_EVALUATION_MAX_OUTPUT_TOKENS}"
             echo "- Quality findings are informational and do not gate normal CI or deploy."
           } >> "${GITHUB_STEP_SUMMARY}"
       - uses: actions/upload-artifact@v4

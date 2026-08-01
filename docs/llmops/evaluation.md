@@ -18,6 +18,8 @@ fixture を更新する場合は、観測した生成物をそのままコピー
 
 GitHub Actions の `Manual LLM live evaluation` を手動実行します。
 
+`live` では OpenAI SDK retry、provider の parameter fallback、policy retry をすべて無効化し、1 completion を必ず1回の物理 API 試行に固定します。各試行前に request 数と割当済み `max_output_tokens` を予約するため、timeout 後に実行中の request を取り消せない場合も追加試行は行わず、指定した hard limit を超えません。通常運用の生成 retry / fallback には影響しません。
+
 1. まず `mode=estimate` のまま実行します。外部 API request は0件で、case数、想定 request 数、合計 output token budget を確認できます。
 2. 実行が必要な場合だけ `mode=live`、`confirm=RUN_PAID_LIVE_EVALUATION` を指定します。
 3. 既定は1 case、6 requests、合計25,000 output tokensです。hard limit は5 cases、30 requests、150,000 output tokensで、超過入力は送信前に拒否されます。

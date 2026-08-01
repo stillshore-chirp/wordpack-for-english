@@ -24,6 +24,10 @@ def test_manual_live_workflow_is_dispatch_only_and_bounded() -> None:
         "Paid LLM requests: 0",
     ):
         assert required in workflow
+    assert "LIVE_EVALUATION_CONFIRM: ${{ inputs.confirm }}" in workflow
+    assert '--confirm "${LIVE_EVALUATION_CONFIRM}"' in workflow
+    live_run = workflow.split("run: |", 2)[-1]
+    assert "${{ inputs.confirm }}" not in live_run
 
 
 def test_normal_ci_and_deploy_do_not_reference_llmops_secrets_or_live_eval() -> None:

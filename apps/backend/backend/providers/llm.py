@@ -172,14 +172,20 @@ class _OpenAILLM(_LLMBase):  # pragma: no cover - オンライン利用が前提
         model: str,
         reasoning: Optional[dict] = None,
         text: Optional[dict] = None,
+        allow_parameter_fallbacks: bool = True,
+        sdk_max_retries: int | None = None,
     ) -> None:
         if OpenAI is None:
             raise RuntimeError("openai package not installed")
-        self._client = OpenAI(api_key=api_key)
+        client_options: dict[str, Any] = {"api_key": api_key}
+        if sdk_max_retries is not None:
+            client_options["max_retries"] = sdk_max_retries
+        self._client = OpenAI(**client_options)
         self._model = ensure_supported_llm_model(model)
         self._api_key = api_key
         self._reasoning = reasoning or {"effort": DEFAULT_REASONING_EFFORT}
         self._text = text or {"verbosity": DEFAULT_TEXT_VERBOSITY}
+        self._allow_parameter_fallbacks = allow_parameter_fallbacks
 
     def _extract_text(self, resp: Any) -> str:
         """OpenAI Responses API のレスポンスから本文を抜き出す。"""
@@ -447,6 +453,10 @@ class _OpenAILLM(_LLMBase):  # pragma: no cover - オンライン利用が前提
                     return result
                 except Exception as exc:
                     last_exc = exc
+                    try:
+                        setattr(exc, "llm_attempt_count", attempt_index + 1)
+                    except Exception:
+                        pass
                     if (
                         self._is_param_unsupported_error(exc)
                         and attempt_index < len(attempts) - 1
@@ -493,12 +503,14 @@ class _OpenAILLM(_LLMBase):  # pragma: no cover - オンライン利用が前提
             if response_mode == "plain"
             else self._response_attempts()
         )
+        if not self._allow_parameter_fallbacks:
+            attempts = attempts[:1]
         return self._complete_result_with_attempts(
             prompt, attempts, response_mode=response_mode, identity=identity
         )
 
 
-def _llm_with_policy(llm: _LLMBase) -> _LLMBase:
+def _llm_with_policy(llm: _LLMBase, *, max_attempts: int | None = None) -> _LLMBase:
     """タイムアウトとリトライを付与した LLM ラッパーを返す。"""
 
     executor = _get_llm_executor()
@@ -529,7 +541,9 @@ def _llm_with_policy(llm: _LLMBase) -> _LLMBase:
             response_mode: str,
         ) -> CompletionResult:
             last_exc: Exception | None = None
-            for policy_attempt in range(1, max(1, settings.llm_max_retries) + 1):
+            completed_attempts = 0
+            attempt_limit = max_attempts or max(1, settings.llm_max_retries)
+            for policy_attempt in range(1, attempt_limit + 1):
                 future = None
                 try:
                     ctx = contextvars.copy_context()
@@ -542,10 +556,13 @@ def _llm_with_policy(llm: _LLMBase) -> _LLMBase:
                     result = future.result(timeout=settings.llm_timeout_ms / 1000.0)
                     return replace(
                         result,
-                        attempt_count=max(result.attempt_count, policy_attempt),
+                        attempt_count=completed_attempts + max(1, result.attempt_count),
                     )
                 except Exception as exc:
                     last_exc = exc
+                    completed_attempts += max(
+                        1, int(getattr(exc, "llm_attempt_count", 1))
+                    )
                     logger.info(
                         "llm_complete_error",
                         attempt=policy_attempt,
@@ -556,7 +573,7 @@ def _llm_with_policy(llm: _LLMBase) -> _LLMBase:
                     )
                     if future is not None:
                         future.cancel()
-                    if policy_attempt >= max(1, settings.llm_max_retries):
+                    if policy_attempt >= attempt_limit:
                         break
                     time.sleep(0.1 * policy_attempt)
             if settings.strict_mode:
@@ -570,7 +587,7 @@ def _llm_with_policy(llm: _LLMBase) -> _LLMBase:
                 requested_parameters=dict(identity.requested_parameters),
                 effective_parameters={},
                 fallback_reason="PROVIDER_FAILURE",
-                attempt_count=max(1, settings.llm_max_retries),
+                attempt_count=max(1, completed_attempts),
                 prompt=identity,
                 input_hash=content_hash(prompt),
                 output_hash=content_hash(content),
@@ -579,7 +596,8 @@ def _llm_with_policy(llm: _LLMBase) -> _LLMBase:
 
         def _run_with_policy(self, method_name: str, prompt: str) -> str:
             last_exc: Exception | None = None
-            for attempt in range(1, max(1, settings.llm_max_retries) + 1):
+            attempt_limit = max_attempts or max(1, settings.llm_max_retries)
+            for attempt in range(1, attempt_limit + 1):
                 future = None
                 try:
                     ctx = contextvars.copy_context()
@@ -609,7 +627,7 @@ def _llm_with_policy(llm: _LLMBase) -> _LLMBase:
                             future.cancel()
                         except Exception:
                             pass
-                    if attempt >= max(1, settings.llm_max_retries):
+                    if attempt >= attempt_limit:
                         break
                     time.sleep(0.1 * attempt)
             logger.info(
@@ -662,13 +680,14 @@ def get_llm_provider(
     model_override: str | None = None,
     reasoning_override: Optional[dict] = None,
     text_override: Optional[dict] = None,
+    single_attempt: bool = False,
 ) -> Any:
     """設定値に応じた LLM クライアントを返す。"""
 
     has_override = any(
         value is not None
         for value in (model_override, reasoning_override, text_override)
-    )
+    ) or single_attempt
     instance = _get_llm_instance()
     if not has_override and instance is not None:
         return instance
@@ -709,8 +728,10 @@ def get_llm_provider(
                     else base_reasoning
                 ),
                 text=text_override if text_override is not None else base_text_opts,
+                allow_parameter_fallbacks=not single_attempt,
+                sdk_max_retries=0 if single_attempt else None,
             )
-            wrapped = _llm_with_policy(llm)
+            wrapped = _llm_with_policy(llm, max_attempts=1 if single_attempt else None)
             if not has_override:
                 _set_llm_instance(wrapped)
             return wrapped
