@@ -9,6 +9,14 @@ from backend.infrastructure.firestore.repositories.app_store import AppFirestore
 from backend.models.word import ExampleCategory
 from tests.firestore_fakes import FakeFirestoreClient
 
+EXAMPLE_CATEGORIES = (
+    ExampleCategory.Dev,
+    ExampleCategory.CS,
+    ExampleCategory.LLM,
+    ExampleCategory.Business,
+    ExampleCategory.Common,
+)
+
 
 class _SequencedWordPackLlm:
     def __init__(self, wordpack_payload: dict[str, object]) -> None:
@@ -54,7 +62,7 @@ def test_wordpack_and_five_initial_example_categories_keep_six_call_baseline() -
 
     assert llm.calls == 6
     assert len(pack.generation_provenance) == 6
-    for category in ExampleCategory:
+    for category in EXAMPLE_CATEGORIES:
         items = getattr(pack.examples, category.value)
         assert len(items) == 2
         assert all(len(item.generation_provenance) == 1 for item in items)

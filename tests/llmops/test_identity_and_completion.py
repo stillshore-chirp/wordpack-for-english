@@ -179,11 +179,8 @@ def test_provenance_never_contains_raw_content_and_serialization_failure_is_nonf
     assert "private prompt" not in serialized
     assert "private output" not in serialized
 
-    import backend.llmops.completion as completion_module
-
     monkeypatch.setattr(
-        completion_module,
-        "provenance_from_result",
+        "backend.llmops.completion.provenance_from_result",
         lambda _result: (_ for _ in ()).throw(TypeError("boom")),
     )
     assert safe_provenance(result) is None

@@ -18,6 +18,13 @@ except ModuleNotFoundError:  # direct script execution
     from estimate_run import estimate
 
 CONFIRM_PHRASE = "RUN_PAID_LIVE_EVALUATION"
+EXAMPLE_CATEGORY_NAMES = (
+    "Dev",
+    "CS",
+    "LLM",
+    "Business",
+    "Common",
+)
 
 
 def _arguments() -> argparse.Namespace:
@@ -89,7 +96,8 @@ def main() -> int:
         payload["llm_model"] = settings.llm_model
         payload["generation_provenance"] = [provenance] if provenance else []
         examples: dict[str, list[dict[str, object]]] = {}
-        for category in ExampleCategory:
+        for category_name in EXAMPLE_CATEGORY_NAMES:
+            category = ExampleCategory(category_name)
             prompt = build_examples_prompt(lemma, category, count)
             example_identity = prompt_identity_from_builder(
                 prompt_id=f"wordpack.examples.{category.value.lower()}",
