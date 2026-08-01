@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import pytest
 
+from backend.infrastructure.llm.generated_contracts import (
+    GeneratedQuizPayload,
+    GeneratedWordPackPayload,
+)
 from backend.llmops.validation import parse_article_lemmas, parse_category_lemma
 
 
@@ -35,3 +39,18 @@ def test_category_lemma_validation_separates_parse_and_schema(
     raw: str, expected: tuple[str, bool, bool]
 ) -> None:
     assert parse_category_lemma(raw) == expected
+
+
+def test_generated_contract_schemas_exclude_server_owned_fields() -> None:
+    wordpack_fields = set(GeneratedWordPackPayload.model_fields)
+    quiz_fields = set(GeneratedQuizPayload.model_fields)
+
+    assert "senses" in wordpack_fields
+    assert "lemma" not in wordpack_fields
+    assert "generation_provenance" not in wordpack_fields
+    assert "guest_public" not in wordpack_fields
+    assert "checked_only_count" not in wordpack_fields
+    assert "related_lemmas" in quiz_fields
+    assert "id" not in quiz_fields
+    assert "created_at" not in quiz_fields
+    assert "generation_started_at" not in quiz_fields

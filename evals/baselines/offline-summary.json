@@ -2,12 +2,14 @@
   "fixture_regressions": 0,
   "required_cases": ["wordpack-converge-contract-v1"],
   "prompt_revisions": {
-    "wordpack.core": "5fb8a462a5a53e5673a9816ae92f7d026afb00a4c6ce1a4ba0741ff037f7cf49",
-    "wordpack.examples": "5e163b3c6208203c7a0ad5f5485502ee37c327e33f01f6c8d2269db5987b1415"
+    "wordpack.core": "6c3f7dbb94e2d7c53ef8d8fcd526ebbb120813eb7c2ef1e9765680ae1ed3d16b",
+    "wordpack.examples": "5e163b3c6208203c7a0ad5f5485502ee37c327e33f01f6c8d2269db5987b1415",
+    "quiz.generate": "2e0427096a67c9908d887eab17e80e33912b70453a93b68effd315a38588f611"
   },
   "schema_revisions": {
-    "wordpack.core": "68d653a762724fcb2652be452a20550a04492b916f78bceb501e1a6bb16a6ace",
-    "wordpack.examples": "5cba55f22ca328c19b810af4809d5c473609fde5bf80313548b6159a2491f5b6"
+    "wordpack.core": "9823dd5b36c2bbe08cc8a90a87ceff55c121de4dddc13d62c14fb505df31bcb8",
+    "wordpack.examples": "5cba55f22ca328c19b810af4809d5c473609fde5bf80313548b6159a2491f5b6",
+    "quiz.generate": "13bdfbf708168c561ae0873b314b6db5a4c2a2930601041712455abfd6efbbdd"
   },
   "model_profile": {
     "model": "gpt-5.6-luna",

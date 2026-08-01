@@ -19,6 +19,11 @@ except ModuleNotFoundError:  # direct script execution
 prepare_backend_cli_environment()
 
 from evals.evaluators.contracts import evaluate_fixture
+from backend.domain.quiz.prompt_policy import build_quiz_generation_prompt
+from backend.infrastructure.llm.generated_contracts import (
+    GeneratedQuizPayload,
+    GeneratedWordPackPayload,
+)
 from backend.infrastructure.llm.prompts.examples import (
     build_examples_prompt,
     examples_response_schema,
@@ -30,7 +35,6 @@ from backend.llm_models import (
     DEFAULT_TEXT_VERBOSITY,
 )
 from backend.llmops.identity import prompt_identity_from_builder
-from backend.models.word import WordPack
 from backend.settings.base import Settings
 
 
@@ -40,13 +44,19 @@ def current_snapshot() -> dict[str, object]:
             prompt_id="wordpack.core",
             operation="wordpack.generate",
             builder=build_wordpack_prompt,
-            schema=WordPack.model_json_schema(),
+            schema=GeneratedWordPackPayload.model_json_schema(),
         ),
         "wordpack.examples": prompt_identity_from_builder(
             prompt_id="wordpack.examples",
             operation="wordpack.examples",
             builder=build_examples_prompt,
             schema=examples_response_schema(),
+        ),
+        "quiz.generate": prompt_identity_from_builder(
+            prompt_id="quiz.generate",
+            operation="quiz.generate",
+            builder=build_quiz_generation_prompt,
+            schema=GeneratedQuizPayload.model_json_schema(),
         ),
     }
     return {

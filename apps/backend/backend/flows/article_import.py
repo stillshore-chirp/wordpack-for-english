@@ -706,6 +706,8 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
             logger.info("article_import_start", **payload)
 
             # ---- 役割別 生成ノード ----
+            lemma_validation: tuple[CompletionResult, bool, bool] | None = None
+
             def _generate_title(s: _ArticleState) -> _ArticleState:
                 # LangGraph の最小スキーマで state から "original_text" が脱落する場合があるため、
                 # クロージャの original_text を直接参照する。
@@ -804,6 +806,7 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                 return s
 
             def _generate_lemmas(s: _ArticleState) -> _ArticleState:
+                nonlocal lemma_validation
                 txt = original_text
                 pr = self._prompt_lemmas(txt)
                 with span(
@@ -827,12 +830,7 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                     )
                     out = completion.content
                 raw_list, parse_valid, schema_valid = parse_article_lemmas(str(out or ""))
-                _record(
-                    completion,
-                    parse=parse_valid,
-                    schema=schema_valid,
-                    application=bool(raw_list),
-                )
+                lemma_validation = (completion, parse_valid, schema_valid)
                 s["lemmas"] = raw_list
                 logger.info("article_import_lemmas_generated", count=len(raw_list))
                 return s
@@ -845,6 +843,14 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                     except Exception:
                         lemmas = []
                 s["lemmas"] = lemmas
+                if lemma_validation is not None:
+                    completion, parse_valid, schema_valid = lemma_validation
+                    _record(
+                        completion,
+                        parse=parse_valid,
+                        schema=schema_valid,
+                        application=bool(lemmas),
+                    )
                 logger.info(
                     "article_import_lemmas_filtered",
                     input_count=len((raw_list if "raw_list" in locals() else [])),

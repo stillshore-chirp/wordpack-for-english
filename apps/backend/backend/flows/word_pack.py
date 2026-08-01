@@ -9,6 +9,7 @@ from pydantic import ValidationError
 
 from . import create_state_graph
 
+from ..infrastructure.llm.generated_contracts import GeneratedWordPackPayload
 from ..infrastructure.llm.json_response_parser import parse_json_response
 from ..infrastructure.llm.prompts.examples import (
     build_examples_prompt,
@@ -129,7 +130,7 @@ class WordPackFlow:
                     prompt_id="wordpack.core",
                     operation="wordpack.generate",
                     builder=build_wordpack_prompt,
-                    schema=WordPack.model_json_schema(),
+                    schema=GeneratedWordPackPayload.model_json_schema(),
                     major_settings=self._llm_info,
                 )
                 completion = complete_typed(
@@ -151,9 +152,7 @@ class WordPackFlow:
                         application_valid = False
                         if isinstance(llm_data, dict):
                             try:
-                                validated = WordPack.model_validate(
-                                    {**llm_data, "lemma": lemma}
-                                )
+                                validated = GeneratedWordPackPayload.model_validate(llm_data)
                                 schema_valid = True
                                 application_valid = bool(validated.senses)
                             except ValidationError:

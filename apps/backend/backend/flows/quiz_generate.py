@@ -11,6 +11,7 @@ from ..application.wordpack.generate_wordpack import build_llm_info, get_overrid
 from ..domain.quiz.prompt_policy import build_quiz_generation_prompt
 from ..domain.wordpack.lemma import validate_lemma
 from ..id_factory import generate_word_pack_id
+from ..infrastructure.llm.generated_contracts import GeneratedQuizPayload
 from ..infrastructure.llm.json_response_parser import parse_json_response
 from ..logging import logger
 from ..llmops.completion import complete_typed, safe_provenance, with_validation
@@ -58,7 +59,7 @@ Invalid content:
         prompt_id="quiz.repair",
         operation="quiz.repair_json",
         builder=_repair_json,
-        schema=Quiz.model_json_schema(),
+        schema=GeneratedQuizPayload.model_json_schema(),
         major_settings=dict(llm_info),
     )
     return _complete_json(llm, repair_prompt, identity=identity)
@@ -238,7 +239,7 @@ class QuizGenerateFlow:
             prompt_id="quiz.generate",
             operation="quiz.generate",
             builder=build_quiz_generation_prompt,
-            schema=Quiz.model_json_schema(),
+            schema=GeneratedQuizPayload.model_json_schema(),
             major_settings=llm_info,
         )
         completion = _complete_json(llm, prompt, identity=prompt_identity)
@@ -268,6 +269,21 @@ class QuizGenerateFlow:
         if not isinstance(data, dict):
             logger.warning("quiz_generation_failed", reason_code="QUIZ_SCHEMA_INVALID")
             raise RuntimeError("QUIZ_SCHEMA_INVALID")
+        try:
+            generated = GeneratedQuizPayload.model_validate(data)
+            data = generated.model_dump(mode="json")
+        except Exception as exc:
+            failed = safe_provenance(
+                with_validation(completion, parse=True, schema=False, application=False)
+            )
+            if failed is not None:
+                provenance.append(failed)
+            logger.warning(
+                "quiz_generated_schema_invalid",
+                reason_code="QUIZ_SCHEMA_INVALID",
+                error=str(exc)[:1000],
+            )
+            raise RuntimeError("QUIZ_SCHEMA_INVALID") from exc
 
         quiz_id = generate_quiz_id()
         generation_completed_at = _now_iso()

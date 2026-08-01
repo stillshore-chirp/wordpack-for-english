@@ -1454,6 +1454,45 @@ def test_article_import_includes_llm_metadata(monkeypatch):
     assert detail["generation_duration_ms"] >= 0
 
 
+def test_article_lemma_application_is_recorded_after_filtering(monkeypatch):
+    """構文とschemaが正しくても除外語だけならapplication成功にしない。"""
+
+    backend_main = _reload_backend_app(monkeypatch, strict=False)
+    from fastapi.testclient import TestClient
+    import backend.providers as providers_mod
+
+    class _StubLLM:
+        def complete(self, _prompt: str) -> str:
+            return '["the"]'
+
+        def complete_text(self, prompt: str) -> str:
+            if "タイトル" in prompt:
+                return "Filtered lemma"
+            if "日本語へ忠実に翻訳" in prompt:
+                return "除外語を含む本文です。"
+            return "除外後の適用結果を確認します。"
+
+    providers_mod._LLM_INSTANCE = _StubLLM()
+    client = TestClient(backend_main.app, raise_server_exceptions=False)
+
+    response = client.post(
+        "/api/article/import",
+        json={"text": "The system remains available."},
+    )
+
+    assert response.status_code == 200
+    lemma_provenance = next(
+        item
+        for item in response.json()["generation_provenance"]
+        if item["operation"] == "article.extract_lemmas"
+    )
+    assert lemma_provenance["validation"] == {
+        "parse": True,
+        "schema": True,
+        "application": False,
+    }
+
+
 def test_article_import_uses_plain_text_generation_for_non_json_steps(monkeypatch):
     """タイトル/翻訳/解説は JSON mode ではなくプレーン生成を使う。"""
 
