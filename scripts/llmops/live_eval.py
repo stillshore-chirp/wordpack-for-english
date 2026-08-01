@@ -69,6 +69,7 @@ def main(*, provider_factory=None) -> int:
         raise SystemExit("OPENAI_API_KEY is required only for live mode")
 
     from backend.config import settings
+    from backend.infrastructure.llm.generated_contracts import GeneratedWordPackPayload
     from backend.infrastructure.llm.json_response_parser import parse_json_response
     from backend.infrastructure.llm.prompts.examples import (
         build_examples_prompt,
@@ -78,7 +79,7 @@ def main(*, provider_factory=None) -> int:
     from backend.infrastructure.llm.prompts.wordpack import build_wordpack_prompt
     from backend.llmops import complete_typed, prompt_identity_from_builder
     from backend.llmops.completion import safe_provenance, with_validation
-    from backend.models.word import ExampleCategory, WordPack
+    from backend.models.word import ExampleCategory
     from evals.evaluators.contracts import evaluate_wordpack_payload
 
     cases = list(json.loads(args.cases_file.read_text(encoding="utf-8")).get("cases") or [])[: args.max_cases]
@@ -128,13 +129,14 @@ def main(*, provider_factory=None) -> int:
                 prompt_id="wordpack.core",
                 operation="wordpack.generate",
                 builder=build_wordpack_prompt,
-                schema=WordPack.model_json_schema(),
+                schema=GeneratedWordPackPayload.model_json_schema(),
                 major_settings={"model": settings.llm_model},
             )
             completion = bounded_completion(wordpack_prompt, identity=identity)
             payload: dict[str, object] = {}
             parse_ok = False
             schema_ok = False
+            generated_wordpack: GeneratedWordPackPayload | None = None
             try:
                 parsed_wordpack = parse_json_response(completion.content)
                 if isinstance(parsed_wordpack, dict):
@@ -146,17 +148,13 @@ def main(*, provider_factory=None) -> int:
                 pass
             if parse_ok:
                 try:
-                    WordPack.model_validate({**payload, "lemma": lemma})
+                    generated_wordpack = GeneratedWordPackPayload.model_validate(payload)
                     schema_ok = True
                 except Exception:
                     # Schema failures are recorded in provenance and evaluated below;
                     # they do not abort the remaining bounded requests.
                     pass
-            application_ok = bool(
-                schema_ok
-                and isinstance(payload.get("senses"), list)
-                and payload["senses"]
-            )
+            application_ok = bool(generated_wordpack and generated_wordpack.senses)
             provenance = safe_provenance(
                 with_validation(
                     completion,

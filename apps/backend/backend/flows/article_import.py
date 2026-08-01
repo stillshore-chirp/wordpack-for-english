@@ -32,6 +32,7 @@ from ..store.proxy import CurrentStoreProxy
 from . import StateGraph, create_state_graph
 
 store = CurrentStoreProxy(_default_store)
+_NON_EMPTY_TEXT_SCHEMA = {"type": "string", "minLength": 1}
 
 
 class _ArticleState(TypedDict, total=False):
@@ -727,7 +728,7 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                         operation="article.generate_title",
                         builder=self._prompt_title,
                         response_mode="plain",
-                        schema={"type": "string"},
+                        schema=_NON_EMPTY_TEXT_SCHEMA,
                     )
                     out = completion.content
                 t = str(out or "").strip()
@@ -760,7 +761,7 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                         operation="article.translate",
                         builder=self._prompt_translation,
                         response_mode="plain",
-                        schema={"type": "string"},
+                        schema=_NON_EMPTY_TEXT_SCHEMA,
                     )
                     out = completion.content
                 ja = str(out or "").strip()
@@ -792,7 +793,7 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                         operation="article.explain",
                         builder=self._prompt_explanation,
                         response_mode="plain",
-                        schema={"type": "string"},
+                        schema=_NON_EMPTY_TEXT_SCHEMA,
                     )
                     out = completion.content
                 note = str(out or "").strip()
