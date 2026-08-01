@@ -2,8 +2,8 @@
   "fixture_regressions": 0,
   "required_cases": ["wordpack-converge-contract-v1"],
   "prompt_revisions": {
-    "wordpack.core": "ec92ac5f4fd5f297bf5c6654e4adae571384f51c29eb62d07def0efaed7612d7",
-    "wordpack.examples": "d379314d461980db87c8bb5ba5b816198a13490c9b8bb6975fd3bd7eb72d3edb"
+    "wordpack.core": "5fb8a462a5a53e5673a9816ae92f7d026afb00a4c6ce1a4ba0741ff037f7cf49",
+    "wordpack.examples": "758db8f4108e133decdcf881ef0ced992ffe05d602935f04aa06ddebac658080"
   },
   "schema_revisions": {
     "wordpack.core": "68d653a762724fcb2652be452a20550a04492b916f78bceb501e1a6bb16a6ace",

@@ -22,7 +22,7 @@ GitHub Actions の `Manual LLM live evaluation` を手動実行します。
 
 1. まず `mode=estimate` のまま実行します。外部 API request は0件で、case数、想定 request 数、合計 output token budget を確認できます。
 2. 実行が必要な場合だけ `mode=live`、`confirm=RUN_PAID_LIVE_EVALUATION` を指定します。
-3. 既定は1 case、6 requests、合計25,000 output tokensです。hard limit は5 cases、30 requests、150,000 output tokensで、超過入力は送信前に拒否されます。
+3. 既定は1 case、6 requests、合計25,000 output tokensです。hard limit は5 cases、30 requests、150,000 output tokensで、超過入力と予定requestへ最低1 tokenずつ割り当てられない入力は送信前に拒否されます。
 4. 結果は Actions step summary と artifact で確認します。finding は informational で、通常CIやdeployを停止しません。
 
 固定金額は表示しません。実行前に request 数と token budget を確認し、現在の公式価格から利用者が判断します。

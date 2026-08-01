@@ -70,7 +70,7 @@ def main() -> int:
 
     cases = list(json.loads(args.cases_file.read_text(encoding="utf-8")).get("cases") or [])[: args.max_cases]
     requests = int(preflight["estimated_requests"])
-    settings.llm_max_tokens = max(1, args.max_output_tokens // max(1, requests))
+    settings.llm_max_tokens = args.max_output_tokens // max(1, requests)
     # Paid evaluation disables both provider profile fallbacks and policy retries.
     # Therefore one logical completion is exactly one physical API attempt, including
     # after a timeout where the in-flight request cannot be cancelled reliably.

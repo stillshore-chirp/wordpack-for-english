@@ -17,7 +17,7 @@ Git 上の prompt / schema / model profile
 | 領域 | 責務 |
 |---|---|
 | `backend.infrastructure.llm.prompts` | prompt の正本。外部サービスから runtime fetch しない |
-| `backend.llmops.identity` | builder source、schema、主要設定から revision を計算 |
+| `backend.llmops.identity` | builder source と参照する helper / 定数、schema、主要設定から revision を計算 |
 | `backend.llmops.types` / `completion` | 型付き completion、相関情報、compact provenance |
 | provider | Responses API metadata、usage、parameter fallback、`store=False` |
 | WordPack / Example / Article / Quiz 保存 | provenance を既存 write に同梱。専用 collection は作らない |

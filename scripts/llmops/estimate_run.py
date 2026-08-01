@@ -23,6 +23,11 @@ def estimate(cases_file: Path, *, max_cases: int, max_requests: int, max_output_
     requests = selected_cases * REQUESTS_PER_CASE
     if requests > max_requests:
         raise ValueError(f"estimated requests {requests} exceed max_requests {max_requests}")
+    if requests and max_output_tokens < requests:
+        raise ValueError(
+            f"max_output_tokens {max_output_tokens} cannot allocate at least one token "
+            f"to each of {requests} estimated requests"
+        )
     return {
         "case_count": selected_cases,
         "estimated_requests": requests,

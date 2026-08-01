@@ -8,10 +8,10 @@
 |---|---|
 | `prompt_id` | 処理の安定した識別子 |
 | `operation` | feature と処理名 |
-| `prompt_revision` | builder source、schema revision、主要設定の SHA-256 |
+| `prompt_revision` | builder source、参照する helper / 定数 / 既定値、schema revision、主要設定の SHA-256 |
 | `schema_revision` | canonicalized schema の SHA-256 |
 
-revision は実際のユーザー入力に依存しません。prompt 変更ごとの手動 version 更新は不要で、Git 上の builder と schema が正本です。
+revision は実際のユーザー入力に依存しません。builder が参照する helper や instruction map の変更も revision に反映されます。prompt 変更ごとの手動 version 更新は不要で、Git 上の builder、参照先、schema が正本です。
 
 ## Completion Result
 

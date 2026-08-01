@@ -44,3 +44,10 @@ def test_live_estimate_has_zero_paid_requests_and_enforces_hard_limits() -> None
             max_requests=30,
             max_output_tokens=150000,
         )
+    with pytest.raises(ValueError, match="cannot allocate"):
+        estimate(
+            Path("evals/cases/live_smoke.json"),
+            max_cases=1,
+            max_requests=6,
+            max_output_tokens=5,
+        )

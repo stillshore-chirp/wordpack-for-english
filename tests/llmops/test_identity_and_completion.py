@@ -23,6 +23,14 @@ def _builder(value: str) -> str:
     return f"Prompt: {value}"
 
 
+def _prompt_fragment() -> str:
+    return "fragment-a"
+
+
+def _builder_with_fragment(value: str) -> str:
+    return f"{_prompt_fragment()}: {value}"
+
+
 def _identity(operation: str = "test.operation"):
     return prompt_identity_from_builder(
         prompt_id="test.prompt",
@@ -46,6 +54,34 @@ def test_prompt_identity_is_input_independent_and_changes_with_schema() -> None:
     assert first == second
     assert first.prompt_revision != changed.prompt_revision
     assert first.schema_revision != changed.schema_revision
+
+
+def test_prompt_identity_changes_with_referenced_helper_source(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first = prompt_identity_from_builder(
+        prompt_id="test.dependencies",
+        operation="test.dependencies",
+        builder=_builder_with_fragment,
+        schema={"type": "string"},
+    )
+
+    def replacement_fragment() -> str:
+        return "fragment-b"
+
+    monkeypatch.setitem(
+        _builder_with_fragment.__globals__,
+        "_prompt_fragment",
+        replacement_fragment,
+    )
+    changed = prompt_identity_from_builder(
+        prompt_id="test.dependencies",
+        operation="test.dependencies",
+        builder=_builder_with_fragment,
+        schema={"type": "string"},
+    )
+
+    assert first.prompt_revision != changed.prompt_revision
 
 
 def test_legacy_test_double_is_called_once_and_parallel_results_do_not_mix() -> None:
