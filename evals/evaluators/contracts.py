@@ -20,35 +20,73 @@ def _contains_lemma(text: str, lemma: str) -> bool:
 
 
 def _validate_provenance(
-    values: object, *, expected_model: str | None, operation: str
+    values: object,
+    *,
+    expected_model: str | None,
+    expected_operation: str,
+    finding_operation: str,
 ) -> list[dict[str, str]]:
     findings: list[dict[str, str]] = []
     entries = values if isinstance(values, list) else []
     if not entries:
-        return [_finding("provenance_missing", "generation provenance is required", operation=operation)]
+        return [
+            _finding(
+                "provenance_missing",
+                "generation provenance is required",
+                operation=finding_operation,
+            )
+        ]
     for item in entries:
         if not isinstance(item, Mapping):
-            findings.append(_finding("provenance_invalid", "provenance must be an object", operation=operation))
+            findings.append(
+                _finding(
+                    "provenance_invalid",
+                    "provenance must be an object",
+                    operation=finding_operation,
+                )
+            )
             continue
-        for key in ("prompt_id", "prompt_revision", "schema_revision", "operation", "input_hash", "output_hash"):
+        for key in (
+            "prompt_id",
+            "prompt_revision",
+            "schema_revision",
+            "operation",
+            "input_hash",
+            "output_hash",
+        ):
             if not str(item.get(key) or "").strip():
-                findings.append(_finding("provenance_field_missing", f"{key} is required", operation=operation))
-        resolved_model = str(item.get("resolved_model") or item.get("requested_model") or "")
+                findings.append(
+                    _finding(
+                        "provenance_field_missing",
+                        f"{key} is required",
+                        operation=finding_operation,
+                    )
+                )
+        actual_operation = str(item.get("operation") or "")
+        if actual_operation and actual_operation != expected_operation:
+            findings.append(
+                _finding(
+                    "operation_mismatch",
+                    f"expected {expected_operation}, got {actual_operation}",
+                    operation=finding_operation,
+                )
+            )
+        requested_model = str(item.get("requested_model") or "")
         if expected_model:
-            if not resolved_model:
+            if not requested_model:
                 findings.append(
                     _finding(
                         "model_missing",
-                        "requested_model or resolved_model is required",
-                        operation=operation,
+                        "requested_model is required",
+                        operation=finding_operation,
                     )
                 )
-            elif resolved_model != expected_model:
+            elif requested_model != expected_model:
                 findings.append(
                     _finding(
                         "model_mismatch",
-                        f"expected {expected_model}, got {resolved_model}",
-                        operation=operation,
+                        f"expected {expected_model}, got {requested_model}",
+                        operation=finding_operation,
                     )
                 )
         validation = item.get("validation")
@@ -57,7 +95,7 @@ def _validate_provenance(
                 _finding(
                     "validation_missing",
                     "provenance validation outcomes are required",
-                    operation=operation,
+                    operation=finding_operation,
                 )
             )
         elif not isinstance(validation, Mapping):
@@ -65,7 +103,7 @@ def _validate_provenance(
                 _finding(
                     "validation_invalid",
                     "provenance validation must be an object",
-                    operation=operation,
+                    operation=finding_operation,
                 )
             )
         else:
@@ -77,7 +115,7 @@ def _validate_provenance(
                     _finding(
                         "validation_outcome_missing",
                         f"missing validation outcomes: {','.join(missing_outcomes)}",
-                        operation=operation,
+                        operation=finding_operation,
                     )
                 )
             invalid_outcomes = [
@@ -91,7 +129,7 @@ def _validate_provenance(
                         "validation_outcome_invalid",
                         "validation outcomes must be boolean: "
                         + ",".join(invalid_outcomes),
-                        operation=operation,
+                        operation=finding_operation,
                     )
                 )
             if validation.get("parse") is False:
@@ -99,7 +137,7 @@ def _validate_provenance(
                     _finding(
                         "parse_failure",
                         "provenance classifies a parse failure",
-                        operation=operation,
+                        operation=finding_operation,
                     )
                 )
             if validation.get("schema") is False:
@@ -107,7 +145,7 @@ def _validate_provenance(
                     _finding(
                         "schema_failure",
                         "provenance classifies a generated-response schema failure",
-                        operation=operation,
+                        operation=finding_operation,
                     )
                 )
             if validation.get("application") is False:
@@ -115,17 +153,40 @@ def _validate_provenance(
                     _finding(
                         "application_failure",
                         "provenance classifies an unusable generated result",
-                        operation=operation,
+                        operation=finding_operation,
                     )
                 )
         fallback_reason = str(item.get("fallback_reason") or "")
-        if fallback_reason and fallback_reason not in {"PARAM_UNSUPPORTED", "PROVIDER_FAILURE"}:
-            findings.append(_finding("fallback_unclassified", fallback_reason, operation=operation))
+        if fallback_reason and fallback_reason not in {
+            "PARAM_UNSUPPORTED",
+            "PROVIDER_FAILURE",
+        }:
+            findings.append(
+                _finding(
+                    "fallback_unclassified",
+                    fallback_reason,
+                    operation=finding_operation,
+                )
+            )
         serialized = json.dumps(item, ensure_ascii=False)
-        if any(raw_key in item for raw_key in ("prompt", "input", "output", "content")):
-            findings.append(_finding("raw_content_present", "provenance contains raw content", operation=operation))
+        if any(
+            raw_key in item for raw_key in ("prompt", "input", "output", "content")
+        ):
+            findings.append(
+                _finding(
+                    "raw_content_present",
+                    "provenance contains raw content",
+                    operation=finding_operation,
+                )
+            )
         if len(serialized.encode("utf-8")) > 8192:
-            findings.append(_finding("provenance_too_large", "provenance exceeds 8192 bytes", operation=operation))
+            findings.append(
+                _finding(
+                    "provenance_too_large",
+                    "provenance exceeds 8192 bytes",
+                    operation=finding_operation,
+                )
+            )
     return findings
 
 
@@ -149,12 +210,19 @@ def evaluate_wordpack_payload(
             )
         ]
     if not wordpack.senses:
-        findings.append(_finding("wordpack_senses_missing", "at least one sense is required", operation="wordpack"))
+        findings.append(
+            _finding(
+                "wordpack_senses_missing",
+                "at least one sense is required",
+                operation="wordpack",
+            )
+        )
     findings.extend(
         _validate_provenance(
             wordpack.generation_provenance,
             expected_model=expected_model,
-            operation="wordpack",
+            expected_operation="wordpack.generate",
+            finding_operation="wordpack",
         )
     )
     seen: set[str] = set()
@@ -201,7 +269,8 @@ def evaluate_wordpack_payload(
                 _validate_provenance(
                     item.generation_provenance,
                     expected_model=expected_model,
-                    operation=operation,
+                    expected_operation=f"wordpack.examples.{category.lower()}",
+                    finding_operation=operation,
                 )
             )
     return findings

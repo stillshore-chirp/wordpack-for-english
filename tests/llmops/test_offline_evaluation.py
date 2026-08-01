@@ -78,7 +78,6 @@ def test_evaluator_requires_model_in_provenance_when_expected() -> None:
     payload = fixture["wordpack"]
     provenance = payload["generation_provenance"][0]
     provenance.pop("requested_model")
-    provenance.pop("resolved_model")
 
     findings = evaluate_wordpack_payload(
         payload,
@@ -88,6 +87,49 @@ def test_evaluator_requires_model_in_provenance_when_expected() -> None:
     )
 
     assert any(finding["code"] == "model_missing" for finding in findings)
+
+
+def test_evaluator_compares_expected_model_with_requested_model() -> None:
+    fixture = json.loads(
+        Path("evals/fixtures/wordpack_converge.json").read_text(encoding="utf-8")
+    )
+    payload = fixture["wordpack"]
+    payload["generation_provenance"][0]["resolved_model"] = "gpt-5.6-luna-2026-07-31"
+
+    findings = evaluate_wordpack_payload(
+        payload,
+        expected_lemma="converge",
+        expected_model="gpt-5.6-luna",
+        expected_examples_per_category=2,
+    )
+
+    assert not any(finding["code"] == "model_mismatch" for finding in findings)
+
+
+def test_evaluator_rejects_provenance_from_another_operation() -> None:
+    fixture = json.loads(
+        Path("evals/fixtures/wordpack_converge.json").read_text(encoding="utf-8")
+    )
+    payload = fixture["wordpack"]
+    payload["generation_provenance"][0]["operation"] = "unrelated.operation"
+    payload["examples"]["Dev"][0]["generation_provenance"][0]["operation"] = (
+        "unrelated.operation"
+    )
+
+    findings = evaluate_wordpack_payload(
+        payload,
+        expected_lemma="converge",
+        expected_model="gpt-5.6-luna",
+        expected_examples_per_category=2,
+    )
+
+    mismatches = [
+        finding for finding in findings if finding["code"] == "operation_mismatch"
+    ]
+    assert {finding["operation"] for finding in mismatches} == {
+        "wordpack",
+        "examples.Dev",
+    }
 
 
 @pytest.mark.parametrize(
@@ -292,6 +334,19 @@ def test_live_estimate_has_zero_paid_requests_and_enforces_hard_limits() -> None
             max_cases=1,
             max_requests=6,
             max_output_tokens=5,
+        )
+
+
+def test_live_estimate_rejects_an_empty_case_set(tmp_path: Path) -> None:
+    cases_file = tmp_path / "empty-cases.json"
+    cases_file.write_text('{"cases": []}\n', encoding="utf-8")
+
+    with pytest.raises(ValueError, match="at least one case"):
+        estimate(
+            cases_file,
+            max_cases=1,
+            max_requests=6,
+            max_output_tokens=25000,
         )
 
 

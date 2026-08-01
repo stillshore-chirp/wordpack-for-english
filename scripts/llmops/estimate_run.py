@@ -11,8 +11,16 @@ HARD_MAX_OUTPUT_TOKENS = 150000
 REQUESTS_PER_CASE = 6
 
 
-def estimate(cases_file: Path, *, max_cases: int, max_requests: int, max_output_tokens: int) -> dict[str, int]:
+def estimate(
+    cases_file: Path,
+    *,
+    max_cases: int,
+    max_requests: int,
+    max_output_tokens: int,
+) -> dict[str, int]:
     cases = list(json.loads(cases_file.read_text(encoding="utf-8")).get("cases") or [])
+    if not cases:
+        raise ValueError("cases file must contain at least one case")
     if not 1 <= max_cases <= HARD_MAX_CASES:
         raise ValueError(f"max_cases must be between 1 and {HARD_MAX_CASES}")
     if not 1 <= max_requests <= HARD_MAX_REQUESTS:
