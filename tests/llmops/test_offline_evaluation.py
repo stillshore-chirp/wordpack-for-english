@@ -14,6 +14,7 @@ from backend.domain.quiz.prompt_policy import build_quiz_generation_prompt
 from backend.infrastructure.llm.generated_contracts import (
     GeneratedQuizPayload,
     GeneratedWordPackPayload,
+    has_required_wordpack_text,
 )
 from backend.infrastructure.llm.prompts.examples import (
     build_examples_prompt,
@@ -198,11 +199,49 @@ def test_live_identity_settings_match_production_defaults() -> None:
     ) == {**production, "category": "Dev", "count": 2}
 
 
-def test_live_application_rejects_blank_glosses() -> None:
-    class GeneratedSense:
-        gloss_ja = "   "
+def test_shared_wordpack_application_rejects_other_blank_required_text() -> None:
+    fixture = json.loads(
+        Path("evals/fixtures/wordpack_converge.json").read_text(encoding="utf-8")
+    )["wordpack"]
+    fixture["senses"][0]["definition_ja"] = "   "
 
-    assert live_eval._has_usable_senses([GeneratedSense()]) is False
+    generated = GeneratedWordPackPayload.model_validate(fixture)
+
+    assert has_required_wordpack_text(generated) is False
+
+
+@pytest.mark.parametrize(
+    "expected",
+    [
+        None,
+        {},
+        {"lemma": "converge", "model": "gpt-5.6-luna"},
+        {
+            "lemma": "converge",
+            "model": "gpt-5.6-luna",
+            "examples_per_category": 0,
+        },
+        {"lemma": "converge", "model": "", "examples_per_category": 2},
+    ],
+)
+def test_evaluator_rejects_missing_or_malformed_fixture_expectations(
+    tmp_path: Path,
+    expected: object,
+) -> None:
+    fixture = json.loads(
+        Path("evals/fixtures/wordpack_converge.json").read_text(encoding="utf-8")
+    )
+    if expected is None:
+        fixture.pop("expected")
+    else:
+        fixture["expected"] = expected
+    path = tmp_path / "invalid-expectation.json"
+    path.write_text(json.dumps(fixture, ensure_ascii=False), encoding="utf-8")
+
+    result = evaluate_fixture(path)
+
+    assert result["passed"] is False
+    assert result["findings"][0]["code"] == "fixture_expectation_invalid"
 
 
 def test_live_examples_apply_production_truncation_before_usability_check() -> None:
@@ -456,3 +495,61 @@ def test_live_failure_persists_reserved_budget_and_failure_artifact(
         "stage": "live_evaluation",
         "error_type": "TimeoutError",
     }
+
+
+def test_live_report_keeps_failed_provenance_for_empty_example_categories(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    core_payload = json.loads(
+        Path("evals/fixtures/wordpack_converge.json").read_text(encoding="utf-8")
+    )["wordpack"]
+
+    class SequencedProvider:
+        def __init__(self) -> None:
+            self.outputs = [
+                json.dumps(core_payload, ensure_ascii=False),
+                *(["not-json"] * 5),
+            ]
+
+        def complete(self, _prompt: str) -> str:
+            return self.outputs.pop(0)
+
+    output = tmp_path / "empty-category-live-report.json"
+    monkeypatch.setattr(settings, "llm_max_tokens", settings.llm_max_tokens)
+    monkeypatch.setenv("OPENAI_API_KEY", "test-only-key")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "live_eval.py",
+            "--mode",
+            "live",
+            "--confirm",
+            live_eval.CONFIRM_PHRASE,
+            "--max-cases",
+            "1",
+            "--max-requests",
+            "6",
+            "--max-output-tokens",
+            "25000",
+            "--output",
+            str(output),
+        ],
+    )
+
+    assert live_eval.main(provider_factory=lambda **_kwargs: SequencedProvider()) == 0
+
+    report = json.loads(output.read_text(encoding="utf-8"))
+    findings = report["results"][0]["findings"]
+    for category in live_eval.EXAMPLE_CATEGORY_NAMES:
+        operation_findings = {
+            finding["code"]
+            for finding in findings
+            if finding["operation"] == f"examples.{category}"
+        }
+        assert {
+            "parse_failure",
+            "schema_failure",
+            "application_failure",
+            "example_count_mismatch",
+        } <= operation_findings

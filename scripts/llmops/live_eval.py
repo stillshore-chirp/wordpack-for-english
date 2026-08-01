@@ -38,12 +38,6 @@ def _live_major_settings(model: str, **extra: object) -> dict[str, object]:
     return {"model": model, "params": None, **extra}
 
 
-def _has_usable_senses(senses: object) -> bool:
-    if not isinstance(senses, list):
-        return False
-    return any(str(getattr(sense, "gloss_ja", "")).strip() for sense in senses)
-
-
 def _retained_example_rows(rows: object, count: int) -> list[dict[str, object]]:
     """本番フローと同じ順序で先頭 count 件から利用可能な例文を残す。"""
 
@@ -121,7 +115,10 @@ def main(*, provider_factory=None) -> int:
         raise SystemExit("OPENAI_API_KEY is required only for live mode")
 
     from backend.config import settings
-    from backend.infrastructure.llm.generated_contracts import GeneratedWordPackPayload
+    from backend.infrastructure.llm.generated_contracts import (
+        GeneratedWordPackPayload,
+        has_required_wordpack_text,
+    )
     from backend.infrastructure.llm.json_response_parser import parse_json_response
     from backend.infrastructure.llm.prompts.examples import (
         build_examples_prompt,
@@ -132,7 +129,10 @@ def main(*, provider_factory=None) -> int:
     from backend.llmops import complete_typed, prompt_identity_from_builder
     from backend.llmops.completion import safe_provenance, with_validation
     from backend.models.word import ExampleCategory
-    from evals.evaluators.contracts import evaluate_wordpack_payload
+    from evals.evaluators.contracts import (
+        evaluate_generation_provenance,
+        evaluate_wordpack_payload,
+    )
 
     cases = list(json.loads(args.cases_file.read_text(encoding="utf-8")).get("cases") or [])[: args.max_cases]
     requests = int(preflight["estimated_requests"])
@@ -197,8 +197,9 @@ def main(*, provider_factory=None) -> int:
                 if isinstance(parsed_wordpack, GeneratedWordPackPayload)
                 else None
             )
-            application_ok = _has_usable_senses(
-                generated_wordpack.senses if generated_wordpack else []
+            application_ok = bool(
+                generated_wordpack
+                and has_required_wordpack_text(generated_wordpack)
             )
             provenance = safe_provenance(
                 with_validation(
@@ -212,6 +213,7 @@ def main(*, provider_factory=None) -> int:
             payload["llm_model"] = settings.llm_model
             payload["generation_provenance"] = [provenance] if provenance else []
             examples: dict[str, list[dict[str, object]]] = {}
+            empty_category_findings: list[dict[str, str]] = []
             for category_name in EXAMPLE_CATEGORY_NAMES:
                 category = ExampleCategory(category_name)
                 prompt = build_examples_prompt(lemma, category, count)
@@ -241,7 +243,9 @@ def main(*, provider_factory=None) -> int:
                 rows = parsed.get("examples", []) if isinstance(parsed, dict) else []
                 rows = rows if isinstance(rows, list) else []
                 schema_ok = is_valid_examples_response(parsed)
-                retained_rows = _retained_example_rows(rows, count)
+                retained_rows = (
+                    _retained_example_rows(rows, count) if schema_ok else []
+                )
                 example_provenance = safe_provenance(
                     with_validation(
                         example_result,
@@ -261,12 +265,26 @@ def main(*, provider_factory=None) -> int:
                     }
                     for row in retained_rows
                 ]
+                if not retained_rows:
+                    empty_category_findings.extend(
+                        evaluate_generation_provenance(
+                            [example_provenance] if example_provenance else [],
+                            expected_model=settings.llm_model,
+                            expected_operation=(
+                                f"wordpack.examples.{category.value.lower()}"
+                            ),
+                            finding_operation=f"examples.{category.value}",
+                        )
+                    )
             payload["examples"] = examples
-            findings = evaluate_wordpack_payload(
-                payload,
-                expected_lemma=lemma,
-                expected_model=settings.llm_model,
-                expected_examples_per_category=count,
+            findings = (
+                empty_category_findings
+                + evaluate_wordpack_payload(
+                    payload,
+                    expected_lemma=lemma,
+                    expected_model=settings.llm_model,
+                    expected_examples_per_category=count,
+                )
             )
             results.append(
                 {

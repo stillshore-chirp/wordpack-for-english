@@ -194,6 +194,23 @@ def _validate_provenance(
     return findings
 
 
+def evaluate_generation_provenance(
+    values: object,
+    *,
+    expected_model: str | None,
+    expected_operation: str,
+    finding_operation: str,
+) -> list[dict[str, str]]:
+    """保持先の生成物がなくても、物理リクエストの来歴を評価する。"""
+
+    return _validate_provenance(
+        values,
+        expected_model=expected_model,
+        expected_operation=expected_operation,
+        finding_operation=finding_operation,
+    )
+
+
 def evaluate_wordpack_payload(
     payload: Mapping[str, Any],
     *,
@@ -299,12 +316,53 @@ def evaluate_fixture(path: Path) -> dict[str, Any]:
                 _finding("json_parse_failed", str(exc), operation="fixture")
             ],
         }
-    expected = raw.get("expected") or {}
+    case_id = (
+        str(raw.get("case_id") or path.stem)
+        if isinstance(raw, Mapping)
+        else path.stem
+    )
+    if not isinstance(raw, Mapping):
+        return {
+            "case_id": case_id,
+            "passed": False,
+            "findings": [
+                _finding(
+                    "fixture_invalid",
+                    "fixture must be an object",
+                    operation="fixture",
+                )
+            ],
+        }
+    expected = raw.get("expected")
+    expected_count = (
+        expected.get("examples_per_category")
+        if isinstance(expected, Mapping)
+        else None
+    )
+    if (
+        not isinstance(expected, Mapping)
+        or not str(expected.get("lemma") or "").strip()
+        or not str(expected.get("model") or "").strip()
+        or isinstance(expected_count, bool)
+        or not isinstance(expected_count, int)
+        or expected_count <= 0
+    ):
+        return {
+            "case_id": case_id,
+            "passed": False,
+            "findings": [
+                _finding(
+                    "fixture_expectation_invalid",
+                    "expected requires nonblank lemma/model and a positive examples_per_category",
+                    operation="fixture",
+                )
+            ],
+        }
     payload = raw.get("wordpack") or {}
     findings = evaluate_wordpack_payload(
         payload,
-        expected_lemma=str(expected.get("lemma") or payload.get("lemma") or ""),
-        expected_model=str(expected.get("model") or "") or None,
-        expected_examples_per_category=int(expected.get("examples_per_category") or 0),
+        expected_lemma=str(expected["lemma"]),
+        expected_model=str(expected["model"]),
+        expected_examples_per_category=expected_count,
     )
-    return {"case_id": str(raw.get("case_id") or path.stem), "passed": not findings, "findings": findings}
+    return {"case_id": case_id, "passed": not findings, "findings": findings}

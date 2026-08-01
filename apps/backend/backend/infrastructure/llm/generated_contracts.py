@@ -67,6 +67,56 @@ class GeneratedWordPackPayload(BaseModel):
     pronunciation: GeneratedPronunciationPayload
 
 
+def has_required_wordpack_text(payload: GeneratedWordPackPayload) -> bool:
+    """生成契約で要求する文字列が空白だけでないことを確認する。"""
+
+    required_text = [
+        payload.sense_title,
+        payload.study_card,
+        payload.etymology.note,
+        payload.pronunciation.ipa_RP,
+        *(
+            value
+            for sense in payload.senses
+            for value in (
+                sense.id,
+                sense.gloss_ja,
+                sense.definition_ja,
+                sense.nuances_ja,
+                sense.register_,
+                sense.notes_ja,
+            )
+        ),
+        *(
+            value
+            for sense in payload.senses
+            for values in (sense.patterns, sense.synonyms, sense.antonyms)
+            for value in values
+        ),
+        *(
+            value
+            for group in (
+                payload.collocations.general,
+                payload.collocations.academic,
+            )
+            for values in (group.verb_object, group.adj_noun, group.prep_noun)
+            for value in values
+        ),
+        *(
+            value
+            for contrast in payload.contrast
+            for value in (contrast.with_, contrast.diff_ja)
+        ),
+    ]
+    optional_text = [
+        value
+        for sense in payload.senses
+        for value in (sense.term_overview_ja, sense.term_core_ja)
+        if value is not None
+    ]
+    return all(value.strip() for value in (*required_text, *optional_text))
+
+
 class GeneratedQuizPassagePayload(QuizPassage):
     """QUIZ_JSON_SCHEMA_PROMPT がpassageへ要求する全キー。"""
 
@@ -114,4 +164,5 @@ class GeneratedQuizPayload(BaseModel):
 __all__ = [
     "GeneratedQuizPayload",
     "GeneratedWordPackPayload",
+    "has_required_wordpack_text",
 ]

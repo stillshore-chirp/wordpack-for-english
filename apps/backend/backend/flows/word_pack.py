@@ -9,7 +9,10 @@ from pydantic import ValidationError
 
 from . import create_state_graph
 
-from ..infrastructure.llm.generated_contracts import GeneratedWordPackPayload
+from ..infrastructure.llm.generated_contracts import (
+    GeneratedWordPackPayload,
+    has_required_wordpack_text,
+)
 from ..infrastructure.llm.json_response_parser import parse_json_response
 from ..infrastructure.llm.prompts.examples import (
     build_examples_prompt,
@@ -37,54 +40,6 @@ from ..config import settings
 from ..logging import logger
 from ..pronunciation import generate_pronunciation
 from ..sense_title import choose_sense_title
-
-
-def _has_required_wordpack_text(payload: GeneratedWordPackPayload) -> bool:
-    required_text = [
-        payload.sense_title,
-        payload.study_card,
-        payload.etymology.note,
-        payload.pronunciation.ipa_RP,
-        *(
-            value
-            for sense in payload.senses
-            for value in (
-                sense.id,
-                sense.gloss_ja,
-                sense.definition_ja,
-                sense.nuances_ja,
-                sense.register_,
-                sense.notes_ja,
-            )
-        ),
-        *(
-            value
-            for sense in payload.senses
-            for values in (sense.patterns, sense.synonyms, sense.antonyms)
-            for value in values
-        ),
-        *(
-            value
-            for group in (
-                payload.collocations.general,
-                payload.collocations.academic,
-            )
-            for values in (group.verb_object, group.adj_noun, group.prep_noun)
-            for value in values
-        ),
-        *(
-            value
-            for contrast in payload.contrast
-            for value in (contrast.with_, contrast.diff_ja)
-        ),
-    ]
-    optional_text = [
-        value
-        for sense in payload.senses
-        for value in (sense.term_overview_ja, sense.term_core_ja)
-        if value is not None
-    ]
-    return all(value.strip() for value in (*required_text, *optional_text))
 
 
 # --- 例文生成プロンプト: Notes 分割（共通/カテゴリ別） ---
@@ -202,7 +157,7 @@ class WordPackFlow:
                             try:
                                 validated = GeneratedWordPackPayload.model_validate(llm_data)
                                 schema_valid = True
-                                application_valid = _has_required_wordpack_text(validated)
+                                application_valid = has_required_wordpack_text(validated)
                             except ValidationError:
                                 logger.info(
                                     "wordpack_llm_schema_validation_failed",
@@ -512,7 +467,11 @@ class WordPackFlow:
             study_card=study_card,
             citations=citations or [],
             confidence=confidence,
-            generation_provenance=list(self._generation_provenance),
+            generation_provenance=[
+                provenance
+                for provenance in self._generation_provenance
+                if provenance.get("operation") == "wordpack.generate"
+            ],
         )
         logger.info(
             "wordpack_synthesize_done",

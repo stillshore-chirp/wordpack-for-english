@@ -56,7 +56,7 @@ def _fixture() -> dict[str, object]:
     return fixture["wordpack"]
 
 
-def test_wordpack_and_five_initial_example_categories_keep_six_call_baseline() -> None:
+def test_wordpack_and_five_initial_example_categories_keep_separate_provenance() -> None:
     llm = _SequencedWordPackLlm(_fixture())
     pack = WordPackFlow(
         llm=llm,
@@ -64,7 +64,8 @@ def test_wordpack_and_five_initial_example_categories_keep_six_call_baseline() -
     ).run("converge", pronunciation_enabled=False)
 
     assert llm.calls == 6
-    assert len(pack.generation_provenance) == 6
+    assert len(pack.generation_provenance) == 1
+    assert pack.generation_provenance[0]["operation"] == "wordpack.generate"
     assert pack.generation_provenance[0]["validation"] == {
         "parse": True,
         "schema": True,
