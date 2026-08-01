@@ -10,9 +10,21 @@ import pytest
 
 from evals.evaluators.contracts import evaluate_fixture, evaluate_wordpack_payload
 from backend.config import settings
+from backend.domain.quiz.prompt_policy import build_quiz_generation_prompt
+from backend.infrastructure.llm.generated_contracts import (
+    GeneratedQuizPayload,
+    GeneratedWordPackPayload,
+)
+from backend.infrastructure.llm.prompts.examples import (
+    build_examples_prompt,
+    examples_response_schema,
+)
+from backend.infrastructure.llm.prompts.wordpack import build_wordpack_prompt
 from backend.infrastructure.llm.wordpack_generator import build_llm_info
+from backend.llmops.identity import prompt_identity_from_builder
+from backend.models.word import ExampleCategory
 from scripts.llmops.estimate_run import estimate
-from scripts.llmops.offline_report import build_report, render_markdown
+from scripts.llmops.offline_report import build_report, current_snapshot, render_markdown
 from scripts.llmops import live_eval
 
 
@@ -105,13 +117,85 @@ def test_live_application_rejects_blank_glosses() -> None:
     assert live_eval._has_usable_senses([GeneratedSense()]) is False
 
 
+def test_live_examples_apply_production_truncation_before_usability_check() -> None:
+    rows = [
+        {"en": " first ", "ja": " 最初 ", "grammar_ja": " "},
+        {"en": "second", "ja": "2番目"},
+        {"en": "third", "ja": "3番目"},
+    ]
+
+    retained = live_eval._retained_example_rows(rows, 2)
+
+    assert retained == [
+        {"en": "first", "ja": "最初", "grammar_ja": None},
+        {"en": "second", "ja": "2番目", "grammar_ja": None},
+    ]
+
+
 def test_offline_report_generates_json_and_short_markdown_summary() -> None:
     report = build_report(Path("evals/fixtures"))
     markdown = render_markdown(report)
     json.dumps(report)
     assert report["offline_contract_tests"] == "Passed"
     assert report["fixture_regressions"] == 0
+    assert report["missing_required_cases"] == []
     assert "Paid LLM requests: 0" in markdown
+
+
+def test_offline_snapshot_matches_production_prompt_identities() -> None:
+    llm_info = build_llm_info({})
+    expected = {
+        "wordpack.core": prompt_identity_from_builder(
+            prompt_id="wordpack.core",
+            operation="wordpack.generate",
+            builder=build_wordpack_prompt,
+            schema=GeneratedWordPackPayload.model_json_schema(),
+            major_settings=llm_info,
+        ).prompt_revision,
+        "quiz.generate": prompt_identity_from_builder(
+            prompt_id="quiz.generate",
+            operation="quiz.generate",
+            builder=build_quiz_generation_prompt,
+            schema=GeneratedQuizPayload.model_json_schema(),
+            major_settings=llm_info,
+        ).prompt_revision,
+    }
+    for category in ExampleCategory:
+        identity_name = f"wordpack.examples.{category.value.lower()}"
+        expected[identity_name] = prompt_identity_from_builder(
+            prompt_id=identity_name,
+            operation=identity_name,
+            builder=build_examples_prompt,
+            schema=examples_response_schema(),
+            major_settings={
+                **llm_info,
+                "category": category.value,
+                "count": 2,
+            },
+        ).prompt_revision
+
+    assert current_snapshot()["prompt_revisions"] == expected
+
+
+def test_offline_report_fails_when_required_fixture_is_replaced(
+    tmp_path: Path,
+) -> None:
+    fixture = json.loads(
+        Path("evals/fixtures/wordpack_converge.json").read_text(encoding="utf-8")
+    )
+    fixture["case_id"] = "replacement-passing-case"
+    fixtures_dir = tmp_path / "fixtures"
+    fixtures_dir.mkdir()
+    (fixtures_dir / "replacement.json").write_text(
+        json.dumps(fixture, ensure_ascii=False),
+        encoding="utf-8",
+    )
+
+    report = build_report(fixtures_dir)
+
+    assert report["offline_contract_tests"] == "Failed"
+    assert report["fixture_regressions"] == 1
+    assert report["missing_required_cases"] == ["wordpack-converge-contract-v1"]
 
 
 def test_llmops_clis_start_without_application_session_secret(tmp_path: Path) -> None:

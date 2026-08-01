@@ -2,14 +2,22 @@
   "fixture_regressions": 0,
   "required_cases": ["wordpack-converge-contract-v1"],
   "prompt_revisions": {
-    "wordpack.core": "6c3f7dbb94e2d7c53ef8d8fcd526ebbb120813eb7c2ef1e9765680ae1ed3d16b",
-    "wordpack.examples": "5e163b3c6208203c7a0ad5f5485502ee37c327e33f01f6c8d2269db5987b1415",
-    "quiz.generate": "2e0427096a67c9908d887eab17e80e33912b70453a93b68effd315a38588f611"
+    "wordpack.core": "5e7610b9485db9486d1da8ef18b50392480b24f4210ef1fdf675fedc7269ce09",
+    "quiz.generate": "0801f80edb1dc46eec47db12e3cedbaefd42974f41034c871140ddc0bfcbaee8",
+    "wordpack.examples.dev": "1e9f1940f6fc6bd204f41be30171877bf091cb1566d1a22d92189e9f75fa92ce",
+    "wordpack.examples.cs": "6f13ae8edc435dd209d3e5177c080d82facbd30d40adcba4326bf4b0144d93b0",
+    "wordpack.examples.llm": "d280d505a1ea56dbb05a84467c20a5aadee0466246d21640c2bdf22a563d5abd",
+    "wordpack.examples.business": "49c92d063ca272a6dded6b626bc416ffef034dca369b86cb9da1bd7c9009459e",
+    "wordpack.examples.common": "b8e858d8fb7640be5892fc165c542a294bd60fd75bb9fa20a63ed79a62216ace"
   },
   "schema_revisions": {
     "wordpack.core": "9823dd5b36c2bbe08cc8a90a87ceff55c121de4dddc13d62c14fb505df31bcb8",
-    "wordpack.examples": "5cba55f22ca328c19b810af4809d5c473609fde5bf80313548b6159a2491f5b6",
-    "quiz.generate": "13bdfbf708168c561ae0873b314b6db5a4c2a2930601041712455abfd6efbbdd"
+    "quiz.generate": "13bdfbf708168c561ae0873b314b6db5a4c2a2930601041712455abfd6efbbdd",
+    "wordpack.examples.dev": "5cba55f22ca328c19b810af4809d5c473609fde5bf80313548b6159a2491f5b6",
+    "wordpack.examples.cs": "5cba55f22ca328c19b810af4809d5c473609fde5bf80313548b6159a2491f5b6",
+    "wordpack.examples.llm": "5cba55f22ca328c19b810af4809d5c473609fde5bf80313548b6159a2491f5b6",
+    "wordpack.examples.business": "5cba55f22ca328c19b810af4809d5c473609fde5bf80313548b6159a2491f5b6",
+    "wordpack.examples.common": "5cba55f22ca328c19b810af4809d5c473609fde5bf80313548b6159a2491f5b6"
   },
   "model_profile": {
     "model": "gpt-5.6-luna",

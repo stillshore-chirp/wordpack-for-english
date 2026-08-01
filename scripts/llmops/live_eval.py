@@ -43,6 +43,24 @@ def _has_usable_senses(senses: object) -> bool:
     return any(str(getattr(sense, "gloss_ja", "")).strip() for sense in senses)
 
 
+def _retained_example_rows(rows: object, count: int) -> list[dict[str, object]]:
+    """本番フローと同じ順序で先頭 count 件から利用可能な例文を残す。"""
+
+    if not isinstance(rows, list):
+        return []
+    retained: list[dict[str, object]] = []
+    for row in rows[:count]:
+        if not isinstance(row, dict):
+            continue
+        en = str(row.get("en") or "").strip()
+        ja = str(row.get("ja") or "").strip()
+        if not en or not ja:
+            continue
+        grammar_ja = str(row.get("grammar_ja") or "").strip() or None
+        retained.append({**row, "en": en, "ja": ja, "grammar_ja": grammar_ja})
+    return retained
+
+
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("estimate", "live"), default="estimate")
@@ -210,12 +228,13 @@ def main(*, provider_factory=None) -> int:
                 rows = parsed.get("examples", []) if isinstance(parsed, dict) else []
                 rows = rows if isinstance(rows, list) else []
                 schema_ok = is_valid_examples_response(parsed)
+                retained_rows = _retained_example_rows(rows, count)
                 example_provenance = safe_provenance(
                     with_validation(
                         example_result,
                         parse=parse_ok,
                         schema=schema_ok,
-                        application=schema_ok and len(rows) == count,
+                        application=schema_ok and len(retained_rows) == count,
                     )
                 )
                 examples[category.value] = [
@@ -227,8 +246,7 @@ def main(*, provider_factory=None) -> int:
                             [example_provenance] if example_provenance else []
                         ),
                     }
-                    for row in rows[:count]
-                    if isinstance(row, dict)
+                    for row in retained_rows
                 ]
             payload["examples"] = examples
             findings = evaluate_wordpack_payload(

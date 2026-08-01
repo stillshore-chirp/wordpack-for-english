@@ -29,36 +29,48 @@ from backend.infrastructure.llm.prompts.examples import (
     examples_response_schema,
 )
 from backend.infrastructure.llm.prompts.wordpack import build_wordpack_prompt
+from backend.infrastructure.llm.wordpack_generator import build_llm_info
 from backend.llm_models import (
     DEFAULT_LLM_MODEL,
     DEFAULT_REASONING_EFFORT,
     DEFAULT_TEXT_VERBOSITY,
 )
 from backend.llmops.identity import prompt_identity_from_builder
+from backend.models.word import ExampleCategory
 from backend.settings.base import Settings
 
 
 def current_snapshot() -> dict[str, object]:
+    production_llm_info = build_llm_info({})
     identities = {
         "wordpack.core": prompt_identity_from_builder(
             prompt_id="wordpack.core",
             operation="wordpack.generate",
             builder=build_wordpack_prompt,
             schema=GeneratedWordPackPayload.model_json_schema(),
-        ),
-        "wordpack.examples": prompt_identity_from_builder(
-            prompt_id="wordpack.examples",
-            operation="wordpack.examples",
-            builder=build_examples_prompt,
-            schema=examples_response_schema(),
+            major_settings=production_llm_info,
         ),
         "quiz.generate": prompt_identity_from_builder(
             prompt_id="quiz.generate",
             operation="quiz.generate",
             builder=build_quiz_generation_prompt,
             schema=GeneratedQuizPayload.model_json_schema(),
+            major_settings=production_llm_info,
         ),
     }
+    for category in ExampleCategory:
+        identity_name = f"wordpack.examples.{category.value.lower()}"
+        identities[identity_name] = prompt_identity_from_builder(
+            prompt_id=identity_name,
+            operation=identity_name,
+            builder=build_examples_prompt,
+            schema=examples_response_schema(),
+            major_settings={
+                **production_llm_info,
+                "category": category.value,
+                "count": 2,
+            },
+        )
     return {
         "prompt_revisions": {
             name: identity.prompt_revision for name, identity in identities.items()
@@ -86,12 +98,30 @@ def build_report(
         baseline = json.loads(baseline_path.read_text(encoding="utf-8"))
     except Exception:
         baseline = {}
+    raw_required_cases = baseline.get("required_cases")
+    required_cases = (
+        {
+            str(case_id)
+            for case_id in raw_required_cases
+            if str(case_id).strip()
+        }
+        if isinstance(raw_required_cases, list)
+        else set()
+    )
+    observed_cases = {
+        str(case.get("case_id") or "")
+        for case in cases
+        if isinstance(case, dict)
+    }
+    missing_required_cases = sorted(required_cases - observed_cases)
+    regressions += len(missing_required_cases)
     return {
         "prompt_changed": "Yes" if baseline.get("prompt_revisions") != snapshot["prompt_revisions"] else "No",
         "model_profile_changed": "Yes" if baseline.get("model_profile") != snapshot["model_profile"] else "No",
         "schema_changed": "Yes" if baseline.get("schema_revisions") != snapshot["schema_revisions"] else "No",
         "offline_contract_tests": "Passed" if regressions == 0 and cases else "Failed",
         "fixture_regressions": regressions,
+        "missing_required_cases": missing_required_cases,
         "paid_llm_requests": 0,
         "snapshot": snapshot,
         "cases": cases,
@@ -108,6 +138,8 @@ def render_markdown(report: dict[str, object]) -> str:
             f"- Schema changed: {report['schema_changed']}",
             f"- Offline contract tests: {report['offline_contract_tests']}",
             f"- Fixture regressions: {report['fixture_regressions']}",
+            "- Missing required cases: "
+            + (", ".join(report["missing_required_cases"]) or "None"),
             "- Paid LLM requests: 0",
         ]
     ) + "\n"
