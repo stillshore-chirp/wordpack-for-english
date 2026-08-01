@@ -11,6 +11,13 @@ for import_root in (REPOSITORY_ROOT, REPOSITORY_ROOT / "apps" / "backend"):
     if str(import_root) not in sys.path:
         sys.path.insert(0, str(import_root))
 
+try:
+    from scripts.llmops.cli_environment import prepare_backend_cli_environment
+except ModuleNotFoundError:  # direct script execution
+    from cli_environment import prepare_backend_cli_environment
+
+prepare_backend_cli_environment()
+
 from evals.evaluators.contracts import evaluate_fixture
 from backend.infrastructure.llm.prompts.examples import build_examples_prompt
 from backend.infrastructure.llm.prompts.wordpack import build_wordpack_prompt

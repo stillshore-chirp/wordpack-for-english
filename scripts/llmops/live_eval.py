@@ -13,9 +13,13 @@ for import_root in (REPOSITORY_ROOT, REPOSITORY_ROOT / "apps" / "backend"):
         sys.path.insert(0, str(import_root))
 
 try:
+    from scripts.llmops.cli_environment import prepare_backend_cli_environment
     from scripts.llmops.estimate_run import estimate
 except ModuleNotFoundError:  # direct script execution
+    from cli_environment import prepare_backend_cli_environment
     from estimate_run import estimate
+
+prepare_backend_cli_environment()
 
 CONFIRM_PHRASE = "RUN_PAID_LIVE_EVALUATION"
 EXAMPLE_CATEGORY_NAMES = (

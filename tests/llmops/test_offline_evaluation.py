@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -22,6 +25,42 @@ def test_offline_report_generates_json_and_short_markdown_summary() -> None:
     assert report["offline_contract_tests"] == "Passed"
     assert report["fixture_regressions"] == 0
     assert "Paid LLM requests: 0" in markdown
+
+
+def test_llmops_clis_start_without_application_session_secret(tmp_path: Path) -> None:
+    clean_env = os.environ.copy()
+    clean_env.pop("SESSION_SECRET_KEY", None)
+    clean_env["PYTHONPATH"] = "apps/backend"
+    import_check = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import os; import scripts.llmops.live_eval; "
+                "assert len(os.environ['SESSION_SECRET_KEY']) >= 32"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=clean_env,
+    )
+    assert import_check.returncode == 0, import_check.stderr
+
+    report = subprocess.run(
+        [
+            sys.executable,
+            "scripts/llmops/offline_report.py",
+            "--json-output",
+            str(tmp_path / "report.json"),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=clean_env,
+    )
+    assert report.returncode == 0, report.stderr
+    assert (tmp_path / "report.json").is_file()
 
 
 def test_live_estimate_has_zero_paid_requests_and_enforces_hard_limits() -> None:
