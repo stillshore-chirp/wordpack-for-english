@@ -141,12 +141,16 @@ def main(*, provider_factory=None) -> int:
                     payload = parsed_wordpack
                     parse_ok = True
             except Exception:
+                # Invalid generated JSON is a quality finding; the paid run continues
+                # so the report preserves all bounded case results.
                 pass
             if parse_ok:
                 try:
                     WordPack.model_validate({**payload, "lemma": lemma})
                     schema_ok = True
                 except Exception:
+                    # Schema failures are recorded in provenance and evaluated below;
+                    # they do not abort the remaining bounded requests.
                     pass
             application_ok = bool(
                 schema_ok
@@ -188,6 +192,8 @@ def main(*, provider_factory=None) -> int:
                     )
                     parse_ok = True
                 except Exception:
+                    # A malformed example response is reported as parse/schema failure
+                    # while the bounded evaluation continues through other categories.
                     pass
                 rows = parsed.get("examples", []) if isinstance(parsed, dict) else []
                 rows = rows if isinstance(rows, list) else []
