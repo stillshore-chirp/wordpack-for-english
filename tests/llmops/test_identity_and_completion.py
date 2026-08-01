@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 import json
 from types import SimpleNamespace
 
@@ -166,9 +167,7 @@ def test_langfuse_initialization_failure_does_not_block_completion(monkeypatch: 
     assert result.response_status == "completed"
 
 
-def test_provenance_never_contains_raw_content_and_serialization_failure_is_nonfatal(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_provenance_never_contains_raw_content_and_serialization_failure_is_nonfatal() -> None:
     result = complete_typed(
         SimpleNamespace(complete=lambda prompt: "private output"),
         "private prompt",
@@ -179,11 +178,12 @@ def test_provenance_never_contains_raw_content_and_serialization_failure_is_nonf
     assert "private prompt" not in serialized
     assert "private output" not in serialized
 
-    monkeypatch.setattr(
-        "backend.llmops.completion.provenance_from_result",
-        lambda _result: (_ for _ in ()).throw(TypeError("boom")),
-    )
-    assert safe_provenance(result) is None
+    class BrokenMapping(dict):
+        def items(self):
+            raise TypeError("boom")
+
+    broken_result = replace(result, requested_parameters=BrokenMapping())
+    assert safe_provenance(broken_result) is None
 
 
 def test_oversized_provenance_is_reduced_below_hard_limit() -> None:
