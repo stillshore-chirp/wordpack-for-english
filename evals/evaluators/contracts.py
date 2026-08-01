@@ -71,6 +71,20 @@ def _validate_provenance(
                         operation=operation,
                     )
                 )
+            invalid_outcomes = [
+                key
+                for key in ("parse", "schema", "application")
+                if key in validation and not isinstance(validation[key], bool)
+            ]
+            if invalid_outcomes:
+                findings.append(
+                    _finding(
+                        "validation_outcome_invalid",
+                        "validation outcomes must be boolean: "
+                        + ",".join(invalid_outcomes),
+                        operation=operation,
+                    )
+                )
             if validation.get("parse") is False:
                 findings.append(
                     _finding(

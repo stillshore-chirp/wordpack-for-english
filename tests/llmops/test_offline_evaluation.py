@@ -77,6 +77,10 @@ def test_evaluator_fails_when_provenance_records_application_failure() -> None:
         (None, "validation_missing"),
         ("invalid", "validation_invalid"),
         ({"parse": True, "schema": True}, "validation_outcome_missing"),
+        (
+            {"parse": None, "schema": None, "application": None},
+            "validation_outcome_invalid",
+        ),
     ],
 )
 def test_evaluator_requires_all_validation_outcomes(

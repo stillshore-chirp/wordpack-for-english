@@ -9,7 +9,7 @@
     "lemma": "converge",
     "sense_title": "収束する",
     "pronunciation": {"ipa_GA": "/kənˈvɝːdʒ/", "ipa_RP": "/kənˈvɜːdʒ/", "syllables": 2, "stress_index": 1, "linking_notes": []},
-    "senses": [{"id": "s1", "gloss_ja": "一点に集まる", "patterns": ["converge on"]}],
+    "senses": [{"id": "s1", "gloss_ja": "一点に集まる", "definition_ja": "複数の対象が同じ地点や結論へ近づくことです。", "nuances_ja": "物理的な合流と意見や結果の一致の両方に使えます。", "patterns": ["converge on"], "synonyms": ["meet"], "antonyms": ["diverge"], "register": "neutral", "notes_ja": "自動詞として使います。"}],
     "collocations": {"general": {"verb_object": [], "adj_noun": [], "prep_noun": []}, "academic": {"verb_object": [], "adj_noun": [], "prep_noun": []}},
     "contrast": [],
     "examples": {
