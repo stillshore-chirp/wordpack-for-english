@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from evals.evaluators.contracts import evaluate_fixture
+from evals.evaluators.contracts import evaluate_fixture, evaluate_wordpack_payload
 from backend.config import settings
 from scripts.llmops.estimate_run import estimate
 from scripts.llmops.offline_report import build_report, render_markdown
@@ -18,6 +18,23 @@ from scripts.llmops import live_eval
 def test_required_wordpack_and_five_category_fixture_passes_without_network() -> None:
     result = evaluate_fixture(Path("evals/fixtures/wordpack_converge.json"))
     assert result["passed"] is True, result["findings"]
+
+
+def test_evaluator_fails_when_provenance_records_generated_schema_failure() -> None:
+    fixture = json.loads(
+        Path("evals/fixtures/wordpack_converge.json").read_text(encoding="utf-8")
+    )
+    payload = fixture["wordpack"]
+    payload["generation_provenance"][0]["validation"]["schema"] = False
+
+    findings = evaluate_wordpack_payload(
+        payload,
+        expected_lemma="converge",
+        expected_model="gpt-5.6-luna",
+        expected_examples_per_category=2,
+    )
+
+    assert any(finding["code"] == "schema_failure" for finding in findings)
 
 
 def test_offline_report_generates_json_and_short_markdown_summary() -> None:

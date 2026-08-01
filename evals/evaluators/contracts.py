@@ -45,6 +45,14 @@ def _validate_provenance(
         validation = item.get("validation") or {}
         if isinstance(validation, Mapping) and validation.get("parse") is False:
             findings.append(_finding("parse_failure", "provenance classifies a parse failure", operation=operation))
+        if isinstance(validation, Mapping) and validation.get("schema") is False:
+            findings.append(
+                _finding(
+                    "schema_failure",
+                    "provenance classifies a generated-response schema failure",
+                    operation=operation,
+                )
+            )
         fallback_reason = str(item.get("fallback_reason") or "")
         if fallback_reason and fallback_reason not in {"PARAM_UNSUPPORTED", "PROVIDER_FAILURE"}:
             findings.append(_finding("fallback_unclassified", fallback_reason, operation=operation))
