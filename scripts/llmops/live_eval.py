@@ -31,6 +31,18 @@ EXAMPLE_CATEGORY_NAMES = (
 )
 
 
+def _live_major_settings(model: str, **extra: object) -> dict[str, object]:
+    """本番の build_llm_info と同じ既定値で prompt revision を作る。"""
+
+    return {"model": model, "params": None, **extra}
+
+
+def _has_usable_senses(senses: object) -> bool:
+    if not isinstance(senses, list):
+        return False
+    return any(str(getattr(sense, "gloss_ja", "")).strip() for sense in senses)
+
+
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--mode", choices=("estimate", "live"), default="estimate")
@@ -130,7 +142,7 @@ def main(*, provider_factory=None) -> int:
                 operation="wordpack.generate",
                 builder=build_wordpack_prompt,
                 schema=GeneratedWordPackPayload.model_json_schema(),
-                major_settings={"model": settings.llm_model},
+                major_settings=_live_major_settings(settings.llm_model),
             )
             completion = bounded_completion(wordpack_prompt, identity=identity)
             payload: dict[str, object] = {}
@@ -154,7 +166,9 @@ def main(*, provider_factory=None) -> int:
                     # Schema failures are recorded in provenance and evaluated below;
                     # they do not abort the remaining bounded requests.
                     pass
-            application_ok = bool(generated_wordpack and generated_wordpack.senses)
+            application_ok = _has_usable_senses(
+                generated_wordpack.senses if generated_wordpack else []
+            )
             provenance = safe_provenance(
                 with_validation(
                     completion,
@@ -175,11 +189,11 @@ def main(*, provider_factory=None) -> int:
                     operation=f"wordpack.examples.{category.value.lower()}",
                     builder=build_examples_prompt,
                     schema=examples_response_schema(),
-                    major_settings={
-                        "model": settings.llm_model,
-                        "category": category.value,
-                        "count": count,
-                    },
+                    major_settings=_live_major_settings(
+                        settings.llm_model,
+                        category=category.value,
+                        count=count,
+                    ),
                 )
                 example_result = bounded_completion(prompt, identity=example_identity)
                 parsed: object = {}

@@ -53,6 +53,14 @@ def _validate_provenance(
                     operation=operation,
                 )
             )
+        if isinstance(validation, Mapping) and validation.get("application") is False:
+            findings.append(
+                _finding(
+                    "application_failure",
+                    "provenance classifies an unusable generated result",
+                    operation=operation,
+                )
+            )
         fallback_reason = str(item.get("fallback_reason") or "")
         if fallback_reason and fallback_reason not in {"PARAM_UNSUPPORTED", "PROVIDER_FAILURE"}:
             findings.append(_finding("fallback_unclassified", fallback_reason, operation=operation))

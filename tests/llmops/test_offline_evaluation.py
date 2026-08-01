@@ -10,6 +10,7 @@ import pytest
 
 from evals.evaluators.contracts import evaluate_fixture, evaluate_wordpack_payload
 from backend.config import settings
+from backend.infrastructure.llm.wordpack_generator import build_llm_info
 from scripts.llmops.estimate_run import estimate
 from scripts.llmops.offline_report import build_report, render_markdown
 from scripts.llmops import live_eval
@@ -35,6 +36,41 @@ def test_evaluator_fails_when_provenance_records_generated_schema_failure() -> N
     )
 
     assert any(finding["code"] == "schema_failure" for finding in findings)
+
+
+def test_evaluator_fails_when_provenance_records_application_failure() -> None:
+    fixture = json.loads(
+        Path("evals/fixtures/wordpack_converge.json").read_text(encoding="utf-8")
+    )
+    payload = fixture["wordpack"]
+    payload["generation_provenance"][0]["validation"]["application"] = False
+
+    findings = evaluate_wordpack_payload(
+        payload,
+        expected_lemma="converge",
+        expected_model="gpt-5.6-luna",
+        expected_examples_per_category=2,
+    )
+
+    assert any(finding["code"] == "application_failure" for finding in findings)
+
+
+def test_live_identity_settings_match_production_defaults() -> None:
+    production = build_llm_info({})
+
+    assert live_eval._live_major_settings(settings.llm_model) == production
+    assert live_eval._live_major_settings(
+        settings.llm_model,
+        category="Dev",
+        count=2,
+    ) == {**production, "category": "Dev", "count": 2}
+
+
+def test_live_application_rejects_blank_glosses() -> None:
+    class GeneratedSense:
+        gloss_ja = "   "
+
+    assert live_eval._has_usable_senses([GeneratedSense()]) is False
 
 
 def test_offline_report_generates_json_and_short_markdown_summary() -> None:
