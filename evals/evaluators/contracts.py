@@ -6,6 +6,10 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from backend.models.word import WordPack
+from backend.infrastructure.llm.prompts.examples import (
+    EXAMPLE_WORD_COUNT_MAX,
+    EXAMPLE_WORD_COUNT_MIN,
+)
 
 EXAMPLE_CATEGORIES = ("Dev", "CS", "LLM", "Business", "Common")
 
@@ -257,7 +261,7 @@ def evaluate_wordpack_payload(
                     )
                 )
             word_count = len(re.findall(r"[A-Za-z]+(?:[-'][A-Za-z]+)*", item.en))
-            if not 4 <= word_count <= 30:
+            if not EXAMPLE_WORD_COUNT_MIN <= word_count <= EXAMPLE_WORD_COUNT_MAX:
                 findings.append(_finding("example_word_count", str(word_count), operation=operation))
             if not _contains_lemma(item.en, expected_lemma):
                 findings.append(_finding("lemma_missing", expected_lemma, operation=operation))

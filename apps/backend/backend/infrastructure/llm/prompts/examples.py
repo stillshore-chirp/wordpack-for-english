@@ -2,6 +2,11 @@ from __future__ import annotations
 
 from ....models.word import ExampleCategory
 
+EXAMPLE_WORD_COUNT_TARGET = 50
+EXAMPLE_WORD_COUNT_TOLERANCE = 5
+EXAMPLE_WORD_COUNT_MIN = EXAMPLE_WORD_COUNT_TARGET - EXAMPLE_WORD_COUNT_TOLERANCE
+EXAMPLE_WORD_COUNT_MAX = EXAMPLE_WORD_COUNT_TARGET + EXAMPLE_WORD_COUNT_TOLERANCE
+
 
 def examples_response_schema() -> dict[str, object]:
     return {
@@ -43,7 +48,7 @@ def examples_common_notes_text() -> str:
         "- もし対象語が名詞（一般名詞/固有名詞）や専門用語である場合、\n"
         "  term_overview_ja（3〜5文の概要）と term_core_ja（3〜5文の本質）を必ず日本語で記述する。\n"
         "  名詞以外（動詞/形容詞など）の場合、これら2つのキーは省略してよい。\n"
-        "- 例文は自然で、約50語（±5語）の英文にする。各英例文には必ず対象語（lemma）を含める。\n"
+        f"- 例文は自然で、約{EXAMPLE_WORD_COUNT_TARGET}語（±{EXAMPLE_WORD_COUNT_TOLERANCE}語）の英文にする。各英例文には必ず対象語（lemma）を含める。\n"
         "- 本リクエストでは Target category のみを生成し、件数は末尾の Override 指示に厳密に従う。\n"
         "- 各例文の grammar_ja は2段落の詳細解説にする：\n"
         "  1) 品詞分解：形態素/句を『／』で区切り、語の後に【品詞/統語役割】を付す。必要に応じて句の内部構造も『＝』で示す（例：I【代/主】／sent【動/過去】／the documents【名/目】／via email【前置詞句＝via(前)+email(名)：手段】／to ensure quick delivery【不定詞句＝to+ensure(動)+quick(形)+delivery(名)：目的】）。\n"

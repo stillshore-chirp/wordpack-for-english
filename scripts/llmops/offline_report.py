@@ -29,7 +29,6 @@ from backend.infrastructure.llm.prompts.examples import (
     examples_response_schema,
 )
 from backend.infrastructure.llm.prompts.wordpack import build_wordpack_prompt
-from backend.infrastructure.llm.wordpack_generator import build_llm_info
 from backend.llm_models import (
     DEFAULT_LLM_MODEL,
     DEFAULT_REASONING_EFFORT,
@@ -49,7 +48,7 @@ PRODUCTION_EXAMPLE_CATEGORIES = (
 
 
 def current_snapshot() -> dict[str, object]:
-    production_llm_info = build_llm_info({})
+    production_llm_info = {"model": DEFAULT_LLM_MODEL, "params": None}
     identities = {
         "wordpack.core": prompt_identity_from_builder(
             prompt_id="wordpack.core",

@@ -177,6 +177,58 @@ def test_quiz_generate_flow_rejects_incomplete_wrong_choice_explanations() -> No
         ).run(req)
 
 
+@pytest.mark.parametrize(
+    "blank_field",
+    [
+        "title_en",
+        "passage.body_en",
+        "section.title",
+        "question.prompt",
+        "choice.text",
+        "explanation.explanation_ja",
+        "explanation.wrong_choice",
+    ],
+)
+def test_quiz_generate_flow_rejects_whitespace_only_required_text(
+    blank_field: str,
+) -> None:
+    payload = json.loads(FakeQuizLlm().complete(""))
+    question = payload["sections"][0]["questions"][0]
+    if blank_field == "title_en":
+        payload["title_en"] = "   "
+    elif blank_field == "passage.body_en":
+        payload["passages"][0]["body_en"] = "   "
+    elif blank_field == "section.title":
+        payload["sections"][0]["title"] = "   "
+    elif blank_field == "question.prompt":
+        question["prompt"] = "   "
+    elif blank_field == "choice.text":
+        question["choices"][0]["text"] = "   "
+    elif blank_field == "explanation.explanation_ja":
+        question["explanation"]["explanation_ja"] = "   "
+    elif blank_field == "explanation.wrong_choice":
+        question["explanation"]["wrong_choice_explanations_ja"]["B"] = "   "
+
+    class BlankTextQuizLlm:
+        def complete(self, _prompt: str) -> str:
+            return json.dumps(payload, ensure_ascii=False)
+
+    req = QuizGenerateRequest.model_validate(
+        {
+            "lemmas": ["latency"],
+            "section_count": 1,
+            "questions_per_section": 1,
+            "model": "gpt-5.6-luna",
+        }
+    )
+    store = FakeQuizStore()
+
+    with pytest.raises(RuntimeError, match="QUIZ_APPLICATION_INVALID"):
+        QuizGenerateFlow(store=store, llm=BlankTextQuizLlm()).run(req)
+
+    assert store.saved is None
+
+
 def test_quiz_schema_failure_log_excludes_generated_input(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

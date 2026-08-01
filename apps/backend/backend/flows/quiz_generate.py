@@ -77,6 +77,35 @@ def _quiz_matches_request(
     generated: GeneratedQuizPayload,
     req: QuizGenerateRequest,
 ) -> bool:
+    required_text = [
+        generated.title_en,
+        *(passage.body_en for passage in generated.passages),
+        *(section.title for section in generated.sections),
+        *(
+            question.prompt
+            for section in generated.sections
+            for question in section.questions
+        ),
+        *(
+            choice.text
+            for section in generated.sections
+            for question in section.questions
+            for choice in question.choices
+        ),
+        *(
+            question.explanation.explanation_ja
+            for section in generated.sections
+            for question in section.questions
+        ),
+        *(
+            explanation
+            for section in generated.sections
+            for question in section.questions
+            for explanation in question.explanation.wrong_choice_explanations_ja.values()
+        ),
+    ]
+    if any(not value.strip() for value in required_text):
+        return False
     if (
         generated.format_profile != req.format_profile
         or generated.generation_domain != req.generation_domain

@@ -4,11 +4,11 @@
   "prompt_revisions": {
     "wordpack.core": "f3503d5c9b9170ec2da5a3016690b171a53c28331bb006946bb496a9aa9d9487",
     "quiz.generate": "47ed1ca7038a2c60cf7da239ef062b7ee05b761895c6269024ac128f6d197487",
-    "wordpack.examples.dev": "1e9f1940f6fc6bd204f41be30171877bf091cb1566d1a22d92189e9f75fa92ce",
-    "wordpack.examples.cs": "6f13ae8edc435dd209d3e5177c080d82facbd30d40adcba4326bf4b0144d93b0",
-    "wordpack.examples.llm": "d280d505a1ea56dbb05a84467c20a5aadee0466246d21640c2bdf22a563d5abd",
-    "wordpack.examples.business": "49c92d063ca272a6dded6b626bc416ffef034dca369b86cb9da1bd7c9009459e",
-    "wordpack.examples.common": "b8e858d8fb7640be5892fc165c542a294bd60fd75bb9fa20a63ed79a62216ace"
+    "wordpack.examples.dev": "e1f41fd63fa0f2eee0c42e197ca1d1344e2e9875384995c5a075460ac231f25d",
+    "wordpack.examples.cs": "f9d62b3eb149d8520f509231d9a2d5b4532bea1a89c2985ce274fdf57f8e2486",
+    "wordpack.examples.llm": "0b480631024cf583711bef979f34efb911d0dca8162796174d8ed80253d796f5",
+    "wordpack.examples.business": "019ad11b2ac0d6dfd587a36771d2f13a31d699d357063c2b97a097d82f5adf93",
+    "wordpack.examples.common": "640123fee36d3f3022600b4bbb1f486aa801e60474186713dc0600d7a6116af8"
   },
   "schema_revisions": {
     "wordpack.core": "cd88b89c05f61d58fb9b701298ec1b1bc0fbdb4e576e5f2f8f825ee809e2e8d6",

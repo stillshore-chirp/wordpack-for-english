@@ -21,6 +21,8 @@ from backend.infrastructure.llm.prompts.examples import (
 )
 from backend.infrastructure.llm.prompts.wordpack import build_wordpack_prompt
 from backend.infrastructure.llm.wordpack_generator import build_llm_info
+from backend.infrastructure.llm import wordpack_generator
+from backend.llm_models import DEFAULT_LLM_MODEL
 from backend.llmops.identity import prompt_identity_from_builder
 from scripts.llmops.estimate_run import estimate
 from scripts.llmops.offline_report import (
@@ -243,7 +245,7 @@ def test_offline_report_generates_json_and_short_markdown_summary() -> None:
 
 
 def test_offline_snapshot_matches_production_prompt_identities() -> None:
-    llm_info = build_llm_info({})
+    llm_info = {"model": DEFAULT_LLM_MODEL, "params": None}
     expected = {
         "wordpack.core": prompt_identity_from_builder(
             prompt_id="wordpack.core",
@@ -275,6 +277,19 @@ def test_offline_snapshot_matches_production_prompt_identities() -> None:
         ).prompt_revision
 
     assert current_snapshot()["prompt_revisions"] == expected
+
+
+def test_offline_snapshot_ignores_ambient_llm_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    expected = current_snapshot()
+    monkeypatch.setattr(
+        wordpack_generator.settings,
+        "llm_model",
+        "ambient-developer-model",
+    )
+
+    assert current_snapshot() == expected
 
 
 def test_offline_report_fails_when_required_fixture_is_replaced(
