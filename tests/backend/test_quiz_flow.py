@@ -89,7 +89,11 @@ class FakeQuizLlm:
                                     "evidence_text": "studied latency",
                                     "evidence_start": 9,
                                     "evidence_end": 24,
-                                    "wrong_choice_explanations_ja": {},
+                                    "wrong_choice_explanations_ja": {
+                                        "B": "本文に根拠がありません。",
+                                        "C": "本文に根拠がありません。",
+                                        "D": "本文に根拠がありません。",
+                                    },
                                     "related_lemmas": ["latency"],
                                 },
                             }
@@ -128,6 +132,49 @@ def test_quiz_generate_flow_warns_when_source_lemma_is_not_in_passage() -> None:
     assert "本文中に見つかりません" in links["mitigate"].warning
     assert llm.calls == 1
     assert len(quiz.generation_provenance) == 1
+
+
+def test_quiz_generate_flow_rejects_requested_size_mismatch() -> None:
+    store = FakeQuizStore()
+    req = QuizGenerateRequest.model_validate(
+        {
+            "lemmas": ["latency"],
+            "section_count": 2,
+            "questions_per_section": 1,
+            "model": "gpt-5.6-luna",
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="QUIZ_APPLICATION_INVALID"):
+        QuizGenerateFlow(store=store, llm=FakeQuizLlm()).run(req)
+
+    assert store.saved is None
+
+
+def test_quiz_generate_flow_rejects_incomplete_wrong_choice_explanations() -> None:
+    payload = json.loads(FakeQuizLlm().complete(""))
+    payload["sections"][0]["questions"][0]["explanation"][
+        "wrong_choice_explanations_ja"
+    ] = {"B": "本文に根拠がありません。"}
+
+    class IncompleteExplanationLlm:
+        def complete(self, _prompt: str) -> str:
+            return json.dumps(payload, ensure_ascii=False)
+
+    req = QuizGenerateRequest.model_validate(
+        {
+            "lemmas": ["latency"],
+            "section_count": 1,
+            "questions_per_section": 1,
+            "model": "gpt-5.6-luna",
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="QUIZ_APPLICATION_INVALID"):
+        QuizGenerateFlow(
+            store=FakeQuizStore(),
+            llm=IncompleteExplanationLlm(),
+        ).run(req)
 
 
 def test_quiz_schema_failure_log_excludes_generated_input(

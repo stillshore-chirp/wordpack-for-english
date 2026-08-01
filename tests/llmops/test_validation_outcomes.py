@@ -130,3 +130,100 @@ def test_generated_wordpack_contract_accepts_complete_prompt_shape() -> None:
     )
 
     assert result.senses[0].patterns == ["converge on"]
+
+
+def _complete_generated_quiz_payload() -> dict[str, Any]:
+    return {
+        "title_en": "Latency Review",
+        "format_profile": "single_passage",
+        "generation_domain": "technical",
+        "domain_intensity": "standard",
+        "difficulty": "medium",
+        "passages": [
+            {
+                "id": "p1",
+                "order": 1,
+                "kind": "article",
+                "title": "Review",
+                "body_en": "The team studied latency before release.",
+                "body_ja": "チームはリリース前にレイテンシを調査しました。",
+                "speaker_labels": [],
+            }
+        ],
+        "notes_ja": None,
+        "sections": [
+            {
+                "id": "s1",
+                "order": 1,
+                "title": "Reading",
+                "description_ja": None,
+                "passage_ids": ["p1"],
+                "questions": [
+                    {
+                        "id": "q1",
+                        "order": 1,
+                        "type": "detail",
+                        "prompt": "What did the team study?",
+                        "choices": [
+                            {"id": "A", "text": "Latency"},
+                            {"id": "B", "text": "Billing"},
+                            {"id": "C", "text": "Hiring"},
+                            {"id": "D", "text": "Training"},
+                        ],
+                        "correct_choice_id": "A",
+                        "explanation": {
+                            "explanation_ja": "本文の記述から判断できます。",
+                            "evidence_passage_id": "p1",
+                            "evidence_text": "studied latency",
+                            "evidence_start": 9,
+                            "evidence_end": 24,
+                            "wrong_choice_explanations_ja": {
+                                "B": "本文に根拠がありません。",
+                                "C": "本文に根拠がありません。",
+                                "D": "本文に根拠がありません。",
+                            },
+                            "related_lemmas": ["latency"],
+                        },
+                    }
+                ],
+            }
+        ],
+        "related_lemmas": ["latency"],
+    }
+
+
+@pytest.mark.parametrize(
+    "missing_path",
+    [
+        "passage.kind",
+        "passage.speaker_labels",
+        "section.passage_ids",
+        "explanation.wrong_choice_explanations_ja",
+        "related_lemmas",
+    ],
+)
+def test_generated_quiz_contract_requires_prompt_nested_fields(
+    missing_path: str,
+) -> None:
+    payload = deepcopy(_complete_generated_quiz_payload())
+    if missing_path == "passage.kind":
+        del payload["passages"][0]["kind"]
+    elif missing_path == "passage.speaker_labels":
+        del payload["passages"][0]["speaker_labels"]
+    elif missing_path == "section.passage_ids":
+        del payload["sections"][0]["passage_ids"]
+    elif missing_path == "explanation.wrong_choice_explanations_ja":
+        del payload["sections"][0]["questions"][0]["explanation"][
+            "wrong_choice_explanations_ja"
+        ]
+    elif missing_path == "related_lemmas":
+        del payload["related_lemmas"]
+
+    with pytest.raises(ValidationError):
+        GeneratedQuizPayload.model_validate(payload)
+
+
+def test_generated_quiz_contract_accepts_complete_prompt_shape() -> None:
+    result = GeneratedQuizPayload.model_validate(_complete_generated_quiz_payload())
+
+    assert result.passages[0].kind.value == "article"

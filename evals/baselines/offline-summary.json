@@ -3,7 +3,7 @@
   "required_cases": ["wordpack-converge-contract-v1"],
   "prompt_revisions": {
     "wordpack.core": "f3503d5c9b9170ec2da5a3016690b171a53c28331bb006946bb496a9aa9d9487",
-    "quiz.generate": "0801f80edb1dc46eec47db12e3cedbaefd42974f41034c871140ddc0bfcbaee8",
+    "quiz.generate": "47ed1ca7038a2c60cf7da239ef062b7ee05b761895c6269024ac128f6d197487",
     "wordpack.examples.dev": "1e9f1940f6fc6bd204f41be30171877bf091cb1566d1a22d92189e9f75fa92ce",
     "wordpack.examples.cs": "6f13ae8edc435dd209d3e5177c080d82facbd30d40adcba4326bf4b0144d93b0",
     "wordpack.examples.llm": "d280d505a1ea56dbb05a84467c20a5aadee0466246d21640c2bdf22a563d5abd",
@@ -12,7 +12,7 @@
   },
   "schema_revisions": {
     "wordpack.core": "cd88b89c05f61d58fb9b701298ec1b1bc0fbdb4e576e5f2f8f825ee809e2e8d6",
-    "quiz.generate": "13bdfbf708168c561ae0873b314b6db5a4c2a2930601041712455abfd6efbbdd",
+    "quiz.generate": "82f0093cdb00fd4964cee65905143893e0119fb0ce2493a1c4b7f016f4675223",
     "wordpack.examples.dev": "5cba55f22ca328c19b810af4809d5c473609fde5bf80313548b6159a2491f5b6",
     "wordpack.examples.cs": "5cba55f22ca328c19b810af4809d5c473609fde5bf80313548b6159a2491f5b6",
     "wordpack.examples.llm": "5cba55f22ca328c19b810af4809d5c473609fde5bf80313548b6159a2491f5b6",

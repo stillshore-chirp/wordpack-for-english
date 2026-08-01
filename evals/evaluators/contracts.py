@@ -34,14 +34,23 @@ def _validate_provenance(
             if not str(item.get(key) or "").strip():
                 findings.append(_finding("provenance_field_missing", f"{key} is required", operation=operation))
         resolved_model = str(item.get("resolved_model") or item.get("requested_model") or "")
-        if expected_model and resolved_model and resolved_model != expected_model:
-            findings.append(
-                _finding(
-                    "model_mismatch",
-                    f"expected {expected_model}, got {resolved_model}",
-                    operation=operation,
+        if expected_model:
+            if not resolved_model:
+                findings.append(
+                    _finding(
+                        "model_missing",
+                        "requested_model or resolved_model is required",
+                        operation=operation,
+                    )
                 )
-            )
+            elif resolved_model != expected_model:
+                findings.append(
+                    _finding(
+                        "model_mismatch",
+                        f"expected {expected_model}, got {resolved_model}",
+                        operation=operation,
+                    )
+                )
         validation = item.get("validation")
         if "validation" not in item:
             findings.append(

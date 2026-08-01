@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from fastapi import HTTPException
 
+from ..application.wordpack.generate_wordpack import build_llm_info
 from ..flows.article_import import ArticleImportFlow
 from ..flows.word_pack import WordPackFlow
 from ..id_factory import generate_word_pack_id
@@ -47,10 +48,9 @@ class CategoryGenerateAndImportFlow:
         )
         # 新しい backend.providers パッケージで作成した LLM を保持する。
         # 呼び出し元から渡された LLM パラメータを保持し、下流の ArticleImportFlow へも同一の契約で引き継ぐ
-        self._llm_info = {
-            "model": model,
-            "params": None,
-        }
+        self._llm_info = build_llm_info(
+            {"model": model, "reasoning": reasoning, "text": text}
+        )
         self._overrides = {
             "model": model,
             "reasoning": reasoning,

@@ -73,6 +73,40 @@ def _normalize_llm_params(req: QuizGenerateRequest) -> str | None:
     return str(params) if params else None
 
 
+def _quiz_matches_request(
+    generated: GeneratedQuizPayload,
+    req: QuizGenerateRequest,
+) -> bool:
+    if (
+        generated.format_profile != req.format_profile
+        or generated.generation_domain != req.generation_domain
+        or generated.domain_intensity != req.domain_intensity
+        or generated.difficulty != req.difficulty
+        or len(generated.sections) != req.section_count
+    ):
+        return False
+    if any(
+        len(section.questions) != req.questions_per_section
+        for section in generated.sections
+    ):
+        return False
+    for section in generated.sections:
+        for question in section.questions:
+            expected_wrong_choices = {
+                choice.id for choice in question.choices
+            } - {question.correct_choice_id}
+            if (
+                set(question.explanation.wrong_choice_explanations_ja)
+                != expected_wrong_choices
+            ):
+                return False
+    if req.include_translation and any(
+        not (passage.body_ja or "").strip() for passage in generated.passages
+    ):
+        return False
+    return True
+
+
 def _complete_json(
     llm: object, prompt: str, *, identity: PromptIdentity
 ) -> CompletionResult:
@@ -318,6 +352,28 @@ class QuizGenerateFlow:
                 **_validation_error_summary(exc),
             )
             raise RuntimeError("QUIZ_SCHEMA_INVALID") from exc
+        if not _quiz_matches_request(generated, req):
+            failed = safe_provenance(
+                with_validation(
+                    completion,
+                    parse=True,
+                    schema=True,
+                    application=False,
+                )
+            )
+            if failed is not None:
+                provenance.append(failed)
+            logger.warning(
+                "quiz_generated_application_invalid",
+                reason_code="QUIZ_APPLICATION_INVALID",
+                expected_sections=req.section_count,
+                actual_sections=len(generated.sections),
+                expected_questions_per_section=req.questions_per_section,
+                actual_question_counts=[
+                    len(section.questions) for section in generated.sections
+                ],
+            )
+            raise RuntimeError("QUIZ_APPLICATION_INVALID")
 
         quiz_id = generate_quiz_id()
         generation_completed_at = _now_iso()

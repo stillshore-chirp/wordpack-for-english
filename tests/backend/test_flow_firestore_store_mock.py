@@ -16,6 +16,7 @@ from backend.flows import article_import as article_module
 from backend.flows import category_generate_import as category_module
 from backend.flows.article_import import ArticleImportFlow
 from backend.flows.category_generate_import import CategoryGenerateAndImportFlow
+from backend.config import settings
 from backend.models.word import ExampleCategory
 from backend.store.firestore_store import AppFirestoreStore
 from tests.firestore_fakes import FakeFirestoreClient
@@ -68,6 +69,25 @@ def test_category_flow_operates_with_firestore_store(
 
     log = firestore_store.wordpacks._word_packs.query_log
     assert any(("lemma_label_lower", "==", "streamsafe") in entry["filters"] for entry in log)
+
+
+def test_category_flow_records_effective_llm_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_llm = SimpleNamespace(complete=lambda prompt: "{}")
+    monkeypatch.setattr(category_module, "get_llm_provider", lambda **_: dummy_llm)
+
+    default_flow = CategoryGenerateAndImportFlow()
+    override_flow = CategoryGenerateAndImportFlow(
+        reasoning={"effort": "medium"},
+        text={"verbosity": "low"},
+    )
+
+    assert default_flow._llm_info == {"model": settings.llm_model, "params": None}
+    assert override_flow._llm_info == {
+        "model": settings.llm_model,
+        "params": "reasoning.effort=medium;text.verbosity=low",
+    }
 
 
 def test_article_import_flow_links_with_firestore_store(

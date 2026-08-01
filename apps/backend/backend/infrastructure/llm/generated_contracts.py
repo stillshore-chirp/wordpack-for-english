@@ -7,7 +7,10 @@ from ...models.quiz import (
     QuizDomainIntensity,
     QuizFormatProfile,
     QuizGenerationDomain,
+    QuizExplanation,
     QuizPassage,
+    QuizPassageKind,
+    QuizQuestion,
     QuizSection,
 )
 from ...models.common import ConfidenceLevel
@@ -64,6 +67,36 @@ class GeneratedWordPackPayload(BaseModel):
     pronunciation: GeneratedPronunciationPayload
 
 
+class GeneratedQuizPassagePayload(QuizPassage):
+    """QUIZ_JSON_SCHEMA_PROMPT がpassageへ要求する全キー。"""
+
+    kind: QuizPassageKind
+    title: str | None = Field(max_length=120)
+    body_ja: str | None = Field(max_length=12000)
+    speaker_labels: list[str] = Field(max_length=10)
+
+
+class GeneratedQuizExplanationPayload(QuizExplanation):
+    """QUIZ_JSON_SCHEMA_PROMPT がexplanationへ要求する全キー。"""
+
+    evidence_passage_id: str | None = Field(max_length=64)
+    evidence_text: str | None = Field(max_length=1000)
+    evidence_start: int | None = Field(ge=0)
+    evidence_end: int | None = Field(ge=0)
+    wrong_choice_explanations_ja: dict[str, str]
+    related_lemmas: list[str] = Field(max_length=20)
+
+
+class GeneratedQuizQuestionPayload(QuizQuestion):
+    explanation: GeneratedQuizExplanationPayload
+
+
+class GeneratedQuizSectionPayload(QuizSection):
+    description_ja: str | None = Field(max_length=500)
+    passage_ids: list[str] = Field(max_length=10)
+    questions: list[GeneratedQuizQuestionPayload] = Field(min_length=1, max_length=10)
+
+
 class GeneratedQuizPayload(BaseModel):
     """QUIZ_JSON_SCHEMA_PROMPT がLLMへ要求する生成部分だけの契約。"""
 
@@ -72,10 +105,10 @@ class GeneratedQuizPayload(BaseModel):
     generation_domain: QuizGenerationDomain
     domain_intensity: QuizDomainIntensity
     difficulty: QuizDifficulty
-    passages: list[QuizPassage] = Field(min_length=1, max_length=8)
-    notes_ja: str | None = Field(default=None, max_length=3000)
-    sections: list[QuizSection] = Field(min_length=1, max_length=8)
-    related_lemmas: list[str] = Field(default_factory=list)
+    passages: list[GeneratedQuizPassagePayload] = Field(min_length=1, max_length=8)
+    notes_ja: str | None = Field(max_length=3000)
+    sections: list[GeneratedQuizSectionPayload] = Field(min_length=1, max_length=8)
+    related_lemmas: list[str] = Field(max_length=20)
 
 
 __all__ = [
