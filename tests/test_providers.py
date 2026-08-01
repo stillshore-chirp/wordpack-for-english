@@ -152,7 +152,8 @@ def test_openai_request_uses_reasoning_text_params(monkeypatch):
             return _DummyResp('{"senses": [{"id": "s1", "gloss_ja": "ok"}], "examples": {"Dev": [], "CS": [], "LLM": [], "Business": [], "Common": []}}')
 
     class DummyOpenAI:
-        def __init__(self, api_key: str) -> None:  # type: ignore[no-untyped-def]
+        def __init__(self, api_key: str, max_retries: int) -> None:  # type: ignore[no-untyped-def]
+            assert max_retries == 0
             self.responses = _DummyResponses()
 
     backend.providers.llm.OpenAI = DummyOpenAI  # type: ignore[attr-defined, assignment]
@@ -216,7 +217,8 @@ def test_openai_request_defaults_to_luna_high(monkeypatch):
             return _DummyResp('{"senses": [{"id": "s1", "gloss_ja": "ok"}], "examples": {"Dev": [], "CS": [], "LLM": [], "Business": [], "Common": []}}')
 
     class DummyOpenAI:
-        def __init__(self, api_key: str) -> None:  # type: ignore[no-untyped-def]
+        def __init__(self, api_key: str, max_retries: int) -> None:  # type: ignore[no-untyped-def]
+            assert max_retries == 0
             self.responses = _DummyResponses()
 
     backend.providers.llm.OpenAI = DummyOpenAI  # type: ignore[attr-defined, assignment]
@@ -274,7 +276,8 @@ def test_openai_request_retries_without_optional_controls(monkeypatch):
             return _DummyResp('{"senses": [{"id": "s1", "gloss_ja": "ok"}]}')
 
     class DummyOpenAI:
-        def __init__(self, api_key: str) -> None:  # type: ignore[no-untyped-def]
+        def __init__(self, api_key: str, max_retries: int) -> None:  # type: ignore[no-untyped-def]
+            assert max_retries == 0
             self.responses = _DummyResponses()
 
     backend.providers.llm.OpenAI = DummyOpenAI  # type: ignore[attr-defined, assignment]
@@ -336,7 +339,8 @@ def test_openai_request_retries_without_json_format_when_needed(monkeypatch):
             return _DummyResp('{"senses": [{"id": "s1", "gloss_ja": "ok"}]}')
 
     class DummyOpenAI:
-        def __init__(self, api_key: str) -> None:  # type: ignore[no-untyped-def]
+        def __init__(self, api_key: str, max_retries: int) -> None:  # type: ignore[no-untyped-def]
+            assert max_retries == 0
             self.responses = _DummyResponses()
 
     backend.providers.llm.OpenAI = DummyOpenAI  # type: ignore[attr-defined, assignment]
@@ -394,7 +398,8 @@ def test_openai_plain_text_request_does_not_force_json_format(monkeypatch):
             return _DummyResp("Concise title")
 
     class DummyOpenAI:
-        def __init__(self, api_key: str) -> None:  # type: ignore[no-untyped-def]
+        def __init__(self, api_key: str, max_retries: int) -> None:  # type: ignore[no-untyped-def]
+            assert max_retries == 0
             self.responses = _DummyResponses()
 
     backend.providers.llm.OpenAI = DummyOpenAI  # type: ignore[attr-defined, assignment]
@@ -452,7 +457,8 @@ def test_openai_plain_text_request_retries_without_optional_controls(monkeypatch
             return _DummyResp("Plain retry result")
 
     class DummyOpenAI:
-        def __init__(self, api_key: str) -> None:  # type: ignore[no-untyped-def]
+        def __init__(self, api_key: str, max_retries: int) -> None:  # type: ignore[no-untyped-def]
+            assert max_retries == 0
             self.responses = _DummyResponses()
 
     backend.providers.llm.OpenAI = DummyOpenAI  # type: ignore[attr-defined, assignment]

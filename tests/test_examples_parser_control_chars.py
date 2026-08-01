@@ -40,8 +40,10 @@ def test_generate_examples_with_control_chars_is_not_dropped():
             return (
                 "{\n"
                 "  \"examples\": [\n"
-                "    { \"en\": \"A line\nwith newline\x0c\", \"ja\": \"例1\" },\n"
-                "    { \"en\": \"Second\", \"ja\": \"例2\" }\n"
+                "    { \"en\": \"A line\nwith newline\x0c\", \"ja\": \"例1\", "
+                "\"grammar_ja\": \"文法解説1\" },\n"
+                "    { \"en\": \"Second\", \"ja\": \"例2\", "
+                "\"grammar_ja\": \"文法解説2\" }\n"
                 "  ]\n"
                 "}"
             )

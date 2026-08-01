@@ -41,6 +41,7 @@ class AccessLogAndMetricsMiddleware(BaseHTTPMiddleware):
         if not request_id:
             request_id = uuid4().hex
             request.state.request_id = request_id
+        structlog_contextvars.bind_contextvars(request_id=request_id)
         trace_log_fields = parse_cloud_trace_header(
             request.headers.get("x-cloud-trace-context"),
         )
@@ -145,3 +146,4 @@ class AccessLogAndMetricsMiddleware(BaseHTTPMiddleware):
                 )
                 if trace_log_fields:
                     structlog_contextvars.unbind_contextvars(*trace_log_fields.keys())
+                structlog_contextvars.unbind_contextvars("request_id")

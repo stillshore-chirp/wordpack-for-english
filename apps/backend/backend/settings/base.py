@@ -343,6 +343,14 @@ class Settings(BaseSettings):
         default=40000,
         description="Max characters to record for prompt/input to Langfuse",
     )
+    langfuse_log_full_output: bool = Field(
+        default=False,
+        description="Send full LLM output to Langfuse (disabled by default)",
+    )
+    langfuse_output_max_chars: int = Field(
+        default=40000,
+        description="Max characters to record for LLM output in Langfuse",
+    )
 
     trusted_proxy_ips: Annotated[tuple[str, ...], NoDecode] = Field(
         default=_DEFAULT_LOCAL_TRUSTED_PROXY,

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -171,6 +171,7 @@ class Quiz(BaseModel):
     avoid_topics: list[str] = Field(default_factory=list, max_length=20)
     llm_model: str | None = None
     llm_params: str | None = None
+    generation_provenance: list[dict[str, Any]] = Field(default_factory=list)
     generation_started_at: str | None = None
     generation_completed_at: str | None = None
     generation_duration_ms: int | None = Field(default=None, ge=0)

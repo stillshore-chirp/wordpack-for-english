@@ -7,6 +7,7 @@ import anyio
 
 from ...config import settings
 from ...flows.word_pack import WordPackFlow
+from ...llm_models import effective_llm_generation_params
 from ...logging import logger
 from ...models.word import WordPack
 from ...providers import get_llm_provider
@@ -23,22 +24,10 @@ def get_override_value(source: object, key: str) -> Any:
 
 def build_llm_info(overrides: object) -> dict[str, Any]:
     model = get_override_value(overrides, "model") or settings.llm_model
-    params: str | None = None
-    try:
-        parts: list[str] = []
-        reasoning = get_override_value(overrides, "reasoning") or {}
-        if isinstance(reasoning, Mapping):
-            effort = reasoning.get("effort")
-            if effort:
-                parts.append(f"reasoning.effort={effort}")
-        text_opts = get_override_value(overrides, "text") or {}
-        if isinstance(text_opts, Mapping):
-            verbosity = text_opts.get("verbosity")
-            if verbosity:
-                parts.append(f"text.verbosity={verbosity}")
-        params = ";".join(parts) if parts else None
-    except Exception:
-        params = None
+    params = effective_llm_generation_params(
+        reasoning=get_override_value(overrides, "reasoning"),
+        text=get_override_value(overrides, "text"),
+    )
     return {"model": model, "params": params}
 
 

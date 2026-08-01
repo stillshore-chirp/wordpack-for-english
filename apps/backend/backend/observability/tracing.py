@@ -246,7 +246,14 @@ def span(
     input: Any | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> ContextManager[Any | None]:
-    lf = get_langfuse()
+    try:
+        lf = get_langfuse()
+    except Exception as exc:
+        logger.warning(
+            "langfuse_span_initialization_failed",
+            error_type=type(exc).__name__,
+        )
+        lf = None
     start = time.time()
     # v4: current observation の内側に子 observation を開始
     if lf is not None and hasattr(lf, "start_as_current_observation"):

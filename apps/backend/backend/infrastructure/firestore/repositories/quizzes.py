@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Literal
 
+from ....logging import logger
 from .base import Any, FirestoreBaseRepository, Mapping, firestore, json
 
 QuizGenerationJobStatus = Literal["queued", "running", "succeeded", "failed"]
@@ -69,6 +70,16 @@ class FirestoreQuizRepository(FirestoreBaseRepository):
             "created_at": payload.get("created_at") or stored.get("created_at") or now,
             "updated_at": payload.get("updated_at") or now,
         }
+        if "generation_provenance" in payload:
+            try:
+                doc_payload["generation_provenance_json"] = _json_dump(
+                    list(payload.get("generation_provenance") or [])
+                )
+            except Exception as exc:
+                logger.warning(
+                    "quiz_provenance_serialization_failed",
+                    error_type=type(exc).__name__,
+                )
         doc_ref.set(doc_payload, merge=True)
         for snapshot in list(self._quiz_word_packs.stream()):
             data = snapshot.to_dict() or {}
@@ -110,6 +121,9 @@ class FirestoreQuizRepository(FirestoreBaseRepository):
             "avoid_topics": list(data.get("avoid_topics") or []),
             "llm_model": data.get("llm_model"),
             "llm_params": data.get("llm_params"),
+            "generation_provenance": _json_load(
+                data.get("generation_provenance_json"), []
+            ),
             "generation_started_at": data.get("generation_started_at"),
             "generation_completed_at": data.get("generation_completed_at"),
             "generation_duration_ms": data.get("generation_duration_ms"),

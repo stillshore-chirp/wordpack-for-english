@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import os
 import threading
 import time
@@ -105,13 +106,6 @@ def _tts_client() -> OpenAI | None:  # type: ignore[valid-type]
     return client
 
 
-def _text_preview(text: str, limit: int = 80) -> str:
-    sanitized = " ".join(text.strip().split())
-    if len(sanitized) <= limit:
-        return sanitized
-    return sanitized[: limit - 1] + "…"
-
-
 def _loggable_request_id(request: Request | None) -> str | None:
     if request is None:
         return None
@@ -168,7 +162,7 @@ def synth(
         request_id=request_id,
         voice=req.voice,
         text_chars=text_chars,
-        text_preview=_text_preview(req.text),
+        text_sha256=hashlib.sha256(req.text.encode("utf-8")).hexdigest(),
     )
 
     client_instance = _tts_client()

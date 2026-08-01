@@ -511,6 +511,7 @@ def test_generate_examples_uses_llm_meta(client, monkeypatch):
                     category=cat,
                     llm_model=model_name,
                     llm_params=params,
+                    generation_provenance=[{"prompt_revision": "a" * 64}],
                 ),
                 examples_cls.ExampleItem(
                     en="Stub example 2.",
@@ -519,6 +520,7 @@ def test_generate_examples_uses_llm_meta(client, monkeypatch):
                     category=cat,
                     llm_model=model_name,
                     llm_params=params,
+                    generation_provenance=[{"prompt_revision": "a" * 64}],
                 ),
             ]
         }
@@ -542,6 +544,7 @@ def test_generate_examples_uses_llm_meta(client, monkeypatch):
     assert first["llm_model"] == "gpt-5.6-luna"
     assert "reasoning.effort=low" in first["llm_params"]
     assert "text.verbosity=medium" in first["llm_params"]
+    assert first["generation_provenance"] == [{"prompt_revision": "a" * 64}]
     assert first.get("transcription_typing_count", 0) == 0
 
     r_detail = client.get(f"/api/word/packs/{pack_id}")
@@ -550,6 +553,9 @@ def test_generate_examples_uses_llm_meta(client, monkeypatch):
     examples = detail.get("examples", {}).get("Dev", [])
     assert len(examples) >= 2
     assert examples[-1]["llm_model"] == "gpt-5.6-luna"
+    assert examples[-1]["generation_provenance"] == [
+        {"prompt_revision": "a" * 64}
+    ]
     assert examples[-1]["transcription_typing_count"] == 0
 
     # TestClient を context manager として維持し、実運用の ASGI event loop と同様に
@@ -909,12 +915,16 @@ def test_word_pack_sanitizes_control_chars_in_llm_json(monkeypatch: pytest.Monke
             # gloss_ja に RAW 制御文字 (U+0001) を混入させ、未エスケープ JSON を返す
             cc = chr(1)
             return (
-                '{"senses":[{"id":"s1","gloss_ja":"テ' + cc + 'スト語義","patterns":["p"]}],'
+                '{"senses":[{"id":"s1","gloss_ja":"テ' + cc + 'スト語義",'
+                '"definition_ja":"制御文字を含む語義です。",'
+                '"nuances_ja":"サニタイズ動作の確認に使います。",'
+                '"patterns":["p"],"synonyms":[],"antonyms":[],'
+                '"register":"neutral","notes_ja":"テスト用です。"}],'
                 '"sense_title":"タイトル",'
                 '"collocations":{"general":{"verb_object":[],"adj_noun":[],"prep_noun":[]},"academic":{"verb_object":[],"adj_noun":[],"prep_noun":[]}},'
                 '"contrast":[],'
                 '"examples":{"Dev":[],"CS":[],"LLM":[],"Business":[],"Common":[]},'
-                '"etymology":{"note":"","confidence":"low"},'
+                '"etymology":{"note":"テスト語源","confidence":"low"},'
                 '"study_card":"カード",'
                 '"pronunciation":{"ipa_RP":"/t/"}'
                 "}"
@@ -1441,9 +1451,50 @@ def test_article_import_includes_llm_metadata(monkeypatch):
     detail = r_get.json()
     assert detail["llm_model"] == "gpt-5.6-luna"
     assert detail["llm_params"] == data["llm_params"]
+    assert len(data["generation_provenance"]) == 4
+    assert detail["generation_provenance"] == data["generation_provenance"]
     _assert_iso_utc(detail["generation_started_at"])
     _assert_iso_utc(detail["generation_completed_at"])
     assert detail["generation_duration_ms"] >= 0
+
+
+def test_article_lemma_application_is_recorded_after_filtering(monkeypatch):
+    """構文とschemaが正しくても除外語だけならapplication成功にしない。"""
+
+    backend_main = _reload_backend_app(monkeypatch, strict=False)
+    from fastapi.testclient import TestClient
+    import backend.providers as providers_mod
+
+    class _StubLLM:
+        def complete(self, _prompt: str) -> str:
+            return '["the"]'
+
+        def complete_text(self, prompt: str) -> str:
+            if "タイトル" in prompt:
+                return "Filtered lemma"
+            if "日本語へ忠実に翻訳" in prompt:
+                return "除外語を含む本文です。"
+            return "除外後の適用結果を確認します。"
+
+    providers_mod._LLM_INSTANCE = _StubLLM()
+    client = TestClient(backend_main.app, raise_server_exceptions=False)
+
+    response = client.post(
+        "/api/article/import",
+        json={"text": "The system remains available."},
+    )
+
+    assert response.status_code == 200
+    lemma_provenance = next(
+        item
+        for item in response.json()["generation_provenance"]
+        if item["operation"] == "article.extract_lemmas"
+    )
+    assert lemma_provenance["validation"] == {
+        "parse": True,
+        "schema": True,
+        "application": False,
+    }
 
 
 def test_article_import_uses_plain_text_generation_for_non_json_steps(monkeypatch):
@@ -1491,6 +1542,7 @@ def test_article_import_uses_plain_text_generation_for_non_json_steps(monkeypatc
     assert any("詳細な解説" in prompt for prompt in stub.plain_prompts)
     assert len(stub.json_prompts) == 1
     assert "JSON 配列" in stub.json_prompts[0]
+    assert len(response.json()["generation_provenance"]) == 4
 
 
 def test_article_import_category_and_zero_duration(monkeypatch):

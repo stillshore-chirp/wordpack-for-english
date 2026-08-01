@@ -273,6 +273,7 @@ async def _get_article_response(request: Request, article_id: str) -> ArticleDet
         generation_duration_ms,
         guest_public,
         links,
+        generation_provenance,
     ) = result
     principal = principal_from_request(request)
     visibility = store.get_article_visibility(article_id) or {}
@@ -333,6 +334,7 @@ async def _get_article_response(request: Request, article_id: str) -> ArticleDet
         generation_completed_at=generation_completed_at,
         generation_duration_ms=duration_value,
         guest_public=bool(guest_public),
+        generation_provenance=generation_provenance,
     )
 
 

@@ -11,6 +11,7 @@
 | Frontend typecheck | `cd apps/frontend && npx tsc -p tsconfig.json` | TypeScript 型検査 |
 | Frontend tests | `cd apps/frontend && npm test -- --coverage --silent` | Vitest + coverage |
 | Backend architecture boundaries | `PYTHONPATH=apps/backend pytest -q --no-cov tests/backend/test_architecture_boundaries.py` | Domain/Application の禁止 import と runtime 直呼び出しを検査 |
+| LLMOps offline report | `python3 scripts/llmops/offline_report.py --json-output /tmp/llmops.json --markdown-output /tmp/llmops.md` | 外部 request 0件の fixture 契約検査。詳細は [LLMOps evaluation](../llmops/evaluation.md) |
 | Frontend architecture boundaries | `node ./scripts/check_frontend_architecture_boundaries.mjs` | page / feature layer の API transport 直参照と legacy fetcher import を検査 |
 | Backend p95 | `API_P95_THRESHOLD_MS=1500 PYTHONPATH=apps/backend pytest -q --no-cov tests/test_api_performance.py` | [backend-performance.md](./backend-performance.md) |
 | Frontend integration | `cd apps/frontend && INTEGRATION_TEST=true BACKEND_PROXY_TARGET=http://127.0.0.1:8000 npm run test` | [frontend-integration-tests.md](./frontend-integration-tests.md) |

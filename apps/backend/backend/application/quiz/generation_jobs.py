@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Literal, Protocol
 
 from ...logging import logger
+from ...llmops.completion import generation_workflow_context
 from ...models.quiz import Quiz, QuizGenerateRequest, QuizGenerationJobResponse
 from ..common.ports import Clock, IdGenerator, TaskScheduler
 
@@ -194,7 +195,8 @@ async def _run_quiz_generation_job(
         if job is None:
             return
     try:
-        quiz = await generator.generate(req, store)
+        with generation_workflow_context(job_id):
+            quiz = await generator.generate(req, store)
     except Exception as exc:
         async with _quiz_generation_lock:
             _update_job_record(

@@ -16,6 +16,7 @@ from backend.flows import article_import as article_module
 from backend.flows import category_generate_import as category_module
 from backend.flows.article_import import ArticleImportFlow
 from backend.flows.category_generate_import import CategoryGenerateAndImportFlow
+from backend.config import settings
 from backend.models.word import ExampleCategory
 from backend.store.firestore_store import AppFirestoreStore
 from tests.firestore_fakes import FakeFirestoreClient
@@ -68,6 +69,50 @@ def test_category_flow_operates_with_firestore_store(
 
     log = firestore_store.wordpacks._word_packs.query_log
     assert any(("lemma_label_lower", "==", "streamsafe") in entry["filters"] for entry in log)
+
+
+def test_category_flow_records_effective_llm_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dummy_llm = SimpleNamespace(complete=lambda prompt: "{}")
+    monkeypatch.setattr(category_module, "get_llm_provider", lambda **_: dummy_llm)
+
+    default_flow = CategoryGenerateAndImportFlow()
+    override_flow = CategoryGenerateAndImportFlow(
+        reasoning={"effort": "medium"},
+        text={"verbosity": "low"},
+    )
+
+    assert default_flow._llm_info == {
+        "model": settings.llm_model,
+        "params": "reasoning.effort=high;text.verbosity=medium",
+    }
+    assert override_flow._llm_info == {
+        "model": settings.llm_model,
+        "params": "reasoning.effort=medium;text.verbosity=low",
+    }
+
+
+def test_category_flow_stores_lemma_selection_provenance_separately(
+    firestore_store: AppFirestoreStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(category_module, "store", firestore_store)
+    dummy_llm = SimpleNamespace(complete=lambda prompt: "{}")
+    monkeypatch.setattr(category_module, "get_llm_provider", lambda **_: dummy_llm)
+    flow = CategoryGenerateAndImportFlow()
+    selection = {
+        "operation": "category.pick_lemma",
+        "prompt_id": "category.pick_lemma",
+    }
+    flow._selection_provenance = [selection]
+
+    word_pack_id = flow._ensure_empty_wordpack("selection-proof")
+
+    stored = firestore_store.get_word_pack(word_pack_id)
+    assert stored is not None
+    payload = json.loads(stored[1])
+    assert payload["generation_provenance"] == []
+    assert payload["selection_provenance"] == [selection]
 
 
 def test_article_import_flow_links_with_firestore_store(

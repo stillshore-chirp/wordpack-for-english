@@ -398,6 +398,9 @@ if [[ ! "$DEPLOYMENT_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
 fi
 export DEPLOYMENT_VERSION
 add_env_key "DEPLOYMENT_VERSION"
+GIT_SHA="${GIT_SHA:-$(git rev-parse HEAD)}"
+export GIT_SHA
+add_env_key "GIT_SHA"
 
 # Python 側の設定（Pydantic モデル）を一度ロードして、値が正しいかチェックします。
 # ここで失敗すれば Cloud Build へ進まないため、「壊れた設定で本番デプロイ」は防げます。

@@ -11,10 +11,48 @@ from ..application.wordpack.generate_wordpack import build_llm_info, get_overrid
 from ..domain.quiz.prompt_policy import build_quiz_generation_prompt
 from ..domain.wordpack.lemma import validate_lemma
 from ..id_factory import generate_word_pack_id
+from ..infrastructure.llm.generated_contracts import GeneratedQuizPayload
 from ..infrastructure.llm.json_response_parser import parse_json_response
 from ..logging import logger
+from ..llmops.completion import complete_typed, safe_provenance, with_validation
+from ..llmops.identity import PromptIdentity, prompt_identity_from_builder
+from ..llmops.types import CompletionResult
 from ..models.quiz import Quiz, QuizGenerateRequest, QuizWordPackLink, QuizWordPackOccurrence
 from ..providers import get_llm_provider
+
+
+def _validation_error_summary(exc: Exception) -> dict[str, object]:
+    """Pydanticの入力値を含めず、検証失敗の構造だけをログ用に返す。"""
+
+    summary: dict[str, object] = {"error_type": type(exc).__name__}
+    errors_method = getattr(exc, "errors", None)
+    if not callable(errors_method):
+        return summary
+    try:
+        errors = errors_method(
+            include_url=False,
+            include_context=False,
+            include_input=False,
+        )
+    except (TypeError, ValueError):
+        return summary
+    if not isinstance(errors, list):
+        return summary
+    summary["error_count"] = len(errors)
+    summary["field_locations"] = [
+        ".".join(
+            "[]" if isinstance(part, int) else str(part)
+            for part in error.get("loc", ())
+        )[:256]
+        for error in errors[:20]
+        if isinstance(error, Mapping)
+    ]
+    summary["validation_types"] = [
+        str(error.get("type") or "unknown")[:80]
+        for error in errors[:20]
+        if isinstance(error, Mapping)
+    ]
+    return summary
 
 
 def generate_quiz_id() -> str:
@@ -35,17 +73,78 @@ def _normalize_llm_params(req: QuizGenerateRequest) -> str | None:
     return str(params) if params else None
 
 
-def _complete_json(llm: object, prompt: str) -> str:
-    complete = getattr(llm, "complete", None)
-    if callable(complete):
-        return str(complete(prompt) or "")
-    complete_text = getattr(llm, "complete_text", None)
-    if callable(complete_text):
-        return str(complete_text(prompt) or "")
-    raise RuntimeError("LLM provider does not support complete")
+def _quiz_matches_request(
+    generated: GeneratedQuizPayload,
+    req: QuizGenerateRequest,
+) -> bool:
+    required_text = [
+        generated.title_en,
+        *(passage.body_en for passage in generated.passages),
+        *(section.title for section in generated.sections),
+        *(
+            question.prompt
+            for section in generated.sections
+            for question in section.questions
+        ),
+        *(
+            choice.text
+            for section in generated.sections
+            for question in section.questions
+            for choice in question.choices
+        ),
+        *(
+            question.explanation.explanation_ja
+            for section in generated.sections
+            for question in section.questions
+        ),
+        *(
+            explanation
+            for section in generated.sections
+            for question in section.questions
+            for explanation in question.explanation.wrong_choice_explanations_ja.values()
+        ),
+    ]
+    if any(not value.strip() for value in required_text):
+        return False
+    if (
+        generated.format_profile != req.format_profile
+        or generated.generation_domain != req.generation_domain
+        or generated.domain_intensity != req.domain_intensity
+        or generated.difficulty != req.difficulty
+        or len(generated.sections) != req.section_count
+    ):
+        return False
+    if any(
+        len(section.questions) != req.questions_per_section
+        for section in generated.sections
+    ):
+        return False
+    for section in generated.sections:
+        for question in section.questions:
+            expected_wrong_choices = {
+                choice.id for choice in question.choices
+            } - {question.correct_choice_id}
+            if (
+                set(question.explanation.wrong_choice_explanations_ja)
+                != expected_wrong_choices
+            ):
+                return False
+    if req.include_translation and any(
+        not (passage.body_ja or "").strip() for passage in generated.passages
+    ):
+        return False
+    return True
 
 
-def _repair_json(llm: object, raw: str, error: Exception) -> str:
+def _complete_json(
+    llm: object, prompt: str, *, identity: PromptIdentity
+) -> CompletionResult:
+    return complete_typed(llm, prompt, identity=identity, response_mode="json")
+
+
+def _repair_json(
+    llm: object, raw: str, error: Exception, *, llm_info: Mapping[str, Any]
+) -> CompletionResult:
     repair_prompt = f"""The following quiz JSON was invalid.
 Return corrected JSON only, preserving the original content as much as possible.
 Validation or parse error: {type(error).__name__}: {str(error)[:600]}
@@ -53,7 +152,14 @@ Validation or parse error: {type(error).__name__}: {str(error)[:600]}
 Invalid content:
 {raw[:20000]}
 """
-    return _complete_json(llm, repair_prompt)
+    identity = prompt_identity_from_builder(
+        prompt_id="quiz.repair",
+        operation="quiz.repair_json",
+        builder=_repair_json,
+        schema=GeneratedQuizPayload.model_json_schema(),
+        major_settings=dict(llm_info),
+    )
+    return _complete_json(llm, repair_prompt, identity=identity)
 
 
 def _source_word_pack_lemmas(store: object, word_pack_ids: list[str]) -> tuple[list[str], list[QuizWordPackLink]]:
@@ -226,22 +332,98 @@ class QuizGenerateFlow:
             text_override=get_override_value(req, "text"),
         )
         llm_info = build_llm_info(req)
-        raw = _complete_json(llm, prompt)
+        prompt_identity = prompt_identity_from_builder(
+            prompt_id="quiz.generate",
+            operation="quiz.generate",
+            builder=build_quiz_generation_prompt,
+            schema=GeneratedQuizPayload.model_json_schema(),
+            major_settings=llm_info,
+        )
+        completion = _complete_json(llm, prompt, identity=prompt_identity)
+        raw = completion.content
+        provenance: list[dict[str, Any]] = []
         if not raw.strip():
+            failed = safe_provenance(
+                with_validation(
+                    completion,
+                    parse=False,
+                    schema=False,
+                    application=False,
+                )
+            )
+            if failed is not None:
+                provenance.append(failed)
             logger.warning("quiz_generation_failed", reason_code="QUIZ_LLM_EMPTY")
             raise RuntimeError("QUIZ_LLM_EMPTY")
         try:
             data = parse_json_response(raw, prefer_json_object=True)
         except Exception as exc:
-            repaired = _repair_json(llm, raw, exc)
+            failed = safe_provenance(
+                with_validation(
+                    completion,
+                    parse=False,
+                    schema=False,
+                    application=False,
+                )
+            )
+            if failed is not None:
+                provenance.append(failed)
+            completion = _repair_json(llm, raw, exc, llm_info=llm_info)
             try:
-                data = parse_json_response(repaired, prefer_json_object=True)
+                data = parse_json_response(completion.content, prefer_json_object=True)
             except Exception as repair_exc:
+                failed = safe_provenance(
+                    with_validation(
+                        completion,
+                        parse=False,
+                        schema=False,
+                        application=False,
+                    )
+                )
+                if failed is not None:
+                    provenance.append(failed)
                 logger.warning("quiz_generation_failed", reason_code="QUIZ_JSON_PARSE_FAILED")
                 raise RuntimeError("QUIZ_JSON_PARSE_FAILED") from repair_exc
         if not isinstance(data, dict):
             logger.warning("quiz_generation_failed", reason_code="QUIZ_SCHEMA_INVALID")
             raise RuntimeError("QUIZ_SCHEMA_INVALID")
+        try:
+            generated = GeneratedQuizPayload.model_validate(data)
+            data = generated.model_dump(mode="json")
+        except Exception as exc:
+            failed = safe_provenance(
+                with_validation(completion, parse=True, schema=False, application=False)
+            )
+            if failed is not None:
+                provenance.append(failed)
+            logger.warning(
+                "quiz_generated_schema_invalid",
+                reason_code="QUIZ_SCHEMA_INVALID",
+                **_validation_error_summary(exc),
+            )
+            raise RuntimeError("QUIZ_SCHEMA_INVALID") from exc
+        if not _quiz_matches_request(generated, req):
+            failed = safe_provenance(
+                with_validation(
+                    completion,
+                    parse=True,
+                    schema=True,
+                    application=False,
+                )
+            )
+            if failed is not None:
+                provenance.append(failed)
+            logger.warning(
+                "quiz_generated_application_invalid",
+                reason_code="QUIZ_APPLICATION_INVALID",
+                expected_sections=req.section_count,
+                actual_sections=len(generated.sections),
+                expected_questions_per_section=req.questions_per_section,
+                actual_question_counts=[
+                    len(section.questions) for section in generated.sections
+                ],
+            )
+            raise RuntimeError("QUIZ_APPLICATION_INVALID")
 
         quiz_id = generate_quiz_id()
         generation_completed_at = _now_iso()
@@ -277,8 +459,23 @@ class QuizGenerateFlow:
         try:
             quiz = Quiz.model_validate(payload)
         except Exception as exc:
-            logger.warning("quiz_schema_invalid", reason_code="QUIZ_SCHEMA_INVALID", error=str(exc)[:1000])
+            failed = safe_provenance(
+                with_validation(completion, parse=True, schema=False, application=False)
+            )
+            if failed is not None:
+                provenance.append(failed)
+            logger.warning(
+                "quiz_schema_invalid",
+                reason_code="QUIZ_SCHEMA_INVALID",
+                **_validation_error_summary(exc),
+            )
             raise RuntimeError("QUIZ_SCHEMA_INVALID") from exc
+        succeeded = safe_provenance(
+            with_validation(completion, parse=True, schema=True, application=True)
+        )
+        if succeeded is not None:
+            provenance.append(succeeded)
+        quiz = quiz.model_copy(update={"generation_provenance": provenance})
         self._store.save_quiz(
             quiz.id,
             quiz.model_dump(mode="json"),

@@ -338,6 +338,7 @@ class AppFirestoreRepository:
         int | None,
         bool,
         list[tuple[str, str, str]],
+        list[dict[str, Any]],
     ] | None:
         return self.articles.get_article(article_id)
 

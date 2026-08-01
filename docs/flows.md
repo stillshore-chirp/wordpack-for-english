@@ -13,12 +13,15 @@ graph TD
     E --> EP["examples prompt builder"];
     E --> JP;
     E --> F["WordPack Response（citations/confidence 付与）"];
+    C --> PV["typed completion / generation provenance"];
+    E --> PV;
 ```
 
 `WordPackFlow` は `backend.infrastructure.llm.wordpack_generator` から呼び出す outer adapter として扱う。
 prompt 構築は `backend.infrastructure.llm.prompts`、JSON 解析は `backend.infrastructure.llm.json_response_parser`、
 生成後の構成は flow 内の orchestration に分かれている。例文生成はカテゴリごとの独立した LLM 呼び出しで、
 停止条件を明確にするため逐次実行する。旧 `backend.application.wordpack.generate_wordpack` は互換 import path であり、新規内部コードは adapter 側を使う。
+WordPack 本体1回と5カテゴリ例文の計6回という既存 call 数を維持し、各結果の provenance は既存保存 write に同梱する。
 
 ## ArticleImportFlow（文章インポート）
 ```mermaid
@@ -37,6 +40,10 @@ graph TD
     LC --> SA[save_article: 記事保存・メタ取得（llm_model/llm_params/生成カテゴリ/開始・終了時刻を含む）];
     SA --> P;
     SA --> R[ArticleDetailResponse];
+    T --> PV["typed completion / generation provenance"];
+    TR --> PV;
+    EX --> PV;
+    LM --> PV;
 
     subgraph Langfuse Spans
         T --- T1((span: article.title.prompt))
@@ -52,3 +59,5 @@ graph TD
         SA --- SA1((span: article.save_article))
     end
 ```
+
+Article はタイトル・翻訳・解説・lemma 抽出の計4回という既存 call 数を維持する。Quiz は正常系1回で、parse 修復が必要な場合だけ既存の修復 call を使う。来歴の共通契約は [LLMOps](llmops/provenance.md) を参照する。

@@ -68,6 +68,7 @@ def _generate_and_append_examples(
             "grammar_ja": item.grammar_ja,
             "llm_model": item.llm_model,
             "llm_params": item.llm_params,
+            "generation_provenance": item.generation_provenance,
         }
         for item in generated.get(category, [])
     ]

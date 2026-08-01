@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from ...config import settings
+from ...llmops.completion import complete_typed
+from ...llmops.identity import prompt_identity_from_builder
 from ...providers import get_llm_provider
 
 
@@ -20,7 +22,19 @@ def generate_sense_title_for_empty_wordpack(lemma: str) -> str | None:
             "出力:"
         )
         try:
-            out: str = llm.complete(prompt)  # type: ignore[attr-defined]
+            identity = prompt_identity_from_builder(
+                prompt_id="wordpack.empty_title",
+                operation="wordpack.generate_empty_title",
+                builder=generate_sense_title_for_empty_wordpack,
+                schema={"type": "string", "maxLength": 20},
+                major_settings={"model": settings.llm_model},
+            )
+            out = complete_typed(
+                llm,
+                prompt,
+                identity=identity,
+                response_mode="plain",
+            ).content
         except Exception as exc:
             if settings.strict_mode:
                 raise EmptyWordPackTitleGenerationError(

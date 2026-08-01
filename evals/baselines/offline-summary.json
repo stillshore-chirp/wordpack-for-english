@@ -1,0 +1,28 @@
+{
+  "fixture_regressions": 0,
+  "required_cases": ["wordpack-converge-contract-v1"],
+  "prompt_revisions": {
+    "wordpack.core": "d2511f9acb60bc6a6c1c46462cfa7539c4b97f71e80714fb1f19f627e9bd5a28",
+    "quiz.generate": "f7a5d218b23a0cb70bcf542209b15516605e91ea6eca8376bbce6c38bdd5d53f",
+    "wordpack.examples.dev": "a96cfdff059d4905b732d9ede9a74ac3f93f6284bdf225a1ef7a90216528b286",
+    "wordpack.examples.cs": "14ad9d21df044018a0c8268f5fd0aea29ae66048cc0464217cd9508a458effab",
+    "wordpack.examples.llm": "9b355f1024bda5a6b1f8b150b635df5fa1fd7fa180e72486003d4bb1bbf04122",
+    "wordpack.examples.business": "f7a4f125482b19f8ef928f7acfd744473a7c1f75d333b8e9e3eaf5f83e7afc56",
+    "wordpack.examples.common": "4a5ce8883ef9bd6872132d31b18a655da3099e4279c0d3d4510f19137f5a0550"
+  },
+  "schema_revisions": {
+    "wordpack.core": "cd88b89c05f61d58fb9b701298ec1b1bc0fbdb4e576e5f2f8f825ee809e2e8d6",
+    "quiz.generate": "82f0093cdb00fd4964cee65905143893e0119fb0ce2493a1c4b7f016f4675223",
+    "wordpack.examples.dev": "5cba55f22ca328c19b810af4809d5c473609fde5bf80313548b6159a2491f5b6",
+    "wordpack.examples.cs": "5cba55f22ca328c19b810af4809d5c473609fde5bf80313548b6159a2491f5b6",
+    "wordpack.examples.llm": "5cba55f22ca328c19b810af4809d5c473609fde5bf80313548b6159a2491f5b6",
+    "wordpack.examples.business": "5cba55f22ca328c19b810af4809d5c473609fde5bf80313548b6159a2491f5b6",
+    "wordpack.examples.common": "5cba55f22ca328c19b810af4809d5c473609fde5bf80313548b6159a2491f5b6"
+  },
+  "model_profile": {
+    "model": "gpt-5.6-luna",
+    "reasoning_effort": "high",
+    "text_verbosity": "medium",
+    "max_output_tokens": 25000
+  }
+}

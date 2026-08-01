@@ -5,11 +5,23 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from pydantic import ValidationError
+
 from . import create_state_graph
 
+from ..infrastructure.llm.generated_contracts import (
+    GeneratedWordPackPayload,
+    has_required_wordpack_text,
+)
 from ..infrastructure.llm.json_response_parser import parse_json_response
-from ..infrastructure.llm.prompts.examples import build_examples_prompt
+from ..infrastructure.llm.prompts.examples import (
+    build_examples_prompt,
+    examples_response_schema,
+    is_valid_examples_response,
+)
 from ..infrastructure.llm.prompts.wordpack import build_wordpack_prompt
+from ..llmops.completion import complete_typed, safe_provenance, with_validation
+from ..llmops.identity import prompt_identity_from_builder
 from ..models.word import (
     DEFAULT_ETYMOLOGY_PLACEHOLDER,
     WordPack,
@@ -56,7 +68,12 @@ class WordPackFlow:
         self.llm = llm
         # 生成に使用した LLM のメタ（モデル名やパラメータ文字列表現）
         self._llm_info: dict[str, Any] = llm_info or {}
+        self._generation_provenance: list[dict[str, Any]] = []
         self.graph = create_state_graph()
+
+    @property
+    def generation_provenance(self) -> list[dict[str, Any]]:
+        return list(self._generation_provenance)
 
     def _lookup_etymology_from_dictionary(self, lemma: str) -> str | None:
         """静的な辞書ソースから語源メモを探すフォールバック。"""
@@ -106,14 +123,28 @@ class WordPackFlow:
         """語の情報を取得。OpenAI LLM を使用してセクション別のJSONを生成・解析。"""
         citations: list[Citation] = []
         llm_data: dict[str, Any] | None = None
+        schema_valid = False
+        application_valid = False
 
         # OpenAI LLM を使用して語の詳細情報を生成
         try:
             if self.llm is not None and hasattr(self.llm, "complete"):
                 logger.info("wordpack_llm_prompt_built", lemma=lemma)
                 prompt = build_wordpack_prompt(lemma)
-
-                out = self.llm.complete(prompt)  # type: ignore[attr-defined]
+                identity = prompt_identity_from_builder(
+                    prompt_id="wordpack.core",
+                    operation="wordpack.generate",
+                    builder=build_wordpack_prompt,
+                    schema=GeneratedWordPackPayload.model_json_schema(),
+                    major_settings=self._llm_info,
+                )
+                completion = complete_typed(
+                    self.llm,
+                    prompt,
+                    identity=identity,
+                    response_mode="json",
+                )
+                out = completion.content
                 logger.info(
                     "wordpack_llm_output_received",
                     lemma=lemma,
@@ -122,10 +153,29 @@ class WordPackFlow:
                 if isinstance(out, str) and out.strip():
                     try:
                         llm_data = parse_json_response(out)
+                        if isinstance(llm_data, dict):
+                            try:
+                                validated = GeneratedWordPackPayload.model_validate(llm_data)
+                                schema_valid = True
+                                application_valid = has_required_wordpack_text(validated)
+                            except ValidationError:
+                                logger.info(
+                                    "wordpack_llm_schema_validation_failed",
+                                    lemma=lemma,
+                                )
+                        completion = with_validation(
+                            completion,
+                            parse=True,
+                            schema=schema_valid,
+                            application=application_valid,
+                        )
                         logger.info(
                             "wordpack_llm_json_parsed",
                             lemma=lemma,
-                            has_senses=isinstance(llm_data.get("senses"), list),
+                            has_senses=(
+                                isinstance(llm_data, dict)
+                                and isinstance(llm_data.get("senses"), list)
+                            ),
                         )
                         citations.append(
                             Citation(
@@ -134,6 +184,12 @@ class WordPackFlow:
                             )
                         )
                     except json.JSONDecodeError:
+                        completion = with_validation(
+                            completion,
+                            parse=False,
+                            schema=False,
+                            application=False,
+                        )
                         logger.info("wordpack_llm_json_parse_failed", lemma=lemma)
                         citations.append(
                             Citation(
@@ -145,18 +201,31 @@ class WordPackFlow:
                             raise RuntimeError(
                                 "Failed to parse LLM JSON in strict mode"
                             )
+                else:
+                    completion = with_validation(
+                        completion,
+                        parse=False,
+                        schema=False,
+                        application=False,
+                    )
+                provenance = safe_provenance(completion)
+                if provenance is not None:
+                    self._generation_provenance.append(provenance)
         except Exception as exc:
             if settings.strict_mode:
                 # strict: LLM 呼び出し失敗/タイムアウトは即エラー
                 raise
             # 非 strict では静かにフォールバック
 
-        # strict: LLM 出力が空/未解析ならエラー
+        # strict: LLM 出力が生成契約と適用条件を満たさない限り保存へ進めない。
         if settings.strict_mode and (
-            llm_data is None
-            or (isinstance(llm_data, dict) and not llm_data.get("senses"))
+            not isinstance(llm_data, dict)
+            or not schema_valid
+            or not application_valid
         ):
-            raise RuntimeError("LLM returned no usable data (strict mode)")
+            raise RuntimeError(
+                "LLM returned no schema-valid usable data (strict mode)"
+            )
 
         return {"lemma": lemma, "citations": citations, "llm_data": llm_data}
 
@@ -398,6 +467,11 @@ class WordPackFlow:
             study_card=study_card,
             citations=citations or [],
             confidence=confidence,
+            generation_provenance=[
+                provenance
+                for provenance in self._generation_provenance
+                if provenance.get("operation") == "wordpack.generate"
+            ],
         )
         logger.info(
             "wordpack_synthesize_done",
@@ -465,6 +539,7 @@ class WordPackFlow:
         regenerate_scope: RegenerateScope | str = RegenerateScope.all,
     ) -> WordPack:
         """語を入力として `WordPack` を生成して返す（ダミー生成なし）。"""
+        self._generation_provenance = []
         data = self._retrieve(lemma)
         # 後続の _synthesize で LLM 生成物を参照できるように一時保存
         self._last_llm_data = data.get("llm_data")
@@ -500,6 +575,12 @@ class WordPackFlow:
         return prompt
 
     def _parse_examples_json(self, raw: str) -> list[dict[str, str]]:
+        rows, _, _ = self._parse_examples_json_result(raw)
+        return rows
+
+    def _parse_examples_json_result(
+        self, raw: str
+    ) -> tuple[list[dict[str, str]], bool, bool]:
         try:
             obj = parse_json_response(raw or "", prefer_json_object=False)
         except json.JSONDecodeError as exc:
@@ -510,28 +591,32 @@ class WordPackFlow:
                 "wordpack_examples_json_parse_failed",
                 error=str(exc),
                 error_class=exc.__class__.__name__,
-                raw_preview=str(raw or "")[:200],
+                raw_chars=len(str(raw or "")),
             )
-            return []
+            return [], False, False
         except Exception as exc:  # pragma: no cover - defensive guard
             logger.warning(
                 "wordpack_examples_json_parse_failed",
                 error=str(exc),
                 error_class=exc.__class__.__name__,
-                raw_preview=str(raw or "")[:200],
+                raw_chars=len(str(raw or "")),
             )
-            return []
+            return [], False, False
         if isinstance(obj, list):
-            return [x for x in obj if isinstance(x, dict)]
+            return [x for x in obj if isinstance(x, dict)], True, False
         if isinstance(obj, dict) and isinstance(obj.get("examples"), list):
-            return [x for x in obj.get("examples") if isinstance(x, dict)]
+            return (
+                [x for x in obj.get("examples") if isinstance(x, dict)],
+                True,
+                is_valid_examples_response(obj),
+            )
         # 形は不正だが JSON としては読めるケースも、例文ゼロ扱いにフォールバックする。
         logger.warning(
             "wordpack_examples_json_invalid_shape",
             obj_type=type(obj).__name__,
-            raw_preview=str(raw or "")[:200],
+            raw_chars=len(str(raw or "")),
         )
-        return []
+        return [], True, False
 
     def generate_examples_for_categories(
         self, lemma: str, plan: dict[ExampleCategory, int]
@@ -549,10 +634,30 @@ class WordPackFlow:
 
         for cat, num in plan.items():
             prompt = self._build_examples_prompt(lemma, cat, int(num))
-            out = self.llm.complete(prompt) if self.llm is not None else "{}"  # type: ignore[attr-defined]
-            parsed = self._parse_examples_json(out if isinstance(out, str) else "{}")
+            identity = prompt_identity_from_builder(
+                prompt_id=f"wordpack.examples.{cat.value.lower()}",
+                operation=f"wordpack.examples.{cat.value.lower()}",
+                builder=build_examples_prompt,
+                schema=examples_response_schema(),
+                major_settings={**self._llm_info, "category": cat.value, "count": int(num)},
+            )
+            if self.llm is None:
+                out = "{}"
+                completion = None
+            else:
+                completion = complete_typed(
+                    self.llm,
+                    prompt,
+                    identity=identity,
+                    response_mode="json",
+                )
+                out = completion.content
+            parsed, parse_valid, schema_valid = self._parse_examples_json_result(
+                out if isinstance(out, str) else "{}"
+            )
             items: list[Examples.ExampleItem] = []
-            for it in parsed[: int(num)]:
+            applicable_rows = parsed[: int(num)] if schema_valid else []
+            for it in applicable_rows:
                 en = str(it.get("en") or "").strip()
                 ja = str(it.get("ja") or "").strip()
                 if not en or not ja:
@@ -566,7 +671,20 @@ class WordPackFlow:
                         category=cat,
                         llm_model=model_name,
                         llm_params=params_str,
+                        generation_provenance=[],
                     )
                 )
             results[cat] = items
+            if completion is not None:
+                completion = with_validation(
+                    completion,
+                    parse=parse_valid,
+                    schema=schema_valid,
+                    application=schema_valid and len(items) == int(num),
+                )
+                provenance = safe_provenance(completion)
+                if provenance is not None:
+                    self._generation_provenance.append(provenance)
+                    for item in items:
+                        item.generation_provenance = [provenance]
         return results
