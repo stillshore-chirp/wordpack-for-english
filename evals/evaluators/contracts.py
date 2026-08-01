@@ -42,25 +42,59 @@ def _validate_provenance(
                     operation=operation,
                 )
             )
-        validation = item.get("validation") or {}
-        if isinstance(validation, Mapping) and validation.get("parse") is False:
-            findings.append(_finding("parse_failure", "provenance classifies a parse failure", operation=operation))
-        if isinstance(validation, Mapping) and validation.get("schema") is False:
+        validation = item.get("validation")
+        if "validation" not in item:
             findings.append(
                 _finding(
-                    "schema_failure",
-                    "provenance classifies a generated-response schema failure",
+                    "validation_missing",
+                    "provenance validation outcomes are required",
                     operation=operation,
                 )
             )
-        if isinstance(validation, Mapping) and validation.get("application") is False:
+        elif not isinstance(validation, Mapping):
             findings.append(
                 _finding(
-                    "application_failure",
-                    "provenance classifies an unusable generated result",
+                    "validation_invalid",
+                    "provenance validation must be an object",
                     operation=operation,
                 )
             )
+        else:
+            missing_outcomes = [
+                key for key in ("parse", "schema", "application") if key not in validation
+            ]
+            if missing_outcomes:
+                findings.append(
+                    _finding(
+                        "validation_outcome_missing",
+                        f"missing validation outcomes: {','.join(missing_outcomes)}",
+                        operation=operation,
+                    )
+                )
+            if validation.get("parse") is False:
+                findings.append(
+                    _finding(
+                        "parse_failure",
+                        "provenance classifies a parse failure",
+                        operation=operation,
+                    )
+                )
+            if validation.get("schema") is False:
+                findings.append(
+                    _finding(
+                        "schema_failure",
+                        "provenance classifies a generated-response schema failure",
+                        operation=operation,
+                    )
+                )
+            if validation.get("application") is False:
+                findings.append(
+                    _finding(
+                        "application_failure",
+                        "provenance classifies an unusable generated result",
+                        operation=operation,
+                    )
+                )
         fallback_reason = str(item.get("fallback_reason") or "")
         if fallback_reason and fallback_reason not in {"PARAM_UNSUPPORTED", "PROVIDER_FAILURE"}:
             findings.append(_finding("fallback_unclassified", fallback_reason, operation=operation))

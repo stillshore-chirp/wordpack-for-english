@@ -21,6 +21,40 @@ from ..models.quiz import Quiz, QuizGenerateRequest, QuizWordPackLink, QuizWordP
 from ..providers import get_llm_provider
 
 
+def _validation_error_summary(exc: Exception) -> dict[str, object]:
+    """Pydanticの入力値を含めず、検証失敗の構造だけをログ用に返す。"""
+
+    summary: dict[str, object] = {"error_type": type(exc).__name__}
+    errors_method = getattr(exc, "errors", None)
+    if not callable(errors_method):
+        return summary
+    try:
+        errors = errors_method(
+            include_url=False,
+            include_context=False,
+            include_input=False,
+        )
+    except (TypeError, ValueError):
+        return summary
+    if not isinstance(errors, list):
+        return summary
+    summary["error_count"] = len(errors)
+    summary["field_locations"] = [
+        ".".join(
+            "[]" if isinstance(part, int) else str(part)
+            for part in error.get("loc", ())
+        )[:256]
+        for error in errors[:20]
+        if isinstance(error, Mapping)
+    ]
+    summary["validation_types"] = [
+        str(error.get("type") or "unknown")[:80]
+        for error in errors[:20]
+        if isinstance(error, Mapping)
+    ]
+    return summary
+
+
 def generate_quiz_id() -> str:
     import uuid
 
@@ -281,7 +315,7 @@ class QuizGenerateFlow:
             logger.warning(
                 "quiz_generated_schema_invalid",
                 reason_code="QUIZ_SCHEMA_INVALID",
-                error=str(exc)[:1000],
+                **_validation_error_summary(exc),
             )
             raise RuntimeError("QUIZ_SCHEMA_INVALID") from exc
 
@@ -324,7 +358,11 @@ class QuizGenerateFlow:
             )
             if failed is not None:
                 provenance.append(failed)
-            logger.warning("quiz_schema_invalid", reason_code="QUIZ_SCHEMA_INVALID", error=str(exc)[:1000])
+            logger.warning(
+                "quiz_schema_invalid",
+                reason_code="QUIZ_SCHEMA_INVALID",
+                **_validation_error_summary(exc),
+            )
             raise RuntimeError("QUIZ_SCHEMA_INVALID") from exc
         succeeded = safe_provenance(
             with_validation(completion, parse=True, schema=True, application=True)

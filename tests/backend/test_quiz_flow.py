@@ -5,10 +5,13 @@ from pathlib import Path
 import sys
 from typing import Any
 
+import pytest
+
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "apps" / "backend"))
 
+from backend.flows import quiz_generate as quiz_module
 from backend.flows.quiz_generate import QuizGenerateFlow
 from backend.models.quiz import QuizGenerateRequest
 
@@ -125,3 +128,48 @@ def test_quiz_generate_flow_warns_when_source_lemma_is_not_in_passage() -> None:
     assert "本文中に見つかりません" in links["mitigate"].warning
     assert llm.calls == 1
     assert len(quiz.generation_provenance) == 1
+
+
+def test_quiz_schema_failure_log_excludes_generated_input(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    valid_payload = json.loads(FakeQuizLlm().complete(""))
+    sensitive_title = "private-generated-content-" * 10
+    valid_payload["title_en"] = sensitive_title
+
+    class InvalidQuizLlm:
+        def complete(self, _prompt: str) -> str:
+            return json.dumps(valid_payload, ensure_ascii=False)
+
+    logged: list[tuple[str, dict[str, object]]] = []
+
+    def capture(event: str, **values: object) -> None:
+        logged.append((event, values))
+
+    monkeypatch.setattr(quiz_module.logger, "warning", capture)
+    req = QuizGenerateRequest.model_validate(
+        {
+            "word_pack_ids": ["wp:mitigate"],
+            "lemmas": ["latency"],
+            "format_profile": "single_passage",
+            "generation_domain": "technical",
+            "domain_intensity": "standard",
+            "difficulty": "medium",
+            "section_count": 1,
+            "questions_per_section": 1,
+            "model": "gpt-5.6-luna",
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="QUIZ_SCHEMA_INVALID"):
+        QuizGenerateFlow(store=FakeQuizStore(), llm=InvalidQuizLlm()).run(req)
+
+    event, values = next(
+        item for item in logged if item[0] == "quiz_generated_schema_invalid"
+    )
+    serialized = json.dumps({"event": event, **values}, ensure_ascii=False)
+    assert sensitive_title not in serialized
+    assert "input_value" not in serialized
+    assert values["error_type"] == "ValidationError"
+    assert values["error_count"] == 1
+    assert values["field_locations"] == ["title_en"]

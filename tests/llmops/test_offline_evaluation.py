@@ -55,6 +55,38 @@ def test_evaluator_fails_when_provenance_records_application_failure() -> None:
     assert any(finding["code"] == "application_failure" for finding in findings)
 
 
+@pytest.mark.parametrize(
+    ("validation", "expected_code"),
+    [
+        (None, "validation_missing"),
+        ("invalid", "validation_invalid"),
+        ({"parse": True, "schema": True}, "validation_outcome_missing"),
+    ],
+)
+def test_evaluator_requires_all_validation_outcomes(
+    validation: object,
+    expected_code: str,
+) -> None:
+    fixture = json.loads(
+        Path("evals/fixtures/wordpack_converge.json").read_text(encoding="utf-8")
+    )
+    payload = fixture["wordpack"]
+    provenance = payload["generation_provenance"][0]
+    if validation is None:
+        provenance.pop("validation")
+    else:
+        provenance["validation"] = validation
+
+    findings = evaluate_wordpack_payload(
+        payload,
+        expected_lemma="converge",
+        expected_model="gpt-5.6-luna",
+        expected_examples_per_category=2,
+    )
+
+    assert any(finding["code"] == expected_code for finding in findings)
+
+
 def test_live_identity_settings_match_production_defaults() -> None:
     production = build_llm_info({})
 
