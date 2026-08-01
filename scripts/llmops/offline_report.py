@@ -39,6 +39,14 @@ from backend.llmops.identity import prompt_identity_from_builder
 from backend.models.word import ExampleCategory
 from backend.settings.base import Settings
 
+PRODUCTION_EXAMPLE_CATEGORIES = (
+    ExampleCategory.Dev,
+    ExampleCategory.CS,
+    ExampleCategory.LLM,
+    ExampleCategory.Business,
+    ExampleCategory.Common,
+)
+
 
 def current_snapshot() -> dict[str, object]:
     production_llm_info = build_llm_info({})
@@ -58,7 +66,7 @@ def current_snapshot() -> dict[str, object]:
             major_settings=production_llm_info,
         ),
     }
-    for category in ExampleCategory:
+    for category in PRODUCTION_EXAMPLE_CATEGORIES:
         identity_name = f"wordpack.examples.{category.value.lower()}"
         identities[identity_name] = prompt_identity_from_builder(
             prompt_id=identity_name,

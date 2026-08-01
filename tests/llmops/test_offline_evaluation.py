@@ -22,9 +22,13 @@ from backend.infrastructure.llm.prompts.examples import (
 from backend.infrastructure.llm.prompts.wordpack import build_wordpack_prompt
 from backend.infrastructure.llm.wordpack_generator import build_llm_info
 from backend.llmops.identity import prompt_identity_from_builder
-from backend.models.word import ExampleCategory
 from scripts.llmops.estimate_run import estimate
-from scripts.llmops.offline_report import build_report, current_snapshot, render_markdown
+from scripts.llmops.offline_report import (
+    PRODUCTION_EXAMPLE_CATEGORIES,
+    build_report,
+    current_snapshot,
+    render_markdown,
+)
 from scripts.llmops import live_eval
 
 
@@ -160,7 +164,7 @@ def test_offline_snapshot_matches_production_prompt_identities() -> None:
             major_settings=llm_info,
         ).prompt_revision,
     }
-    for category in ExampleCategory:
+    for category in PRODUCTION_EXAMPLE_CATEGORIES:
         identity_name = f"wordpack.examples.{category.value.lower()}"
         expected[identity_name] = prompt_identity_from_builder(
             prompt_id=identity_name,
