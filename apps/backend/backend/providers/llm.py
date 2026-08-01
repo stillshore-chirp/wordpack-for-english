@@ -456,6 +456,7 @@ class _OpenAILLM(_LLMBase):  # pragma: no cover - オンライン利用が前提
                     try:
                         setattr(exc, "llm_attempt_count", attempt_index + 1)
                     except Exception:
+                        # Attribute-less exception types are counted as one attempt by the policy wrapper.
                         pass
                     if (
                         self._is_param_unsupported_error(exc)
