@@ -76,7 +76,7 @@ def test_wordpack_and_five_initial_example_categories_keep_six_call_baseline() -
 def test_wordpack_provenance_records_nested_schema_failure() -> None:
     llm = _SequencedWordPackLlm(
         {
-            "senses": "invalid",
+            "senses": [{"id": "s1"}],
             "pronunciation": {"ipa_RP": "/test/"},
             "etymology": {"note": "test", "confidence": "low"},
             "study_card": "test",

@@ -173,13 +173,15 @@ class _OpenAILLM(_LLMBase):  # pragma: no cover - オンライン利用が前提
         reasoning: Optional[dict] = None,
         text: Optional[dict] = None,
         allow_parameter_fallbacks: bool = True,
-        sdk_max_retries: int | None = None,
+        sdk_max_retries: int = 0,
     ) -> None:
         if OpenAI is None:
             raise RuntimeError("openai package not installed")
-        client_options: dict[str, Any] = {"api_key": api_key}
-        if sdk_max_retries is not None:
-            client_options["max_retries"] = sdk_max_retries
+        client_options: dict[str, Any] = {
+            "api_key": api_key,
+            # 物理試行を来歴へ反映できる policy wrapper だけに再試行を集約する。
+            "max_retries": max(0, sdk_max_retries),
+        }
         self._client = OpenAI(**client_options)
         self._model = ensure_supported_llm_model(model)
         self._api_key = api_key
@@ -730,7 +732,7 @@ def get_llm_provider(
                 ),
                 text=text_override if text_override is not None else base_text_opts,
                 allow_parameter_fallbacks=not single_attempt,
-                sdk_max_retries=0 if single_attempt else None,
+                sdk_max_retries=0,
             )
             wrapped = _llm_with_policy(llm, max_attempts=1 if single_attempt else None)
             if not has_override:

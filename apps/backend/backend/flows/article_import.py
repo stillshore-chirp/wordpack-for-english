@@ -12,11 +12,12 @@ from ..config import settings
 from ..domain.article.lemma_filter import STOP_LEMMAS, filter_article_lemmas
 from ..flows.word_pack import WordPackFlow
 from ..id_factory import generate_word_pack_id
-from ..infrastructure.llm.json_response_parser import parse_json_response, strip_code_fences
+from ..infrastructure.llm.json_response_parser import strip_code_fences
 from ..logging import logger
 from ..llmops.completion import complete_typed, safe_provenance, with_validation
 from ..llmops.identity import prompt_identity_from_builder
 from ..llmops.types import CompletionResult
+from ..llmops.validation import parse_article_lemmas
 from ..models.article import (
     ArticleDetailResponse,
     ArticleImportRequest,
@@ -802,19 +803,6 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                 )
                 return s
 
-            def _parse_lemmas_json(raw: str) -> list[str]:
-                try:
-                    data = parse_json_response(str(raw), prefer_json_object=False)
-                    if isinstance(data, list):
-                        return [str(x) for x in data]
-                    if isinstance(data, dict) and isinstance(data.get("lemmas"), list):
-                        return [str(x) for x in data.get("lemmas", [])]
-                except Exception as exc:
-                    logger.info(
-                        "article_import_lemmas_json_parse_failed", error=str(exc)
-                    )
-                return []
-
             def _generate_lemmas(s: _ArticleState) -> _ArticleState:
                 txt = original_text
                 pr = self._prompt_lemmas(txt)
@@ -838,11 +826,11 @@ CEFR A1〜A2 の日常語（挨拶・カレンダー/時間語・基本動詞 ge
                         schema={"type": "array", "items": {"type": "string"}},
                     )
                     out = completion.content
-                raw_list = _parse_lemmas_json(str(out or ""))
+                raw_list, parse_valid, schema_valid = parse_article_lemmas(str(out or ""))
                 _record(
                     completion,
-                    parse=bool(raw_list),
-                    schema=bool(raw_list),
+                    parse=parse_valid,
+                    schema=schema_valid,
                     application=bool(raw_list),
                 )
                 s["lemmas"] = raw_list

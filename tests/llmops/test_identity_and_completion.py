@@ -145,6 +145,7 @@ def test_legacy_test_double_is_called_once_and_parallel_results_do_not_mix() -> 
 
 def test_openai_typed_result_records_usage_fallback_and_store_false(monkeypatch: pytest.MonkeyPatch) -> None:
     calls: list[dict[str, object]] = []
+    client_options: list[dict[str, object]] = []
 
     class Responses:
         def create(self, **kwargs):
@@ -167,7 +168,8 @@ def test_openai_typed_result_records_usage_fallback_and_store_false(monkeypatch:
             )
 
     class Client:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, **kwargs) -> None:
+            client_options.append(kwargs)
             self.responses = Responses()
 
     monkeypatch.setattr(provider_module, "OpenAI", Client)
@@ -181,6 +183,7 @@ def test_openai_typed_result_records_usage_fallback_and_store_false(monkeypatch:
     result = provider.complete_result("secret prompt", identity=_identity())
 
     assert len(calls) == 2
+    assert client_options == [{"api_key": "fake", "max_retries": 0}]
     assert all(call["store"] is False for call in calls)
     assert result.response_id == "resp-test"
     assert result.resolved_model == "gpt-5.6-luna-resolved"
@@ -242,7 +245,7 @@ def test_typed_attempt_count_accumulates_provider_and_policy_retries(
             return SimpleNamespace(output_text='{"ok": true}', status="completed")
 
     class Client:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, **_kwargs) -> None:
             self.responses = Responses()
 
     monkeypatch.setattr(provider_module, "OpenAI", Client)
@@ -292,7 +295,7 @@ def test_langfuse_initialization_failure_does_not_block_completion(monkeypatch: 
             return SimpleNamespace(output_text='{"ok": true}', status="completed")
 
     class Client:
-        def __init__(self, api_key: str) -> None:
+        def __init__(self, **_kwargs) -> None:
             self.responses = Responses()
 
     monkeypatch.setattr(provider_module, "OpenAI", Client)

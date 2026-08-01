@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any, Optional
 
 from fastapi import HTTPException
@@ -13,6 +12,7 @@ from ..id_factory import generate_word_pack_id
 from ..logging import logger
 from ..llmops.completion import complete_typed, safe_provenance, with_validation
 from ..llmops.identity import prompt_identity_from_builder
+from ..llmops.validation import parse_category_lemma
 from ..models.article import ArticleImportRequest
 from ..models.word import ExampleCategory, WordPack
 from ..observability import span
@@ -61,13 +61,18 @@ class CategoryGenerateAndImportFlow:
         self._selection_provenance: list[dict[str, Any]] = []
 
     def _record_selection(
-        self, completion: object, *, parse: bool, application: bool
+        self,
+        completion: object,
+        *,
+        parse: bool,
+        schema: bool,
+        application: bool,
     ) -> None:
         provenance = safe_provenance(
             with_validation(
                 completion,
                 parse=parse,
-                schema=parse,
+                schema=schema,
                 application=application,
             )  # type: ignore[arg-type]
         )
@@ -185,27 +190,34 @@ class CategoryGenerateAndImportFlow:
                     response_mode="json",
                 )
                 out = completion.content
-            try:
-                data = json.loads((out or "").strip().strip("`"))
-                lemma_raw = str(data.get("lemma") or "").strip()
-            except Exception:
-                lemma_raw = ""
+            lemma_raw, parse_valid, schema_valid = parse_category_lemma(out or "")
             lemma = lemma_raw.lower()
             # basic normalization
             if not lemma or len(lemma) > 64:
-                self._record_selection(completion, parse=bool(lemma_raw), application=False)
+                self._record_selection(
+                    completion,
+                    parse=parse_valid,
+                    schema=schema_valid,
+                    application=False,
+                )
                 attempted.append(lemma_raw or "")
                 continue
             if not all((ch.isalpha() or ch in {"-", "'", " "}) for ch in lemma):
-                self._record_selection(completion, parse=True, application=False)
+                self._record_selection(
+                    completion, parse=True, schema=True, application=False
+                )
                 attempted.append(lemma)
                 continue
             # reject duplicates
             if store.find_word_pack_id_by_lemma(lemma) is not None:
-                self._record_selection(completion, parse=True, application=False)
+                self._record_selection(
+                    completion, parse=True, schema=True, application=False
+                )
                 attempted.append(lemma)
                 continue
-            self._record_selection(completion, parse=True, application=True)
+            self._record_selection(
+                completion, parse=True, schema=True, application=True
+            )
             logger.info("category_pick_lemma", category=category.value, lemma=lemma)
             return lemma
         # Fallback: choose from a deterministic candidate list filtered by existing

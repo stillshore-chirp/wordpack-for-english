@@ -147,16 +147,15 @@ class WordPackFlow:
                 if isinstance(out, str) and out.strip():
                     try:
                         llm_data = parse_json_response(out)
-                        has_senses = bool(
-                            isinstance(llm_data, dict)
-                            and isinstance(llm_data.get("senses"), list)
-                            and llm_data.get("senses")
-                        )
                         schema_valid = False
+                        application_valid = False
                         if isinstance(llm_data, dict):
                             try:
-                                WordPack.model_validate({**llm_data, "lemma": lemma})
+                                validated = WordPack.model_validate(
+                                    {**llm_data, "lemma": lemma}
+                                )
                                 schema_valid = True
+                                application_valid = bool(validated.senses)
                             except ValidationError:
                                 logger.info(
                                     "wordpack_llm_schema_validation_failed",
@@ -166,7 +165,7 @@ class WordPackFlow:
                             completion,
                             parse=True,
                             schema=schema_valid,
-                            application=has_senses,
+                            application=application_valid,
                         )
                         logger.info(
                             "wordpack_llm_json_parsed",
