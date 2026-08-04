@@ -9,6 +9,8 @@ import pytest
 from backend.config import settings
 from backend.flows.word_pack import WordPackFlow
 from backend.infrastructure.firestore.repositories.app_store import AppFirestoreStore
+from backend.logging import configure_logging
+from backend.models.common import ConfidenceLevel
 from backend.models.word import ExampleCategory
 from tests.firestore_fakes import FakeFirestoreClient
 
@@ -54,6 +56,18 @@ def _fixture() -> dict[str, object]:
         Path("evals/fixtures/wordpack_converge.json").read_text(encoding="utf-8")
     )
     return fixture["wordpack"]
+
+
+def _structlog_events(raw_logs: str, event: str) -> list[dict[str, object]]:
+    matches: list[dict[str, object]] = []
+    for raw in raw_logs.splitlines():
+        try:
+            payload = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if isinstance(payload, dict) and payload.get("event") == event:
+            matches.append(payload)
+    return matches
 
 
 def test_wordpack_and_five_initial_example_categories_keep_separate_provenance() -> None:
@@ -134,6 +148,78 @@ def test_wordpack_provenance_rejects_senses_with_only_blank_glosses(
         "schema": True,
         "application": False,
     }
+
+
+def test_wordpack_strict_mode_normalizes_blank_collection_items(
+    monkeypatch,
+    capsys,
+) -> None:
+    configure_logging()
+    monkeypatch.setattr(settings, "strict_mode", True)
+    payload = _fixture()
+    payload["senses"][0]["patterns"] = [" converge on ", "   "]
+    payload["senses"][0]["synonyms"] = [" meet ", ""]
+    payload["collocations"]["general"]["verb_object"] = [
+        " systems converge ",
+        "   ",
+    ]
+    payload["contrast"] = [
+        {"with": " diverge ", "diff_ja": " 方向が反対です。 "},
+        {"with": "", "diff_ja": "比較対象がありません。"},
+    ]
+    flow = WordPackFlow(llm=_SequencedWordPackLlm(payload))
+
+    pack = flow.run("converge", pronunciation_enabled=False)
+
+    assert pack.senses[0].patterns == ["converge on"]
+    assert pack.senses[0].synonyms == ["meet"]
+    assert pack.collocations.general.verb_object == ["systems converge"]
+    assert [(item.with_, item.diff_ja) for item in pack.contrast] == [
+        ("diverge", "方向が反対です。")
+    ]
+    assert pack.etymology.confidence is ConfidenceLevel.medium
+    assert pack.generation_provenance[0]["validation"] == {
+        "parse": True,
+        "schema": True,
+        "application": True,
+    }
+    normalization_fields = _structlog_events(
+        capsys.readouterr().err, "wordpack_llm_output_normalized"
+    )[0]
+    assert normalization_fields["reason_code"] == "WHITESPACE_NORMALIZED"
+    assert normalization_fields["removed_items"] == 4
+    assert set(normalization_fields["field_categories"]) == {
+        "collocations.general",
+        "contrast",
+        "sense.patterns",
+        "sense.synonyms",
+    }
+    assert "lemma" not in normalization_fields
+    assert "request_id" not in normalization_fields
+    assert "job_id" not in normalization_fields
+
+
+def test_wordpack_strict_mode_logs_safe_required_text_category(
+    monkeypatch,
+    capsys,
+) -> None:
+    configure_logging()
+    monkeypatch.setattr(settings, "strict_mode", True)
+    payload = _fixture()
+    payload["senses"][0]["gloss_ja"] = "   "
+    flow = WordPackFlow(llm=_SequencedWordPackLlm(payload))
+
+    with pytest.raises(RuntimeError, match="schema-valid usable data"):
+        flow._retrieve("converge")
+
+    validation_fields = _structlog_events(
+        capsys.readouterr().err, "wordpack_llm_application_validation_failed"
+    )[0]
+    assert validation_fields["reason_code"] == "BLANK_REQUIRED_TEXT"
+    assert validation_fields["field_categories"] == ["sense.required_text"]
+    assert "lemma" not in validation_fields
+    assert "request_id" not in validation_fields
+    assert "job_id" not in validation_fields
 
 
 @pytest.mark.parametrize(
