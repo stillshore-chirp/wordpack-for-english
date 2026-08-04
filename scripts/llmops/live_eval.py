@@ -124,6 +124,7 @@ def main(*, provider_factory=None) -> int:
     from backend.infrastructure.llm.generated_contracts import (
         GeneratedWordPackPayload,
         has_required_wordpack_text,
+        normalize_generated_wordpack_payload,
     )
     from backend.infrastructure.llm.json_response_parser import parse_json_response
     from backend.infrastructure.llm.prompts.examples import (
@@ -203,6 +204,11 @@ def main(*, provider_factory=None) -> int:
                 if isinstance(parsed_wordpack, GeneratedWordPackPayload)
                 else None
             )
+            if generated_wordpack is not None:
+                generated_wordpack = normalize_generated_wordpack_payload(
+                    generated_wordpack
+                ).payload
+                payload = generated_wordpack.model_dump(by_alias=True)
             application_ok = bool(
                 generated_wordpack
                 and has_required_wordpack_text(generated_wordpack)

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...models.quiz import (
@@ -65,6 +67,191 @@ class GeneratedWordPackPayload(BaseModel):
     etymology: GeneratedEtymologyPayload
     study_card: str = Field(min_length=1)
     pronunciation: GeneratedPronunciationPayload
+
+
+@dataclass(frozen=True)
+class GeneratedWordPackNormalization:
+    """意味を補完せずに正規化した生成結果と安全な観測情報。"""
+
+    payload: GeneratedWordPackPayload
+    changed_items: int
+    removed_items: int
+    field_categories: tuple[str, ...]
+
+
+def normalize_generated_wordpack_payload(
+    payload: GeneratedWordPackPayload,
+) -> GeneratedWordPackNormalization:
+    """空白を整え、意味を持たないコレクション要素だけを除去する。"""
+
+    changed_items = 0
+    removed_items = 0
+    field_categories: set[str] = set()
+
+    def clean_required(value: str, category: str) -> str:
+        nonlocal changed_items
+        cleaned = value.strip()
+        if cleaned != value:
+            changed_items += 1
+            field_categories.add(category)
+        return cleaned
+
+    def clean_optional(value: str | None, category: str) -> str | None:
+        nonlocal changed_items
+        if value is None:
+            return None
+        cleaned = value.strip()
+        normalized = cleaned or None
+        if normalized != value:
+            changed_items += 1
+            field_categories.add(category)
+        return normalized
+
+    def clean_list(values: list[str], category: str) -> list[str]:
+        nonlocal changed_items, removed_items
+        normalized: list[str] = []
+        for value in values:
+            cleaned = value.strip()
+            if not cleaned:
+                changed_items += 1
+                removed_items += 1
+                field_categories.add(category)
+                continue
+            if cleaned != value:
+                changed_items += 1
+                field_categories.add(category)
+            normalized.append(cleaned)
+        return normalized
+
+    senses: list[GeneratedSensePayload] = []
+    for sense in payload.senses:
+        senses.append(
+            sense.model_copy(
+                update={
+                    "id": clean_required(sense.id, "sense.required_text"),
+                    "gloss_ja": clean_required(
+                        sense.gloss_ja, "sense.required_text"
+                    ),
+                    "definition_ja": clean_required(
+                        sense.definition_ja, "sense.required_text"
+                    ),
+                    "nuances_ja": clean_required(
+                        sense.nuances_ja, "sense.required_text"
+                    ),
+                    "patterns": clean_list(sense.patterns, "sense.patterns"),
+                    "synonyms": clean_list(sense.synonyms, "sense.synonyms"),
+                    "antonyms": clean_list(sense.antonyms, "sense.antonyms"),
+                    "register_": clean_required(
+                        sense.register_, "sense.required_text"
+                    ),
+                    "notes_ja": clean_required(
+                        sense.notes_ja, "sense.required_text"
+                    ),
+                    "term_overview_ja": clean_optional(
+                        sense.term_overview_ja, "sense.optional_text"
+                    ),
+                    "term_core_ja": clean_optional(
+                        sense.term_core_ja, "sense.optional_text"
+                    ),
+                }
+            )
+        )
+
+    def clean_collocation_group(
+        group: GeneratedCollocationListsPayload, category: str
+    ) -> GeneratedCollocationListsPayload:
+        return group.model_copy(
+            update={
+                "verb_object": clean_list(group.verb_object, category),
+                "adj_noun": clean_list(group.adj_noun, category),
+                "prep_noun": clean_list(group.prep_noun, category),
+            }
+        )
+
+    contrast: list[ContrastItem] = []
+    for item in payload.contrast:
+        with_text = item.with_.strip()
+        diff_text = item.diff_ja.strip()
+        if not with_text or not diff_text:
+            changed_items += 1
+            removed_items += 1
+            field_categories.add("contrast")
+            continue
+        if with_text != item.with_ or diff_text != item.diff_ja:
+            changed_items += 1
+            field_categories.add("contrast")
+        contrast.append(
+            item.model_copy(update={"with_": with_text, "diff_ja": diff_text})
+        )
+
+    normalized = payload.model_copy(
+        update={
+            "senses": senses,
+            "sense_title": clean_required(
+                payload.sense_title, "wordpack.required_text"
+            ),
+            "collocations": payload.collocations.model_copy(
+                update={
+                    "general": clean_collocation_group(
+                        payload.collocations.general, "collocations.general"
+                    ),
+                    "academic": clean_collocation_group(
+                        payload.collocations.academic, "collocations.academic"
+                    ),
+                }
+            ),
+            "contrast": contrast,
+            "etymology": payload.etymology.model_copy(
+                update={
+                    "note": clean_required(payload.etymology.note, "etymology.note")
+                }
+            ),
+            "study_card": clean_required(
+                payload.study_card, "wordpack.required_text"
+            ),
+            "pronunciation": payload.pronunciation.model_copy(
+                update={
+                    "ipa_RP": clean_required(
+                        payload.pronunciation.ipa_RP, "pronunciation.ipa_RP"
+                    )
+                }
+            ),
+        }
+    )
+    return GeneratedWordPackNormalization(
+        payload=normalized,
+        changed_items=changed_items,
+        removed_items=removed_items,
+        field_categories=tuple(sorted(field_categories)),
+    )
+
+
+def required_wordpack_text_issues(
+    payload: GeneratedWordPackPayload,
+) -> tuple[str, ...]:
+    """安全に補完できない空白文字列のフィールド種別を返す。"""
+
+    issues: set[str] = set()
+    if not payload.sense_title.strip() or not payload.study_card.strip():
+        issues.add("wordpack.required_text")
+    if not payload.etymology.note.strip():
+        issues.add("etymology.note")
+    if not payload.pronunciation.ipa_RP.strip():
+        issues.add("pronunciation.ipa_RP")
+    if any(
+        not value.strip()
+        for sense in payload.senses
+        for value in (
+            sense.id,
+            sense.gloss_ja,
+            sense.definition_ja,
+            sense.nuances_ja,
+            sense.register_,
+            sense.notes_ja,
+        )
+    ):
+        issues.add("sense.required_text")
+    return tuple(sorted(issues))
 
 
 def has_required_wordpack_text(payload: GeneratedWordPackPayload) -> bool:
@@ -164,5 +351,8 @@ class GeneratedQuizPayload(BaseModel):
 __all__ = [
     "GeneratedQuizPayload",
     "GeneratedWordPackPayload",
+    "GeneratedWordPackNormalization",
+    "normalize_generated_wordpack_payload",
+    "required_wordpack_text_issues",
     "has_required_wordpack_text",
 ]

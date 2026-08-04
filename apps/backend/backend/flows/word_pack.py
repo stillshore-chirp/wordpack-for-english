@@ -12,6 +12,8 @@ from . import create_state_graph
 from ..infrastructure.llm.generated_contracts import (
     GeneratedWordPackPayload,
     has_required_wordpack_text,
+    normalize_generated_wordpack_payload,
+    required_wordpack_text_issues,
 )
 from ..infrastructure.llm.json_response_parser import parse_json_response
 from ..infrastructure.llm.prompts.examples import (
@@ -156,8 +158,31 @@ class WordPackFlow:
                         if isinstance(llm_data, dict):
                             try:
                                 validated = GeneratedWordPackPayload.model_validate(llm_data)
+                                normalization = normalize_generated_wordpack_payload(
+                                    validated
+                                )
+                                validated = normalization.payload
+                                llm_data = validated.model_dump(by_alias=True)
                                 schema_valid = True
                                 application_valid = has_required_wordpack_text(validated)
+                                if normalization.changed_items:
+                                    logger.info(
+                                        "wordpack_llm_output_normalized",
+                                        reason_code="WHITESPACE_NORMALIZED",
+                                        changed_items=normalization.changed_items,
+                                        removed_items=normalization.removed_items,
+                                        field_categories=list(
+                                            normalization.field_categories
+                                        ),
+                                    )
+                                if not application_valid:
+                                    logger.info(
+                                        "wordpack_llm_application_validation_failed",
+                                        reason_code="BLANK_REQUIRED_TEXT",
+                                        field_categories=list(
+                                            required_wordpack_text_issues(validated)
+                                        ),
+                                    )
                             except ValidationError:
                                 logger.info(
                                     "wordpack_llm_schema_validation_failed",
