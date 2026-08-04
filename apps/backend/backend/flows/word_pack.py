@@ -162,7 +162,9 @@ class WordPackFlow:
                                     validated
                                 )
                                 validated = normalization.payload
-                                llm_data = validated.model_dump(by_alias=True)
+                                llm_data = validated.model_dump(
+                                    mode="json", by_alias=True
+                                )
                                 schema_valid = True
                                 application_valid = has_required_wordpack_text(validated)
                                 if normalization.changed_items:

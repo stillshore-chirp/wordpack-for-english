@@ -208,7 +208,7 @@ def main(*, provider_factory=None) -> int:
                 generated_wordpack = normalize_generated_wordpack_payload(
                     generated_wordpack
                 ).payload
-                payload = generated_wordpack.model_dump(by_alias=True)
+                payload = generated_wordpack.model_dump(mode="json", by_alias=True)
             application_ok = bool(
                 generated_wordpack
                 and has_required_wordpack_text(generated_wordpack)

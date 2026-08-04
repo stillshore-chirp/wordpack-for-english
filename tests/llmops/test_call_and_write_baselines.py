@@ -10,6 +10,7 @@ from backend.config import settings
 from backend.flows.word_pack import WordPackFlow
 from backend.infrastructure.firestore.repositories.app_store import AppFirestoreStore
 from backend.logging import configure_logging
+from backend.models.common import ConfidenceLevel
 from backend.models.word import ExampleCategory
 from tests.firestore_fakes import FakeFirestoreClient
 
@@ -176,6 +177,7 @@ def test_wordpack_strict_mode_normalizes_blank_collection_items(
     assert [(item.with_, item.diff_ja) for item in pack.contrast] == [
         ("diverge", "方向が反対です。")
     ]
+    assert pack.etymology.confidence is ConfidenceLevel.medium
     assert pack.generation_provenance[0]["validation"] == {
         "parse": True,
         "schema": True,
