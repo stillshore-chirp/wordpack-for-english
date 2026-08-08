@@ -24,7 +24,7 @@ description: "アプリ本体またはリポジトリが制御するUIのレビ�
 
 ただし、Issue / PR テンプレート、リポジトリ Markdown、workflow の入力・説明など、GitHub が画面と操作を提供する共同作業面だけの変更は、GitHub 上に表示されるという理由だけで以下の全手順を適用しません。最初に `docs/ai-governance/02-uiux-review-framework.md` の所有境界で分類し、リポジトリが制御する文言・構造・表示・リンク・公開安全性を `docs/ai-governance/03-evidence-and-completion-gates.md` の GitHub 共同作業面向け証跡で確認します。
 
-GitHub Pages、GitHub App、埋め込み Web UI など、リポジトリが独自のレイアウト・操作・状態を実装する場合はアプリ本体 UI として、このSkillの全手順を適用します。アプリ本体 UI と GitHub 共同作業面が混在する場合も、アプリ本体 UI の部分には全手順を適用します。
+GitHub Pages、GitHub App、埋め込み Web UI など、リポジトリが独自のレイアウト・操作・状態を実装する場合はアプリ本体 UI として、このSkillの全手順を適用します。アプリ本体 UI と GitHub 共同作業面が混在する場合は、アプリ本体 UI の部分に全手順、GitHub 共同作業面の部分に共同作業面向け証跡をそれぞれ適用し、両方を確認します。
 
 ## 2. 必須で読む文書
 

@@ -87,6 +87,7 @@ grep -q "アプリ本体 UI" AGENTS.md || fail "AGENTS.md must distinguish the p
 grep -q "GitHub 共同作業面" AGENTS.md || fail "AGENTS.md must distinguish GitHub collaboration surfaces"
 grep -q "ブラウザに表示されるかではなく" AGENTS.md || fail "AGENTS.md must classify UI by ownership instead of browser rendering"
 grep -q "GitHub 共同作業面の証跡" docs/ai-governance/03-evidence-and-completion-gates.md || fail "evidence gates must define GitHub collaboration evidence"
+grep -q "両方が混在する変更は、アプリ本体 UI の必須成果物と 1.2 の GitHub 共同作業面の証跡を両方満たし" docs/ai-governance/03-evidence-and-completion-gates.md || fail "mixed changes must satisfy both app UI and GitHub collaboration evidence"
 grep -q "GitHub 上に表示されることだけを理由にアプリ本体 UI と分類しません" docs/ai-governance/01-agent-operating-contract.md || fail "operating contract must distinguish GitHub rendering from app UI ownership"
 grep -q "GitHub 上に表示されるという理由だけで以下の全手順を適用しません" .agents/skills/ui-ux-review/SKILL.md || fail "UI/UX skill must not route every GitHub-rendered change through the full app UI workflow"
 grep -q "対象面を「アプリ本体 UI / GitHub 共同作業面 / 混在 / N/A」から選ぶ" .github/pull_request_template.md || fail "PR template must classify app UI and GitHub collaboration surfaces"
