@@ -49,6 +49,20 @@ require_file "docs/ai-governance/checklists/utility-user-goal.md"
 require_file "docs/ai-governance/checklists/efficiency.md"
 require_file "docs/ai-governance/checklists/satisfaction-trust.md"
 
+ISSUE_TEMPLATES=(
+  ".github/ISSUE_TEMPLATE/feature.md"
+  ".github/ISSUE_TEMPLATE/bug.md"
+  ".github/ISSUE_TEMPLATE/investigation.md"
+  ".github/ISSUE_TEMPLATE/operations.md"
+)
+
+for template in "${ISSUE_TEMPLATES[@]}"; do
+  require_file "$template"
+  grep -q "^## 現在のユーザー体験$" "$template" || fail "$template must require the current user experience"
+  grep -q "^## 対応後に目指すユーザー体験$" "$template" || fail "$template must require the target user experience"
+  grep -q "根拠区分（該当するものを残す）: ユーザー申告 / 実ユーザー観察 / 観測事実からの推定 / 未確認の仮説" "$template" || fail "$template must distinguish the basis of subjective experience"
+done
+
 CLAUDE_CONTENT="$(tr -d '\r' < CLAUDE.md | sed '/^[[:space:]]*$/d')"
 [[ "$CLAUDE_CONTENT" == "@AGENTS.md" ]] || fail "CLAUDE.md must contain only @AGENTS.md"
 
@@ -61,7 +75,9 @@ grep -q "熟練者" AGENTS.md || fail "AGENTS.md must include expert efficiency 
 grep -q "満足感" AGENTS.md || fail "AGENTS.md must include satisfaction/trust gate"
 grep -q "反証レビュー" AGENTS.md || fail "AGENTS.md must include counter-review"
 grep -q "背景・判断理由" AGENTS.md || fail "AGENTS.md must require issue rationale"
+grep -q "現在のユーザー体験と対応後に目指すユーザー体験" AGENTS.md || fail "AGENTS.md must require current and target user experiences"
 grep -q "14-issue-quality-gate.md" AGENTS.md || fail "AGENTS.md must reference issue quality gate"
+grep -q "体験が直接変わらない Issue" docs/ai-governance/14-issue-quality-gate.md || fail "issue quality gate must cover issues without a direct user-experience change"
 grep -q "コードレビュー往復は最大 10 回" AGENTS.md || fail "AGENTS.md must cap code-review rounds at 10"
 grep -q "P1 を含むレビュー結果は、1 PR あたり 3 回まで" AGENTS.md || fail "AGENTS.md must cap P1 review rounds at 3"
 grep -q "P0 または P1 を含まないレビュー結果が 3 回連続" AGENTS.md || fail "AGENTS.md must define the three consecutive non-P1 completion condition"

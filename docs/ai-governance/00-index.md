@@ -27,7 +27,7 @@ UI/UX変更では、最低限次を読んでください。
 - 熟練者効率、反復利用: `11-efficiency-and-expert-use.md`
 - 満足感、安心感、信頼感: `12-satisfaction-trust-and-emotional-ux.md`
 - ルール変更: `13-maintenance-policy.md`
-- Issue の理由・根拠・成果・受け入れ条件: `14-issue-quality-gate.md`
+- Issue の理由・根拠・現在と対応後のユーザー体験・成果・受け入れ条件: `14-issue-quality-gate.md`
 
 ## テンプレート
 
