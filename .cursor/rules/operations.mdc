@@ -1,0 +1,7 @@
+---
+description: "本番運用・deploy固有ルールを必要な時だけ読み込むrouter"
+globs: "docs/operations/**,OPERATIONS.md,docs/deployment.md,docs/infrastructure.md,.github/workflows/**,scripts/deploy*,scripts/promote*"
+alwaysApply: false
+---
+
+本番運用・deploy関連を扱う前に、@AGENTS.md、@docs/operations/AGENTS.md、該当する @.agents/skills/ のSkillを読んで適用してください。

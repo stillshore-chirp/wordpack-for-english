@@ -1,0 +1,7 @@
+---
+description: "Frontend固有ルールを必要な時だけ読み込むrouter"
+globs: "apps/frontend/**,tests/e2e/**,UserManual.md"
+alwaysApply: false
+---
+
+Frontendまたは関連E2Eを扱う前に、@AGENTS.md と @apps/frontend/AGENTS.md を読んで適用してください。このruleへ品質基準を複製しません。
