@@ -1,0 +1,71 @@
+name: Agent harness governance
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'AGENTS.md'
+      - '**/AGENTS.md'
+      - 'CLAUDE.md'
+      - '.agents/**'
+      - '.claude/**'
+      - '.cursor/**'
+      - 'docs/agent-harness.md'
+      - 'docs/agent-principles.md'
+      - 'docs/ai-governance/**'
+      - 'docs/documentation-structure.md'
+      - 'scripts/verify-agent-harness.sh'
+      - 'scripts/verify-ai-governance.sh'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/pull_request_template.md'
+      - '.github/workflows/agent-harness.yml'
+  pull_request:
+    branches: [main, develop]
+    paths:
+      - 'AGENTS.md'
+      - '**/AGENTS.md'
+      - 'CLAUDE.md'
+      - '.agents/**'
+      - '.claude/**'
+      - '.cursor/**'
+      - 'docs/agent-harness.md'
+      - 'docs/agent-principles.md'
+      - 'docs/ai-governance/**'
+      - 'docs/documentation-structure.md'
+      - 'scripts/verify-agent-harness.sh'
+      - 'scripts/verify-ai-governance.sh'
+      - '.github/ISSUE_TEMPLATE/**'
+      - '.github/pull_request_template.md'
+      - '.github/workflows/agent-harness.yml'
+
+concurrency:
+  group: agent-harness-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify agent harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Validate shell syntax
+        run: bash -n scripts/verify-agent-harness.sh scripts/verify-ai-governance.sh
+
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
+
+      - name: Lint verification scripts
+        run: shellcheck scripts/verify-agent-harness.sh scripts/verify-ai-governance.sh
+
+      - name: Verify agent harness and AI governance
+        run: bash scripts/verify-ai-governance.sh
