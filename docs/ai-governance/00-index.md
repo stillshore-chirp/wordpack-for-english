@@ -15,6 +15,8 @@ UI/UX変更では、最低限次を読んでください。
 5. `docs/ai-governance/02-uiux-review-framework.md`
 6. `docs/ai-governance/03-evidence-and-completion-gates.md`
 
+最初に、`02-uiux-review-framework.md` の所有境界で、アプリ本体 UI と GitHub 共同作業面を区別してください。ブラウザや GitHub 上に表示されること自体ではなく、リポジトリがレイアウト・操作・状態を制御しているかで、必要なレビューと証跡を決めます。
+
 変更内容に応じて、次も読んでください。
 
 - 認知負荷、初見理解、迷いやすさ: `04-cognitive-psychology-principles.md`
@@ -27,7 +29,7 @@ UI/UX変更では、最低限次を読んでください。
 - 熟練者効率、反復利用: `11-efficiency-and-expert-use.md`
 - 満足感、安心感、信頼感: `12-satisfaction-trust-and-emotional-ux.md`
 - ルール変更: `13-maintenance-policy.md`
-- Issue の理由・根拠・成果・受け入れ条件: `14-issue-quality-gate.md`
+- Issue の理由・根拠・現在と対応後のユーザー体験・成果・受け入れ条件: `14-issue-quality-gate.md`
 
 ## テンプレート
 
