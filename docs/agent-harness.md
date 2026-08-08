@@ -30,6 +30,7 @@
 
 - ルートから現在の作業ディレクトリまでの `AGENTS.md` を階層的に利用する。
 - ルートから複数領域を編集する場合も、変更対象に最も近い `AGENTS.md` を明示的に確認する。
+- `tests/`、root文書、`.github/workflows/`、deploy scriptなど、祖先pathだけでは領域正本へ到達しない対象は、ルート `AGENTS.md` のpath bridgeから追加正本を読む。
 - task固有手順は `.agents/skills/` から読む。
 
 公式資料: [CodexのAGENTS.md](https://developers.openai.com/codex/guides/agents-md)
@@ -82,7 +83,7 @@
 - secretや個人情報を公開しない
 - 未実施検証を成功扱いしない
 - P0を残してUI/UX完了としない
-- latest headの必須CIが失敗中ならマージ可能と報告しない
+- 最新headの必須CIが失敗中ならマージ可能と報告しない
 - merge、close、破壊的操作は明示された権限内だけで行う
 
 ### Heuristic

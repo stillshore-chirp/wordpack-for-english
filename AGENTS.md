@@ -6,6 +6,14 @@
 
 - ユーザーの依頼と制約を最優先し、リポジトリ内ではルート `AGENTS.md`、変更対象に最も近い `AGENTS.md`、発動した Skill の順に具体化します。
 - 編集前に、対象ファイルまでの経路にある `AGENTS.md` を検索して読みます。作業ディレクトリがルートでも、この確認を省略しません。
+- 祖先pathだけでは領域固有ルールへ到達できない関連ファイルは、次のbridgeを使います。
+
+| 対象path | 追加で読む正本 |
+|---|---|
+| `tests/e2e/**`、`UserManual.md` | `apps/frontend/AGENTS.md` |
+| `tests/**/*.py` | `apps/backend/AGENTS.md` |
+| `OPERATIONS.md`、`docs/deployment.md`、`docs/infrastructure.md`、`.github/workflows/**`、`scripts/deploy*`、`scripts/promote*` | `docs/operations/AGENTS.md` |
+
 - `.claude/` と `.cursor/` は各製品の読込機構へ接続する薄いアダプターです。新しい品質基準の正本を置きません。
 - 同じ指示が競合する場合は、より対象範囲が狭く、現在の作業に具体的な指示を採用し、解消できない競合は実装前に明示します。
 

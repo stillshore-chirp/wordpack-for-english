@@ -6,7 +6,7 @@
 |---|---|---|
 | <img width="600" alt="スクリーンショット 2026-06-08 1 41 55" src="https://github.com/user-attachments/assets/dd2f606d-1215-4b20-b033-d73dd4b04704" /> | <img width="600" alt="スクリーンショット 2026-06-08 1 43 49" src="https://github.com/user-attachments/assets/3d903357-8e1d-455d-b2d1-01ef8e7a29c0" /> | <img width="600" alt="スクリーンショット 2026-06-08 1 44 37" src="https://github.com/user-attachments/assets/55fa5da7-7353-4268-b744-d452ffd918b7" /> |
 | <img width="600" alt="スクリーンショット 2026-06-08 1 42 16" src="https://github.com/user-attachments/assets/26b983e1-92c2-493b-a8a3-716aa474e969" /> | <img width="600" alt="スクリーンショット 2026-06-08 1 44 16" src="https://github.com/user-attachments/assets/27835a40-ac97-4a1b-8b3e-f607c27320d9" /> | <img width="600" alt="スクリーンショット 2026-06-08 1 45 11" src="https://github.com/user-attachments/assets/1060e107-6ade-4485-8636-5228711022e6" /> |
-| <img width="600" alt="スクリーンショット 2026-06-08 1 42 47" src="https://github.com/user-attachments/assets/4c96b995-3c6c-4910-8f92-e8b6e55c50d8" /> |  |  |
+| <img width="600" alt="スクリーンショット 2026-06-08 1 42 47" src="https://github.com/user-attachments/assets/4c96b995-3c7e-4910-8f92-e8b6e55c50d8" /> |  |  |
 
 ## 主な機能
 

@@ -19,6 +19,12 @@ require_text() {
   grep -Fq -- "$pattern" "$file" || fail "$file must contain: $pattern"
 }
 
+require_line() {
+  local file="$1"
+  local line="$2"
+  grep -Fxq -- "$line" "$file" || fail "$file must contain the exact line: $line"
+}
+
 bash scripts/verify-agent-harness.sh
 
 REQUIRED_FILES=(
@@ -70,8 +76,8 @@ ISSUE_TEMPLATES=(
 
 for template in "${ISSUE_TEMPLATES[@]}"; do
   require_file "$template"
-  require_text "$template" "## 現在のユーザー体験"
-  require_text "$template" "## 対応後に目指すユーザー体験"
+  require_line "$template" "## 現在のユーザー体験"
+  require_line "$template" "## 対応後に目指すユーザー体験"
   require_text "$template" "根拠区分（該当するものを残す）: ユーザー申告 / 実ユーザー観察 / 観測事実からの推定 / 未確認の仮説"
 done
 
