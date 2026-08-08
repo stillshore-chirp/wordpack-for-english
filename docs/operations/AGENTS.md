@@ -1,11 +1,14 @@
-# AGENTS.md
+# Operations AGENTS.md
 
-このディレクトリでは、運用環境で実際に観測した事象の記録を扱う。ルート [`AGENTS.md`](../../AGENTS.md) を優先し、ここでは運用記録固有の補足だけを定義する。
+ルート [`AGENTS.md`](../../AGENTS.md) を先に適用し、この文書は `docs/operations/` 固有の契約だけを追加します。
+
+運用環境の事象を調査・記録する場合は、作業前に [本番環境調査Skill](../../.agents/skills/production-investigation/SKILL.md) を読みます。公開される記録やPR本文を作る場合は、併せて [公開安全性Skill](../../.agents/skills/security-publication/SKILL.md) を適用します。
 
 ## 記録方針
 
-- 事実、判断、対応、残リスクを分けて書く。
-- Cloud Run logs、Firestore、GitHub Actions、PR、commit など、確認元を後から追える粒度で残す。
-- 秘密情報、トークン、Cookie、認証ヘッダー、個人情報、ユーザー入力全文、外部ログ全文は記録しない。
-- 未確認の推測は「推測」「未確認」と明示し、観測事実と混ぜない。
-- UI/UXレビュー報告やPR本文に書いた運用上の発見は、再発時に直接参照できるよう、このディレクトリにも要約して残す。
+- 観測事実、推定、判断、対応、残リスクを分離する。
+- Cloud Run logs、Firestore、GitHub Actions、PR、commitなど、確認元を後から追える粒度で記録する。
+- secret、token、Cookie、認証header、個人情報、ユーザー入力全文、外部ログ全文を記録しない。
+- 本番ログや実データを確認していない内容は、コード上の仮説または未確認事項として書く。
+- 公開文書には必要な事実だけを要約し、正確なrevision名、秒単位時刻、完全なquery、実request / trace / job IDを残さない。
+- 再発時に直接参照できる恒久的な運用知識だけを残し、一時的な作業メモはIssueまたはprivate logへ分ける。

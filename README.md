@@ -6,7 +6,7 @@
 |---|---|---|
 | <img width="600" alt="スクリーンショット 2026-06-08 1 41 55" src="https://github.com/user-attachments/assets/dd2f606d-1215-4b20-b033-d73dd4b04704" /> | <img width="600" alt="スクリーンショット 2026-06-08 1 43 49" src="https://github.com/user-attachments/assets/3d903357-8e1d-455d-b2d1-01ef8e7a29c0" /> | <img width="600" alt="スクリーンショット 2026-06-08 1 44 37" src="https://github.com/user-attachments/assets/55fa5da7-7353-4268-b744-d452ffd918b7" /> |
 | <img width="600" alt="スクリーンショット 2026-06-08 1 42 16" src="https://github.com/user-attachments/assets/26b983e1-92c2-493b-a8a3-716aa474e969" /> | <img width="600" alt="スクリーンショット 2026-06-08 1 44 16" src="https://github.com/user-attachments/assets/27835a40-ac97-4a1b-8b3e-f607c27320d9" /> | <img width="600" alt="スクリーンショット 2026-06-08 1 45 11" src="https://github.com/user-attachments/assets/1060e107-6ade-4485-8636-5228711022e6" /> |
-| <img width="600" alt="スクリーンショット 2026-06-08 1 42 47" src="https://github.com/user-attachments/assets/4c96b995-3c7e-4910-8f92-e8b6e55c50d8" /> |  |  |
+| <img width="600" alt="スクリーンショット 2026-06-08 1 42 47" src="https://github.com/user-attachments/assets/4c96b995-3c6c-4910-8f92-e8b6e55c50d8" /> |  |  |
 
 ## 主な機能
 
@@ -77,12 +77,16 @@ npm run dev
 | ゲスト公開 API の詳細 | [docs/guest_public_api.md](docs/guest_public_api.md) |
 | テスト種別と実行入口 | [docs/testing/index.md](docs/testing/index.md) |
 | 本番監視、SLO、障害復旧 | [OPERATIONS.md](OPERATIONS.md) |
-| AI エージェント作業ルール | [AGENTS.md](AGENTS.md) |
-| AI エージェント支援開発の品質管理 | [docs/ai-governance/00-index.md](docs/ai-governance/00-index.md) |
+| AI エージェント共通作業契約 | [AGENTS.md](AGENTS.md) |
+| Codex・Claude Code・Cursor向けハーネス設計 | [docs/agent-harness.md](docs/agent-harness.md) |
+| 設計・実装の判断原則 | [docs/agent-principles.md](docs/agent-principles.md) |
+| AI エージェント支援開発のUI/UX品質管理 | [docs/ai-governance/00-index.md](docs/ai-governance/00-index.md) |
 
 ### AI支援開発の運用ルールについて
 
-`docs/ai-governance/` は、企業全体のAI統制や法務・倫理審査、モデル監査を指すものではなく、このリポジトリ内でAIエージェントを使って開発する際の作業ルール、UI/UXレビュー観点、検証証跡、完了条件を整理した開発運用ドキュメントです。
+`AGENTS.md` はCodex・Claude Code・Cursorが共有する短い共通契約です。領域固有の規則はnested `AGENTS.md`、task固有の手順は`.agents/skills/`へ分け、`.claude/`と`.cursor/`は各製品へ正本を接続する薄いadapterとして管理します。構成と保守基準は [docs/agent-harness.md](docs/agent-harness.md) を参照してください。
+
+`docs/ai-governance/` は、企業全体のAI統制や法務・倫理審査、モデル監査を指すものではなく、このリポジトリ内でAIエージェントを使って開発する際のUI/UXレビュー観点、検証証跡、Issue品質、完了条件を整理した開発運用ドキュメントです。
 
 AIに実装を丸投げするのではなく、作業範囲、品質基準、確認結果、未実行項目、残リスクを明示し、レビュー可能な形で開発を進めるための補助線として整備しています。
 
@@ -95,11 +99,13 @@ tests/                  Python tests
 tests/e2e/              Playwright E2E / visual tests
 docs/                   開発・運用・仕様ドキュメント
 docs/testing/           テスト種別ごとの詳細
-.agents/                AI エージェント用スキル
+.agents/skills/         3エージェント共通のtask Skill正本
+.claude/                Claude Code向けの薄いpath / Skill adapter
+.cursor/rules/          Cursor向けの薄いpath adapter
 .github/workflows/      CI/CD workflows
 ```
 
 ## 開発メモ
 
-- デフォルトブランチは `main` です。PR と CI の運用は [AGENTS.md](AGENTS.md) と [docs/documentation-structure.md](docs/documentation-structure.md) を参照してください。
+- デフォルトブランチは `main` です。Issue、PR、CI、reviewの運用は [GitHub配送Skill](.agents/skills/github-delivery/SKILL.md) を参照してください。
 - README は初見訪問者向けの入口です。詳細仕様や運用手順は `docs/` 側を正本にします。

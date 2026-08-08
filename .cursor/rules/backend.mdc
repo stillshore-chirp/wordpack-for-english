@@ -1,0 +1,7 @@
+---
+description: "Backend固有ルールを必要な時だけ読み込むrouter"
+globs: "apps/backend/**,tests/**/*.py,docs/api-reference.md,docs/authentication.md,docs/firestore.md"
+alwaysApply: false
+---
+
+Backendまたは関連test・契約文書を扱う前に、@AGENTS.md と @apps/backend/AGENTS.md を読んで適用してください。このruleへ品質基準を複製しません。
