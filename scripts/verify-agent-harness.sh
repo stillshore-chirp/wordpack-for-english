@@ -145,7 +145,7 @@ reject_text "scripts/verify-ai-governance.sh" "P0 または P1 を含まない�
 
 require_text "docs/agent-harness.md" "Hard gateとheuristic"
 require_text "docs/agent-harness.md" "Instruction budget"
-require_text "docs/agent-harness.md" "変更のないheadで追加のclean reviewを複数回雀めない"
+require_text "docs/agent-harness.md" "clean review"
 require_text "docs/agent-principles.md" "重複回数だけで抽象化を強制しない"
 
 echo "Agent harness verification: PASS"
