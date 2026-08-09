@@ -44,10 +44,12 @@
 ## PR / CI / Review
 
 - latest commit:
-- required CI:
-- 利用可能な自動・手動review:
+- push CI:
+- pull_request CI:
+- latest meaningful changeへの自動・人間review:
 - 未解決review thread:
-- review未提供時の代替自己レビュー:
+- GitHub mergeability:
+- review未提供（ソースコード変更では未完了blocker）:
 
 ## 未実行項目
 

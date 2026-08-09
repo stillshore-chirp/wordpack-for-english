@@ -71,16 +71,19 @@ AGENTS.md、Skill、docs、tool専用ruleに同じ長文を複製
 ## Hard gateとheuristic
 
 - P0、secret、証跡捏造、データ破壊、公開契約、権限境界はhard gateとして明確にする。
+- ソースコード変更依頼に含まれる通常配送と、別の明示指示が必要なmerge等の権限境界は、rootのhard gate、GitHub配送Skillの実行順序、検証scriptで分担して固定する。
 - DRY、KISS、SRP、OCP、行数、重複回数、test配分はheuristicとして扱う。
 - heuristicを数値だけのFail条件へ変えない。
 - P0を格下げする場合は、完了不可ではない根拠を記録する。
 
 ## Review収束
 
-- latest meaningful changeに対するCIと利用可能なreviewを確認する。
+- ソースコード変更ではlatest meaningful changeに対するpush / pull_request CIと、GitHub上で確認可能なコードレビューを必須とする。
 - 指摘対応でheadが変わった時だけ再確認する。
 - 変更のないheadに対するclean reviewを複数回要求しない。
 - 特定製品のreview名を3製品共通の完了条件へしない。
+- reviewが一つも提供されない場合、自己レビューだけで代替してマージ可能としない。
+- actionableな未解決threadがなく、GitHubのmergeabilityがcleanであることを確認する。
 - merge、closeは別の明示指示がある場合だけ行う。
 
 ## 研究・標準
@@ -98,4 +101,4 @@ bash scripts/verify-agent-harness.sh
 bash scripts/verify-ai-governance.sh
 ```
 
-加えて、変更したshellの`bash -n` / `shellcheck`、YAML / frontmatter、link、公開安全性を確認します。検証できない項目は理由と残るリスクを報告します。
+加えて、変更したshellの`bash -n` / `shellcheck`、YAML / frontmatter、link、公開安全性を確認します。ソースコード変更の発動条件、Issue必須、通常配送の権限、reviewとmergeabilityの完了条件、merge等の別権限が機械検査で退行しないことも確認します。検証できない項目は理由と残るリスクを報告します。

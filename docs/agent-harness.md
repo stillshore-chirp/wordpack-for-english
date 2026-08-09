@@ -100,6 +100,19 @@
 
 heuristicを「常に」「必ず」と書く場合は、例外が成立しない理由を示します。数値だけをPass / Failへ変換しません。
 
+## ソースコード変更のGitHub配送権限
+
+ユーザーがソースコードの追加・変更・削除を依頼した時点で、変更規模にかかわらず `.agents/skills/github-delivery/SKILL.md` を発動します。ここでいうソースコードには、製品コードだけでなくtest、script、workflow、schema、挙動を変える設定を含みます。read-onlyの調査・相談は含みません。
+
+権限を次の2種類へ分離し、「pushやPRには追加確認が必要だがmergeも同じ権限でよい」といった誤解を防ぎます。
+
+| 区分 | ソースコード変更依頼に含まれる操作 |
+|---|---|
+| 通常配送 | 主Issueの検索・作成・更新、専用branch、commit、push、非ドラフトPR、CI確認・再実行、コードレビュー対応、review threadへの返信・解決、mergeability確認 |
+| 別の明示指示が必要 | merge、Issue / PRのclose、release、production deploy、破壊的操作 |
+
+通常配送は、作業開始時に包括的な再許可を求めず、GitHub上でマージ可能な状態になるまで続けます。完了判定は [`docs/ai-governance/03-evidence-and-completion-gates.md`](ai-governance/03-evidence-and-completion-gates.md)、実行順序はGitHub配送Skillを正本とします。GitHub上で確認可能なコードレビューが得られない場合、自己レビューだけで代替せず未完了blockerとして報告します。
+
 ## Instruction budget
 
 次をhard upper boundとします。短いほど常に良いという意味ではなく、超過時に構造を見直すための上限です。
@@ -128,10 +141,11 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 
 ## GitHub reviewの収束
 
-- latest meaningful changeに対する必須CIと、利用可能な自動・手動reviewを確認する。
+- latest meaningful changeに対する対象workflowのpush / pull_request CIと、GitHub上で確認可能な自動または人間のコードレビューを確認する。
 - actionableな指摘を修正した場合は、最新headでCIと該当reviewを再確認する。
 - 変更のないheadで追加のclean reviewを複数回集めない。
-- reviewが提供されない環境では、未確認範囲と代替自己レビューを報告する。
+- ソースコード変更でreviewが提供されない環境では、自己レビューを完了条件の代替にせず、未確認範囲とblockerを報告する。
+- actionableな未解決threadがなく、GitHubのmergeabilityがcleanであることを確認する。
 - mergeまたはcloseは別の明示指示がある場合だけ行う。
 
 ## ルール変更時の確認

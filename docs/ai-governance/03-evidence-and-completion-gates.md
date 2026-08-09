@@ -83,12 +83,12 @@ GitHubが所有し、リポジトリが変更していないlayout、keyboard、
 
 PRをマージ可能な状態として報告する場合は、次を満たします。
 
-- latest headの必須CIが成功している。
-- latest meaningful changeに対する利用可能な自動・手動reviewを確認している。
+- latest headの対象workflowについてpushとpull_request CIが成功している。
+- latest meaningful changeに対するGitHub上で確認可能な自動または人間のコードレビューがcleanである。
 - actionableな未解決review threadがない。
-- reviewが提供されない場合は、代替自己レビューと未確認範囲を記録している。
+- GitHubのmergeabilityがcleanで、conflictやblocking conditionがない。
 
-同じheadでclean reviewを複数回集める必要はありません。指摘対応でheadが変わった場合だけ、CIと該当reviewを再確認します。mergeまたはcloseは別の明示指示がある場合だけ行います。
+ソースコード変更でコードレビューが提供されない場合、代替自己レビューは補助証跡に限り、マージ可能状態の代替にしません。同じheadでclean reviewを複数回集める必要はありません。指摘対応でheadが変わった場合だけ、CIと該当reviewを再確認します。mergeまたはcloseは別の明示指示がある場合だけ行います。
 
 ## 5. 推奨検証
 
