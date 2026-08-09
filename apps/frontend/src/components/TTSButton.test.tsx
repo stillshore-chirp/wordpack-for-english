@@ -62,7 +62,9 @@ describe('TTSButton', () => {
     (global as any).Audio = audioCtor;
     URL.createObjectURL = vi.fn().mockReturnValue('blob:mock-url');
     URL.revokeObjectURL = vi.fn();
-    const fetchMock = vi.fn().mockResolvedValue(new Response('audio-data', { status: 200 }));
+    const fetchMock = vi.fn().mockImplementation(() => (
+      Promise.resolve(new Response('audio-data', { status: 200 }))
+    ));
     global.fetch = fetchMock as unknown as typeof fetch;
 
     render(<TTSButton text="Hello" />);
@@ -149,6 +151,65 @@ describe('TTSButton', () => {
     expect(requestTexts.every((chunk) => chunk.length <= TTS_API_REQUEST_MAX_LENGTH)).toBe(true);
     expect(requestTexts.join('')).toBe(longText);
     await waitFor(() => expect(audioCtor).toHaveBeenCalledTimes(2));
+    expect(alertMock).not.toHaveBeenCalled();
+  });
+
+  it('cancels the previous passage and does not request queued chunks after text changes', async () => {
+    const alertMock = vi.fn();
+    window.alert = alertMock;
+    const fetchMock = vi.fn().mockImplementation(() => (
+      Promise.resolve(new Response('audio-data', { status: 200 }))
+    ));
+    global.fetch = fetchMock as unknown as typeof fetch;
+    URL.createObjectURL = vi.fn()
+      .mockReturnValueOnce('blob:old-passage')
+      .mockReturnValueOnce('blob:new-passage');
+    URL.revokeObjectURL = vi.fn();
+    const pauseOldAudio = vi.fn();
+    const audioCtor = vi.fn()
+      .mockImplementationOnce(() => ({
+        play: vi.fn().mockResolvedValue(undefined),
+        pause: pauseOldAudio,
+        onended: null,
+        onerror: null,
+        playbackRate: 1,
+        volume: 1,
+      }))
+      .mockImplementationOnce(() => ({
+        play: vi.fn().mockResolvedValue(undefined),
+        pause: vi.fn(),
+        onended: null,
+        onerror: null,
+        playbackRate: 1,
+        volume: 1,
+      }));
+    (global as any).Audio = audioCtor;
+    const oldPassage = 'a'.repeat(TTS_API_REQUEST_MAX_LENGTH + 25);
+    const { rerender } = render(<TTSButton text={oldPassage} />);
+    const user = userEvent.setup();
+
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: '音声' }));
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(audioCtor).toHaveBeenCalledTimes(1));
+
+    act(() => {
+      rerender(<TTSButton text="New passage" />);
+    });
+
+    await waitFor(() => expect(pauseOldAudio).toHaveBeenCalledTimes(1));
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:old-passage');
+    await waitFor(() => expect(screen.getByRole('button', { name: '音声' })).toBeEnabled());
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: '音声' }));
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+
+    const requestTexts = fetchMock.mock.calls.map(([, init]) => (
+      JSON.parse(String(init?.body)).text as string
+    ));
+    expect(requestTexts).toEqual([oldPassage.slice(0, TTS_API_REQUEST_MAX_LENGTH), 'New passage']);
     expect(alertMock).not.toHaveBeenCalled();
   });
 

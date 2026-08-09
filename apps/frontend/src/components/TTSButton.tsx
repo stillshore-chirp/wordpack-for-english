@@ -1,4 +1,13 @@
-import { type AriaRole, type CSSProperties, type ReactNode, useMemo, useState } from 'react';
+import {
+  type AriaRole,
+  type CSSProperties,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 import { useSettings } from '../SettingsContext';
 import { useAuth } from '../AuthContext';
 import { GuestLock } from './GuestLock';
@@ -15,9 +24,41 @@ type Props = {
   style?: CSSProperties;
 };
 
+const createPlaybackAbortError = (): Error => {
+  const error = new Error('TTS playback was cancelled');
+  error.name = 'AbortError';
+  return error;
+};
+
+const isPlaybackAbortError = (error: unknown): boolean => (
+  error instanceof Error && error.name === 'AbortError'
+);
+
 export function TTSButton({ text, className, icon, label = '音声', ariaLabel, role, voice = 'alloy', style }: Props) {
   const { isGuest } = useAuth();
   const [loading, setLoading] = useState(false);
+  const playbackSequenceRef = useRef(0);
+  const requestControllerRef = useRef<AbortController | null>(null);
+  const activeAudioCancelRef = useRef<(() => void) | null>(null);
+  const cancelPlayback = useCallback(() => {
+    playbackSequenceRef.current += 1;
+    requestControllerRef.current?.abort();
+    requestControllerRef.current = null;
+    const cancelAudio = activeAudioCancelRef.current;
+    activeAudioCancelRef.current = null;
+    cancelAudio?.();
+  }, []);
+
+  // 本文の選択が変わった場合、旧本文の待機中リクエストと再生キューを破棄する。
+  useEffect(() => {
+    cancelPlayback();
+    setLoading(false);
+  }, [cancelPlayback, text]);
+
+  // 画面遷移やモーダル終了後に、旧本文の音声・有料リクエストを継続しない。
+  useEffect(() => () => {
+    cancelPlayback();
+  }, [cancelPlayback]);
   let contextApiBase: string | undefined;
   let contextPlaybackRate = 1;
   let contextVolume = 1;
@@ -49,18 +90,32 @@ export function TTSButton({ text, className, icon, label = '音声', ariaLabel, 
       return;
     }
     const chunks = splitTextForTts(trimmed);
+    cancelPlayback();
+    const playbackSequence = playbackSequenceRef.current;
+    const requestController = new AbortController();
+    requestControllerRef.current = requestController;
     setLoading(true);
     try {
       for (let index = 0; index < chunks.length; index += 1) {
+        if (playbackSequenceRef.current !== playbackSequence) {
+          throw createPlaybackAbortError();
+        }
         const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ text: chunks[index], voice }),
+          signal: requestController.signal,
         });
+        if (playbackSequenceRef.current !== playbackSequence) {
+          throw createPlaybackAbortError();
+        }
         if (!res.ok) {
           throw new Error(`HTTP ${res.status}`);
         }
         const blob = await res.blob();
+        if (playbackSequenceRef.current !== playbackSequence) {
+          throw createPlaybackAbortError();
+        }
         const url = URL.createObjectURL(blob);
         const audio = new Audio(url);
         // UIで指定された再生速度と音量をAudioインスタンスに反映させ、設定の即時性を担保する。
@@ -100,7 +155,9 @@ export function TTSButton({ text, className, icon, label = '音声', ariaLabel, 
         const revokeUrl = () => {
           if (revoked) return;
           revoked = true;
-          URL.revokeObjectURL(url);
+          if (typeof URL.revokeObjectURL === 'function') {
+            URL.revokeObjectURL(url);
+          }
         };
         const waitForCompletion = index < chunks.length - 1;
         let resolveCompletion: (() => void) | undefined;
@@ -111,12 +168,31 @@ export function TTSButton({ text, className, icon, label = '音声', ariaLabel, 
             rejectCompletion = reject;
           })
           : null;
+        let cancelAudio: () => void;
+        const clearActiveAudio = () => {
+          if (activeAudioCancelRef.current === cancelAudio) {
+            activeAudioCancelRef.current = null;
+          }
+        };
+        cancelAudio = () => {
+          try {
+            audio.pause();
+          } catch (error) {
+            // テスト用Audioや既に破棄済みの要素ではpauseできない場合がある。
+          }
+          revokeUrl();
+          clearActiveAudio();
+          rejectCompletion?.(createPlaybackAbortError());
+        };
+        activeAudioCancelRef.current = cancelAudio;
         audio.onended = () => {
           revokeUrl();
+          clearActiveAudio();
           resolveCompletion?.();
         };
         audio.onerror = () => {
           revokeUrl();
+          clearActiveAudio();
           rejectCompletion?.(new Error('Audio playback failed'));
         };
         try {
@@ -124,16 +200,26 @@ export function TTSButton({ text, className, icon, label = '音声', ariaLabel, 
           if (completion) await completion;
         } catch (error) {
           revokeUrl();
+          clearActiveAudio();
           throw error;
         }
       }
     } catch (err) {
-      console.error('[TTS] failed to fetch audio', err);
-      if (typeof window !== 'undefined' && typeof window.alert === 'function') {
-        window.alert('音声の取得に失敗しました');
+      const cancelled = playbackSequenceRef.current !== playbackSequence
+        || isPlaybackAbortError(err);
+      if (!cancelled) {
+        console.error('[TTS] failed to fetch audio', err);
+        if (typeof window !== 'undefined' && typeof window.alert === 'function') {
+          window.alert('音声の取得に失敗しました');
+        }
       }
     } finally {
-      setLoading(false);
+      if (requestControllerRef.current === requestController) {
+        requestControllerRef.current = null;
+      }
+      if (playbackSequenceRef.current === playbackSequence) {
+        setLoading(false);
+      }
     }
   };
 
