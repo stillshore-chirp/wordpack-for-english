@@ -201,6 +201,23 @@ describe('Modal close interactions', () => {
     expect(screen.getByRole('button', { name: '最後の操作' })).toHaveFocus();
   });
 
+  it('skips visually hidden controls when wrapping keyboard focus', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <Modal isOpen onClose={() => {}} title="確認">
+        <button type="button" style={{ display: 'none' }}>非表示の操作</button>
+        <button type="button">最後の可視操作</button>
+      </Modal>
+    );
+
+    const lastVisibleButton = screen.getByRole('button', { name: '最後の可視操作' });
+    lastVisibleButton.focus();
+    await user.tab();
+
+    expect(screen.getByRole('button', { name: '確認を閉じる' })).toHaveFocus();
+  });
+
   it('keeps the topmost concurrently opened modal accessible', async () => {
     const user = userEvent.setup();
 

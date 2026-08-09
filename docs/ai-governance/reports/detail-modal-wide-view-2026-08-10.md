@@ -67,7 +67,7 @@
 - [x] modal本文を含むaxe検査
 - [x] 実ブラウザで標準900px、ワイド1800px、復帰900pxを測定
 - [x] Tab + Spaceによる切替と `aria-pressed` の変化
-- [x] 900px viewportで切替非表示、モーダル幅が96vw以下
+- [x] 900px viewportで切替非表示、モーダル幅が96vw以下、最後の可視操作から先頭の閉じる操作へTab循環
 - [x] WordPackの追加・削除・再生成を含む既存E2Eシナリオ
 - [x] Playwright smoke（auth / guest / wordpack、9件）
 - [x] WordPack / 文章詳細のVisual regression（2件、macOS基準画像を更新後に通常比較）

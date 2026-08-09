@@ -372,6 +372,19 @@ test.describe('WordPack 操作', () => {
       await expect(widthToggle).toBeHidden();
       const narrowBox = await modalPanel.boundingBox();
       expect(narrowBox?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(900 * 0.96 + 1);
+      await previewDialog.locator(
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ).evaluateAll((elements) => {
+        const visibleElements = elements.filter((element) => {
+          const style = window.getComputedStyle(element);
+          return style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && element.getClientRects().length > 0;
+        });
+        (visibleElements.at(-1) as HTMLElement | undefined)?.focus();
+      });
+      await page.keyboard.press('Tab');
+      await expect(previewDialog.getByRole('button', { name: 'WordPackプレビューを閉じる' })).toBeFocused();
       await page.setViewportSize({ width: 2000, height: 1000 });
       await expect(widthToggle).toBeVisible();
 

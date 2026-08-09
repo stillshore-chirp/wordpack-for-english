@@ -34,6 +34,9 @@ const getFocusableElements = (root: HTMLElement | null): HTMLElement[] => {
   return Array.from(root.querySelectorAll<HTMLElement>(focusableSelector)).filter((element) => {
     if (element.getAttribute('aria-hidden') === 'true') return false;
     if (element.hasAttribute('disabled')) return false;
+    const computedStyle = window.getComputedStyle(element);
+    if (computedStyle.display === 'none') return false;
+    if (computedStyle.visibility === 'hidden' || computedStyle.visibility === 'collapse') return false;
     return true;
   });
 };
