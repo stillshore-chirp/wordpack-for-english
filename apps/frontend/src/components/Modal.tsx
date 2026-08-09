@@ -193,6 +193,7 @@ export const Modal: React.FC<ModalProps> = ({
       <div
         ref={panelRef}
         data-modal-panel="true"
+        data-modal-wide-view={allowWideView ? isWideView : undefined}
         tabIndex={-1}
         style={{
           width: '100%',

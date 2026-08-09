@@ -54,6 +54,7 @@ describe('Modal width constraint', () => {
     const widthToggle = screen.getByRole('button', { name: 'ワイド表示' });
     expect(panel).not.toBeNull();
     expect(panel!.style.maxWidth).toBe('min(96vw, calc(var(--main-max-width, 1000px) * 0.90))');
+    expect(panel).toHaveAttribute('data-modal-wide-view', 'false');
     expect(widthToggle).toHaveAttribute('aria-pressed', 'false');
 
     await act(async () => {
@@ -61,6 +62,7 @@ describe('Modal width constraint', () => {
     });
 
     expect(panel!.style.maxWidth).toBe('min(96vw, calc(var(--main-max-width, 1000px) * 1.80))');
+    expect(panel).toHaveAttribute('data-modal-wide-view', 'true');
     expect(widthToggle).toHaveAttribute('aria-pressed', 'true');
     expect(await axe(document.body, { rules: { 'color-contrast': { enabled: false } } })).toHaveNoViolations();
 
@@ -69,6 +71,7 @@ describe('Modal width constraint', () => {
     });
 
     expect(panel!.style.maxWidth).toBe('min(96vw, calc(var(--main-max-width, 1000px) * 0.90))');
+    expect(panel).toHaveAttribute('data-modal-wide-view', 'false');
     expect(widthToggle).toHaveAttribute('aria-pressed', 'false');
   });
 
