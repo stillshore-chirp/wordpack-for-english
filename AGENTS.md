@@ -25,9 +25,16 @@
 4. 既存挙動を保ちながら、目的を満たす最小十分な差分を実装します。
 5. 変更に対応するテスト、静的検査、手動確認を実行します。
 6. 現行仕様や運用が変わる場合は、関連文書を同じ変更内で更新します。
-7. リポジトリ変更の公開まで依頼されている場合は、Issue・commit・push・PR・CI確認まで継続します。
+7. ソースコード変更は、後述の配送契約に従ってGitHub上でマージ可能な状態まで継続します。
 
 限定されたタスクは、調査だけ、実装だけ、PR作成だけで恣意的に分断しません。権限、秘密情報、外部サービス障害などの真の blocker がある場合だけ、安全な整合点で止め、確認済み事実、未完了範囲、次の最短アクションを示します。
+
+## ソースコード変更の配送契約
+
+- 製品コード、test、script、workflow、schema、挙動を変える設定の追加・変更・削除は、大小を問わずすべてソースコード変更です。
+- ユーザーからのソースコード変更依頼そのものを、GitHub配送Skillが定義する通常配送を行う権限として扱います。包括的な再確認を求めず、GitHub上でCIとコードレビュー対応が完了し、マージ可能な状態になるまで継続します。
+- 通常配送の実行順序と権限範囲は [`.agents/skills/github-delivery/SKILL.md`](.agents/skills/github-delivery/SKILL.md)、観測可能な完了条件は [`docs/ai-governance/03-evidence-and-completion-gates.md`](docs/ai-governance/03-evidence-and-completion-gates.md) を正本とします。満たせない条件があれば未完了です。
+- merge、Issue / PRのclose、release、production deploy、破壊的操作は通常配送に含めず、対象を特定した別の明示指示がある場合だけ行います。
 
 ## タスク別ルーティング
 
@@ -36,7 +43,7 @@
 | 作業 | 正本 |
 |---|---|
 | アプリ本体 UI、ユーザーに見える状態・文言・操作、アクセシビリティ | [`.agents/skills/ui-ux-review/SKILL.md`](.agents/skills/ui-ux-review/SKILL.md) |
-| Issue、branch、commit、push、PR、CI、review、release準備 | [`.agents/skills/github-delivery/SKILL.md`](.agents/skills/github-delivery/SKILL.md) |
+| ソースコード変更、またはIssue、branch、commit、push、PR、CI、review、release準備 | [`.agents/skills/github-delivery/SKILL.md`](.agents/skills/github-delivery/SKILL.md) |
 | 本番障害、実データ異常、デプロイ後挙動の調査 | [`.agents/skills/production-investigation/SKILL.md`](.agents/skills/production-investigation/SKILL.md) |
 | 公開される文書、ログ要約、レポート、Issue / PR本文 | [`.agents/skills/security-publication/SKILL.md`](.agents/skills/security-publication/SKILL.md) |
 | エージェントルール、Skill、アダプター、検証 script の変更 | [`docs/agent-harness.md`](docs/agent-harness.md) と [`docs/ai-governance/13-maintenance-policy.md`](docs/ai-governance/13-maintenance-policy.md) |
@@ -52,7 +59,7 @@ GitHub が画面を提供する Issue / PR テンプレート、Markdown、workf
 - 実施していないテスト、確認していない本番状態、存在しない証跡を完了根拠にしない。
 - 未確認の推測を観測事実として断定しない。
 - 無関係な既存差分を上書き、削除、commit しない。
-- 破壊的操作、公開、送信、merge、close は、依頼または明示的な権限の範囲内だけで行う。
+- 破壊的操作は依頼または明示的な権限の範囲内だけで行い、merge、Issue / PRのclose、release、production deployは別の明示指示なしに行わない。
 - UI/UX 作業では、正本が定義する P0 を残したまま完了扱いにしない。
 - 変更後の最新状態に対して、関連する検証が失敗中または未確認なら、その状態を明記する。
 

@@ -35,7 +35,7 @@
 新しいルールは、次の順で配置先を判断します。
 
 1. **機械で判定できるか**: format、lint、schema、禁止pattern、file存在、line budgetはscriptまたはCIへ置く。
-2. **常に必要なhard gateか**: 秘密情報、検証捏造、未確認差分、破壊的操作などに限りルートへ置く。
+2. **常に必要なhard gateか**: 秘密情報、検証捏造、未確認差分、ソースコード変更の配送権限、破壊的操作などに限りルートへ置く。
 3. **特定domainだけか**: frontend、backend、operationsなどの近接 `AGENTS.md` へ置く。
 4. **特定作業だけか**: UI review、GitHub配送、本番調査、公開審査などのSkillへ置く。
 5. **詳細な判断根拠か**: `docs/` の正本へ置く。
@@ -72,15 +72,17 @@
 良い例:
 
 - 「利用可能な認証済みGitHub clientでIssueとPRを作成する」
-- 「最新headに対する利用可能なreview結果を確認する」
+- 「latest meaningful changeに対するGitHub上のコードレビュー結果を確認する」
 - 「path-scoped adapterから近接ルールを読む」
 
 避ける例:
 
 - すべてのエージェントへ特定CLIの認証commandを必須化する。
 - 共通branch名へ特定製品名を固定する。
-- 特定review botが存在しない環境を未完了にする。
+- 特定review botだけをコードレビューの完了手段として固定する。
 - Cursorのrules directoryを禁止する。
+
+tool中立性はレビュー自体を任意にする意味ではありません。ソースコード変更では、GitHub上で確認可能な自動または人間のコードレビューを必須とし、特定botがなくても同等のreview経路を使います。いずれのreview経路も提供されない場合は未完了です。
 
 ## 7. hard gateとheuristic
 
@@ -107,6 +109,7 @@ heuristicを採用しないこと自体を失敗にせず、品質・保守性�
 
 | 観点 | Codex | Claude Code | Cursor |
 |---|---|---|---|
+| 依頼解釈 | ソースコード変更で配送Skillが発動するか | root契約経由で同じ発動条件になるか | root契約経由で同じ発動条件になるか |
 | 発見 | root / nested `AGENTS.md`から到達できるか | `CLAUDE.md` / path ruleから到達できるか | `.cursor/rules`のglobsから到達できるか |
 | scope | 無関係directoryへ適用されないか | pathsが広すぎないか | globs / alwaysApplyが広すぎないか |
 | 正本 | tool固有copyを作っていないか | adapterに本文を複製していないか | adapterに本文を複製していないか |
@@ -125,6 +128,7 @@ PRには、3者への影響、追加した常時指示量、scoped化した内�
 - Claude CodeとCursorの必須adapterの存在と正本参照。
 - 新しいSkillと近接ルールの存在。
 - 廃止したreview収束条件とCursor禁止規則の残存。
+- ソースコード変更の配送Skill発動、Issue必須、review、mergeability、merge等の別権限。
 - 共通rootへのtool固有認証commandの再流入。
 - UI Skillの上限と詳細正本への参照。
 
@@ -140,3 +144,4 @@ PRには、3者への影響、追加した常時指示量、scoped化した内�
 - root budgetを超えたまま、scoped化または機械化の検討がない。
 - adapterのscopeが正本の対象と一致しない。
 - 廃止した規則が検証scriptやtemplateから引き続き要求される。
+- ソースコード変更が通常配送の途中で正常終了できる例外、またはreviewを自己レビューだけで代替できる規則が残る。
