@@ -41,7 +41,7 @@ description: "大小を問わないすべてのソースコード変更と、Iss
 
 ## 5. CIとreview
 
-- latest headに紐づく対象workflowのpushとpull_request CIを確認する。失敗時はログから原因を特定し、修正、commit、push、再確認する。
+- latest headに紐づき、対象branchで定義されたpush / pull_request等のCIを確認する。失敗時はログから原因を特定し、修正、commit、push、再確認する。
 - CI成功後、GitHub上で確認可能な自動または人間のコードレビュー、review thread、review commentをlatest headで確認する。
 - actionableな指摘はまとめて修正し、変更後のheadでCIと該当reviewを再確認する。
 - latest meaningful changeに対するclean reviewが1回得られ、actionableな未解決threadがなく、GitHubのmergeabilityがcleanで、CIと必須条件を満たせばreviewを終了する。

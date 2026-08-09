@@ -34,7 +34,7 @@
 - 製品コード、test、script、workflow、schema、挙動を変える設定の追加・変更・削除は、大小を問わずすべてソースコード変更です。
 - ユーザーからのソースコード変更依頼そのものを、主Issueの検索・作成・更新、専用branch、commit、push、非ドラフトPR、CI確認・再実行、コードレビュー対応、review threadへの返信・解決、マージ可能性確認までの通常配送を行う権限として扱います。包括的な再確認を求めません。
 - ソースコードを編集する前に、主Issueと専用branchを確定し、既存PRを使う場合はIssue・branch・PRの対応を確認します。detached HEADのまま編集せず、無関係な既存差分は別worktreeまたは安全な分離手段で避けます。
-- 完了には、latest headに対する対象workflowのpush / pull_request CI成功、latest meaningful changeへのGitHub上で確認可能な自動または人間のコードレビュー、actionableな未解決threadがゼロ、GitHub上のmergeabilityがcleanであることを必要とします。
+- 完了には、latest headに対して対象branchで定義されたpush / pull_request等のCI成功、latest meaningful changeへのGitHub上で確認可能な自動または人間のコードレビュー、actionableな未解決threadがゼロ、GitHub上のmergeabilityがcleanであることを必要とします。
 - コードレビューを利用できない、CIやGitHub状態を確認できない、conflictまたはblocking conditionが残る場合は未完了です。自己レビューだけで代替してマージ可能とは報告しません。
 - merge、Issue / PRのclose、release、production deploy、破壊的操作は通常配送に含めず、対象を特定した別の明示指示がある場合だけ行います。
 

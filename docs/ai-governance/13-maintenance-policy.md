@@ -78,7 +78,7 @@ AGENTS.md、Skill、docs、tool専用ruleに同じ長文を複製
 
 ## Review収束
 
-- ソースコード変更ではlatest meaningful changeに対するpush / pull_request CIと、GitHub上で確認可能なコードレビューを必須とする。
+- ソースコード変更ではlatest meaningful changeに対して対象branchで定義されたpush / pull_request等のCIと、GitHub上で確認可能なコードレビューを必須とする。
 - 指摘対応でheadが変わった時だけ再確認する。
 - 変更のないheadに対するclean reviewを複数回要求しない。
 - 特定製品のreview名を3製品共通の完了条件へしない。

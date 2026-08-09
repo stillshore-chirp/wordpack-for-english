@@ -141,7 +141,7 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 
 ## GitHub reviewの収束
 
-- latest meaningful changeに対する対象workflowのpush / pull_request CIと、GitHub上で確認可能な自動または人間のコードレビューを確認する。
+- latest meaningful changeに対して対象branchで定義されたpush / pull_request等のCIと、GitHub上で確認可能な自動または人間のコードレビューを確認する。
 - actionableな指摘を修正した場合は、最新headでCIと該当reviewを再確認する。
 - 変更のないheadで追加のclean reviewを複数回集めない。
 - ソースコード変更でreviewが提供されない環境では、自己レビューを完了条件の代替にせず、未確認範囲とblockerを報告する。

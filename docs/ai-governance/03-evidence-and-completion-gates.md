@@ -83,7 +83,7 @@ GitHubが所有し、リポジトリが変更していないlayout、keyboard、
 
 PRをマージ可能な状態として報告する場合は、次を満たします。
 
-- latest headの対象workflowについてpushとpull_request CIが成功している。
+- latest headについて、対象branchで定義されたpush / pull_request等のCIが成功している。
 - latest meaningful changeに対するGitHub上で確認可能な自動または人間のコードレビューがcleanである。
 - actionableな未解決review threadがない。
 - GitHubのmergeabilityがcleanで、conflictやblocking conditionがない。
