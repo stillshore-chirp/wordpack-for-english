@@ -20,7 +20,7 @@
 | 状態 | ユーザーが見るもの | 操作・回復 | a11y / 構造 | 証跡 | 判定 |
 |---|---|---|---|---|---|
 | 標準 | 従来幅の詳細と「ワイド表示」 | ボタンでワイドへ切替 | native button、`aria-pressed=false` | 標準画像、Unit、E2E | Pass |
-| ワイド | 標準の2倍幅、押下状態の切替 | 同じボタンで標準へ復帰 | `aria-pressed=true`、フォーカス輪郭 | ワイド画像、axe、E2E | Pass |
+| ワイド | 標準の2倍幅、押下状態の切替、横幅に追従する例文詳細 | 同じボタンで標準へ復帰 | `aria-pressed=true`、フォーカス輪郭 | ワイド画像、axe、外枠・例文本文の実測E2E | Pass |
 | 再表示 | 標準幅 | 必要なとき再度ワイドへ切替 | 状態リセットのUnit | Unit | Pass |
 | 狭幅 | viewport内に収まる詳細、切替なし | 縦スクロールで内容確認 | 非表示ボタンはフォーカス対象外 | 900px E2E | Pass |
 | 長いタイトル | 折返されるタイトルと固定された操作群 | 閉じる・切替を継続利用 | `overflow-wrap:anywhere` | 実装・Unit | Pass |
@@ -51,6 +51,7 @@
 | 操作認識 | 色だけのpressed表現になる可能性 | `aria-pressed` とnative buttonを採用 |
 | ヘッダー圧迫 | 長いタイトルが切替・閉じるを押し出す可能性 | タイトルを折返し可能、操作群を縮小不可にした |
 | 画像証跡の偽陽性 | 未モックの語句ルックアップが401になり、dialogが閉じた画像でもsnapshot更新が成功し得た | 補助APIを404へ固定し、dialog本文が残ることを目視して通常比較を再実行 |
+| 内側コンテンツの固定幅 | 外枠だけを1800pxへ広げても、例文詳細の58rem上限により余白だけが増える可能性 | 固定上限を除き、例文本文が標準時の1.9倍超かつワイド外枠の95%超へ広がることを実ブラウザで測定 |
 
 ## 7. 証跡
 
@@ -62,10 +63,11 @@
 
 - [x] TypeScript typecheck
 - [x] production build
-- [x] frontend unit tests + coverage（228件、1件skip）
+- [x] frontend unit tests + coverage（229件、1件skip）
 - [x] Modal / ArticleDetailModal / ExampleDetailModalの対象unit tests（34件）
 - [x] modal本文を含むaxe検査
 - [x] 実ブラウザで標準900px、ワイド1800px、復帰900pxを測定
+- [x] 例文詳細の内側コンテンツがワイド時に標準時の1.9倍超かつ外枠の95%超へ広がることを測定
 - [x] Tab + Spaceによる切替と `aria-pressed` の変化
 - [x] 900px viewportで切替非表示、モーダル幅が96vw以下、最後の可視操作から先頭の閉じる操作へTab循環
 - [x] WordPackの追加・削除・再生成を含む既存E2Eシナリオ

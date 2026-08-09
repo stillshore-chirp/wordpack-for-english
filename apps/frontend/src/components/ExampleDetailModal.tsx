@@ -196,7 +196,8 @@ export const ExampleDetailModal: React.FC<ExampleDetailModalProps> = ({
           .example-detail-modal {
             display: grid;
             gap: 1rem;
-            max-width: 58rem;
+            width: 100%;
+            min-width: 0;
           }
           .example-detail-reading {
             display: grid;

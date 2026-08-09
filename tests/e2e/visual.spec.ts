@@ -514,6 +514,36 @@ test.describe('ビジュアル回帰: 主要画面', () => {
     });
   });
 
+  test('例文詳細の本文がワイド表示に追従する', async ({ page, context }) => {
+    await prepareAuthenticatedPage(context, page);
+    await mockWordPackList(page);
+    await mockExampleList(page);
+
+    await page.setViewportSize({ width: 2000, height: 1000 });
+    await page.goto('/examples');
+    await disableAnimations(page);
+    await expect(page.getByText('We shipped the alpha build yesterday.')).toBeVisible();
+    await page.getByTestId('example-card').first().click();
+    const dialog = page.getByRole('dialog', { name: '例文 詳細（alpha / Dev）' });
+    await expect(dialog).toBeVisible();
+
+    const modalPanel = dialog.locator('[data-modal-panel="true"]');
+    const detailContent = dialog.locator('.example-detail-modal');
+    const standardPanelBox = await modalPanel.boundingBox();
+    const standardContentBox = await detailContent.boundingBox();
+    expect(standardPanelBox).not.toBeNull();
+    expect(standardContentBox).not.toBeNull();
+
+    await dialog.getByRole('button', { name: 'ワイド表示' }).click();
+    const widePanelBox = await modalPanel.boundingBox();
+    const wideContentBox = await detailContent.boundingBox();
+    expect(widePanelBox).not.toBeNull();
+    expect(wideContentBox).not.toBeNull();
+    expect((widePanelBox?.width ?? 0) / (standardPanelBox?.width ?? 1)).toBeCloseTo(2, 2);
+    expect((wideContentBox?.width ?? 0) / (standardContentBox?.width ?? 1)).toBeGreaterThan(1.9);
+    expect((wideContentBox?.width ?? 0) / (widePanelBox?.width ?? 1)).toBeGreaterThan(0.95);
+  });
+
   test('設定ダイアログ（SettingsPanel表示）', async ({ page, context }) => {
     await prepareAuthenticatedPage(context, page);
     await mockWordPackList(page);
