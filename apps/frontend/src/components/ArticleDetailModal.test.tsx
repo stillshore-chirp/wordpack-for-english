@@ -46,6 +46,7 @@ describe('ArticleDetailModal', () => {
     );
 
     expect(screen.getByRole('button', { name: '記事本文の音声' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'ワイド表示' })).toHaveAttribute('aria-pressed', 'false');
     const meta = screen.getByTestId('article-meta');
     expect(meta.tagName.toLowerCase()).toBe('dl');
     expect(screen.getByText('生成・管理情報')).toBeInTheDocument();

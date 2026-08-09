@@ -1,4 +1,4 @@
-import React, { useEffect, useId, useRef } from 'react';
+import React, { useEffect, useId, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 
 interface ModalProps {
@@ -8,9 +8,13 @@ interface ModalProps {
   children: React.ReactNode;
   maxWidth?: string;
   closeLabel?: string;
+  allowWideView?: boolean;
   initialFocusRef?: React.RefObject<HTMLElement | null>;
   returnFocusRef?: React.RefObject<HTMLElement | null>;
 }
+
+const DEFAULT_MODAL_MAX_WIDTH = 'min(96vw, calc(var(--main-max-width, 1000px) * 0.90))';
+const WIDE_MODAL_MAX_WIDTH = 'min(96vw, calc(var(--main-max-width, 1000px) * 1.80))';
 
 let nextModalId = 0;
 const modalStack: number[] = [];
@@ -30,6 +34,9 @@ const getFocusableElements = (root: HTMLElement | null): HTMLElement[] => {
   return Array.from(root.querySelectorAll<HTMLElement>(focusableSelector)).filter((element) => {
     if (element.getAttribute('aria-hidden') === 'true') return false;
     if (element.hasAttribute('disabled')) return false;
+    const computedStyle = window.getComputedStyle(element);
+    if (computedStyle.display === 'none') return false;
+    if (computedStyle.visibility === 'hidden' || computedStyle.visibility === 'collapse') return false;
     return true;
   });
 };
@@ -46,6 +53,7 @@ export const Modal: React.FC<ModalProps> = ({
   children,
   maxWidth,
   closeLabel,
+  allowWideView = false,
   initialFocusRef,
   returnFocusRef,
 }) => {
@@ -55,6 +63,7 @@ export const Modal: React.FC<ModalProps> = ({
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
   const previouslyFocusedRef = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
+  const [isWideView, setIsWideView] = useState(false);
   const modalIdRef = useRef<number>(0);
   if (modalIdRef.current === 0) {
     nextModalId += 1;
@@ -64,6 +73,12 @@ export const Modal: React.FC<ModalProps> = ({
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
+
+  useEffect(() => {
+    if (!isOpen || !allowWideView) {
+      setIsWideView(false);
+    }
+  }, [allowWideView, isOpen]);
 
   useEffect(() => {
     if (!isOpen) return undefined;
@@ -151,6 +166,9 @@ export const Modal: React.FC<ModalProps> = ({
   if (!isOpen) return null;
   const resolvedTitle = title || 'モーダル';
   const resolvedCloseLabel = closeLabel || `${resolvedTitle}を閉じる`;
+  const resolvedMaxWidth = allowWideView && isWideView
+    ? WIDE_MODAL_MAX_WIDTH
+    : maxWidth ?? DEFAULT_MODAL_MAX_WIDTH;
   const modalContent = (
     <div
       ref={overlayRef}
@@ -174,10 +192,12 @@ export const Modal: React.FC<ModalProps> = ({
    >
       <div
         ref={panelRef}
+        data-modal-panel="true"
+        data-modal-wide-view={allowWideView ? isWideView : undefined}
         tabIndex={-1}
         style={{
           width: '100%',
-          maxWidth: maxWidth ?? 'min(96vw, calc(var(--main-max-width, 1000px) * 0.90))',
+          maxWidth: resolvedMaxWidth,
           maxHeight: '90vh',
           overflow: 'auto',
           background: 'var(--color-surface)',
@@ -185,17 +205,42 @@ export const Modal: React.FC<ModalProps> = ({
           boxShadow: '0 8px 24px rgba(0,0,0,0.25)',
         }}
       >
+        {allowWideView ? (
+          <style>{`
+            @media (max-width: 960px) {
+              .modal-width-toggle { display: none; }
+            }
+          `}</style>
+        ) : null}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', padding: '0.75rem 1rem', borderBottom: '1px solid var(--color-border)' }}>
-          <strong id={dialogTitleId} style={{ fontSize: '1.1rem' }}>{resolvedTitle}</strong>
-          <button
-            ref={closeButtonRef}
-            type="button"
-            onClick={onClose}
-            style={{ marginLeft: 'auto' }}
-            aria-label={resolvedCloseLabel}
-          >
-            閉じる
-          </button>
+          <strong id={dialogTitleId} style={{ flex: '1 1 auto', minWidth: 0, overflowWrap: 'anywhere', fontSize: '1.1rem' }}>{resolvedTitle}</strong>
+          <div style={{ display: 'inline-flex', flex: '0 0 auto', alignItems: 'center', gap: '0.5rem' }}>
+            {allowWideView ? (
+              <button
+                type="button"
+                className="modal-width-toggle"
+                aria-pressed={isWideView}
+                onClick={() => setIsWideView((current) => !current)}
+                style={{
+                  minHeight: '2.25rem',
+                  paddingInline: '0.75rem',
+                  borderColor: isWideView ? 'var(--color-accent)' : undefined,
+                  background: isWideView ? 'var(--color-accent-bg)' : undefined,
+                  color: isWideView ? 'var(--color-accent)' : undefined,
+                }}
+              >
+                ワイド表示
+              </button>
+            ) : null}
+            <button
+              ref={closeButtonRef}
+              type="button"
+              onClick={onClose}
+              aria-label={resolvedCloseLabel}
+            >
+              閉じる
+            </button>
+          </div>
         </div>
         <div style={{ padding: '1rem' }}>
           {children}

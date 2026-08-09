@@ -143,6 +143,7 @@ export const ArticleDetailModal: React.FC<Props> = ({
       onClose={onClose}
       title={title}
       closeLabel={`${title}を閉じる`}
+      allowWideView
     >
       {article ? (
         <div>
@@ -173,6 +174,8 @@ export const ArticleDetailModal: React.FC<Props> = ({
             .article-reader {
               display: grid;
               gap: 0.9rem;
+              width: 100%;
+              min-width: 0;
               max-width: 56rem;
             }
             .article-reader__header {
@@ -190,6 +193,8 @@ export const ArticleDetailModal: React.FC<Props> = ({
             .article-text-block {
               display: grid;
               gap: 0.35rem;
+              width: 100%;
+              min-width: 0;
               max-width: 48rem;
             }
             .article-text-block h4 {
@@ -240,6 +245,19 @@ export const ArticleDetailModal: React.FC<Props> = ({
             @media (min-width: 768px) {
               .ai-wp-grid { 
                 grid-template-columns: repeat(3, 1fr); 
+              }
+            }
+            @media (min-width: 961px) {
+              [data-modal-wide-view="true"] .article-reader {
+                grid-template-columns: repeat(2, minmax(0, 1fr));
+                max-width: none;
+              }
+              [data-modal-wide-view="true"] .article-reader__header,
+              [data-modal-wide-view="true"] .article-notes {
+                grid-column: 1 / -1;
+              }
+              [data-modal-wide-view="true"] .article-text-block {
+                max-width: none;
               }
             }
             .ai-card { border: 1px solid var(--color-border); border-radius: 4px; padding: 0.35rem; background: var(--color-surface); }

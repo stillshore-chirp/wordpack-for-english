@@ -7,7 +7,7 @@ import { axe } from 'vitest-axe';
 import { Modal } from './Modal';
 
 describe('Modal width constraint', () => {
-  it('sets max width to 85% of main content width (with viewport cap)', () => {
+  it('sets max width to 90% of main content width (with viewport cap)', () => {
     render(
       <Modal isOpen onClose={() => {}} title="Test">
         <div>content</div>
@@ -39,6 +39,74 @@ describe('Modal width constraint', () => {
     const container = dialog.querySelector('div > div') as HTMLDivElement | null;
     expect(container).not.toBeNull();
     expect(container!.style.maxWidth).toBe('480px');
+  });
+
+  it('toggles an opted-in detail modal between the standard and exactly doubled width', async () => {
+    const user = userEvent.setup();
+    render(
+      <Modal isOpen onClose={() => {}} title="詳細プレビュー" allowWideView>
+        <div>content</div>
+      </Modal>
+    );
+
+    const dialog = screen.getByRole('dialog', { name: '詳細プレビュー' });
+    const panel = dialog.querySelector('[data-modal-panel="true"]') as HTMLDivElement | null;
+    const widthToggle = screen.getByRole('button', { name: 'ワイド表示' });
+    expect(panel).not.toBeNull();
+    expect(panel!.style.maxWidth).toBe('min(96vw, calc(var(--main-max-width, 1000px) * 0.90))');
+    expect(panel).toHaveAttribute('data-modal-wide-view', 'false');
+    expect(widthToggle).toHaveAttribute('aria-pressed', 'false');
+
+    await act(async () => {
+      await user.click(widthToggle);
+    });
+
+    expect(panel!.style.maxWidth).toBe('min(96vw, calc(var(--main-max-width, 1000px) * 1.80))');
+    expect(panel).toHaveAttribute('data-modal-wide-view', 'true');
+    expect(widthToggle).toHaveAttribute('aria-pressed', 'true');
+    expect(await axe(document.body, { rules: { 'color-contrast': { enabled: false } } })).toHaveNoViolations();
+
+    await act(async () => {
+      await user.click(widthToggle);
+    });
+
+    expect(panel!.style.maxWidth).toBe('min(96vw, calc(var(--main-max-width, 1000px) * 0.90))');
+    expect(panel).toHaveAttribute('data-modal-wide-view', 'false');
+    expect(widthToggle).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('resets an opted-in detail modal to the standard width when reopened', async () => {
+    const user = userEvent.setup();
+    const Harness = () => {
+      const [open, setOpen] = useState(true);
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>再度開く</button>
+          <Modal isOpen={open} onClose={() => setOpen(false)} title="詳細プレビュー" allowWideView>
+            <div>content</div>
+          </Modal>
+        </>
+      );
+    };
+
+    render(<Harness />);
+
+    await user.click(screen.getByRole('button', { name: 'ワイド表示' }));
+    expect(screen.getByRole('button', { name: 'ワイド表示' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(screen.getByRole('button', { name: '詳細プレビューを閉じる' }));
+    await user.click(screen.getByRole('button', { name: '再度開く' }));
+
+    expect(screen.getByRole('button', { name: 'ワイド表示' })).toHaveAttribute('aria-pressed', 'false');
+  });
+
+  it('does not show the width toggle for modals that did not opt in', () => {
+    render(
+      <Modal isOpen onClose={() => {}} title="確認">
+        <div>content</div>
+      </Modal>
+    );
+
+    expect(screen.queryByRole('button', { name: 'ワイド表示' })).not.toBeInTheDocument();
   });
 });
 
@@ -134,6 +202,21 @@ describe('Modal close interactions', () => {
     await user.tab({ shift: true });
 
     expect(screen.getByRole('button', { name: '最後の操作' })).toHaveFocus();
+  });
+
+  it('skips visually hidden controls when wrapping keyboard focus', () => {
+    render(
+      <Modal isOpen onClose={() => {}} title="確認">
+        <button type="button" style={{ display: 'none' }}>非表示の操作</button>
+        <button type="button">最後の可視操作</button>
+      </Modal>
+    );
+
+    const lastVisibleButton = screen.getByRole('button', { name: '最後の可視操作' });
+    lastVisibleButton.focus();
+    fireEvent.keyDown(window, { key: 'Tab' });
+
+    expect(screen.getByRole('button', { name: '確認を閉じる' })).toHaveFocus();
   });
 
   it('keeps the topmost concurrently opened modal accessible', async () => {

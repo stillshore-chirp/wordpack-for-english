@@ -229,11 +229,13 @@ test.describe('WordPack 操作', () => {
     await runA11yCheck(page);
   });
 
-  test('例文の追加/削除/再生成を1本のシナリオで完結できる', async ({ page, context }) => {
+  test('例文の追加/削除/再生成を1本のシナリオで完結できる', async ({ page, context }, testInfo) => {
     const store = createWordPackStore();
     const actionDurationsMs: number[] = [];
     const actionThresholdMs = getE2eActionThresholdMs();
 
+    // 標準幅900pxとワイド幅1800pxをviewport上限に遮られず比較する。
+    await page.setViewportSize({ width: 2000, height: 1000 });
     await seedAuthenticatedSession(context, page);
     await mockConfig(page, { requestTimeoutMs: 20000 });
 
@@ -336,8 +338,56 @@ test.describe('WordPack 操作', () => {
       const alphaCard = page.getByTestId('wp-card').filter({ hasText: 'alpha' }).first();
       await expect(alphaCard).toBeVisible();
       await alphaCard.getByRole('button', { name: '開く' }).click();
-      await expect(page.getByRole('dialog', { name: /WordPack プレビュー/ })).toBeVisible();
+      const previewDialog = page.getByRole('dialog', { name: /WordPack プレビュー/ });
+      await expect(previewDialog).toBeVisible();
       await expect(page.getByRole('heading', { name: /例文/ })).toBeVisible();
+
+      const modalPanel = previewDialog.locator('[data-modal-panel="true"]');
+      const widthToggle = previewDialog.getByRole('button', { name: 'ワイド表示' });
+      await expect(widthToggle).toHaveAttribute('aria-pressed', 'false');
+      const standardBox = await modalPanel.boundingBox();
+      expect(standardBox).not.toBeNull();
+      await page.screenshot({
+        path: testInfo.outputPath('wordpack-preview-standard.png'),
+        animations: 'disabled',
+      });
+
+      await widthToggle.focus();
+      await page.keyboard.press('Space');
+      await expect(widthToggle).toHaveAttribute('aria-pressed', 'true');
+      const wideBox = await modalPanel.boundingBox();
+      expect(wideBox).not.toBeNull();
+      expect(Math.abs((wideBox?.width ?? 0) - (standardBox?.width ?? 0) * 2)).toBeLessThanOrEqual(1);
+      await page.screenshot({
+        path: testInfo.outputPath('wordpack-preview-wide.png'),
+        animations: 'disabled',
+      });
+
+      await page.keyboard.press('Space');
+      await expect(widthToggle).toHaveAttribute('aria-pressed', 'false');
+      const restoredBox = await modalPanel.boundingBox();
+      expect(Math.abs((restoredBox?.width ?? 0) - (standardBox?.width ?? 0))).toBeLessThanOrEqual(1);
+
+      await page.setViewportSize({ width: 900, height: 1000 });
+      await expect(widthToggle).toBeHidden();
+      const narrowBox = await modalPanel.boundingBox();
+      expect(narrowBox?.width ?? Number.POSITIVE_INFINITY).toBeLessThanOrEqual(900 * 0.96 + 1);
+      await previewDialog.locator(
+        'a[href], button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ).evaluateAll((elements) => {
+        const visibleElements = elements.filter((element) => {
+          const style = window.getComputedStyle(element);
+          return style.display !== 'none'
+            && style.visibility !== 'hidden'
+            && element.getClientRects().length > 0;
+        });
+        (visibleElements.at(-1) as HTMLElement | undefined)?.focus();
+      });
+      await page.keyboard.press('Tab');
+      await expect(previewDialog.getByRole('button', { name: 'WordPackプレビューを閉じる' })).toBeFocused();
+      await page.setViewportSize({ width: 2000, height: 1000 });
+      await expect(widthToggle).toBeVisible();
+
       const englishExampleSentence = page.locator('.ex-en .sentence-pair-highlight').first();
       const japaneseExampleSentence = page.getByRole('group', { name: '日本語訳 1: 英文と対応' }).first();
       await englishExampleSentence.hover();
@@ -407,11 +457,13 @@ test.describe('WordPack 操作', () => {
 
     await test.step('When: WordPack を再生成する', async () => {
       await page.getByRole('button', { name: '再生成' }).click();
+      // 完了時の一覧再読込とプレビュー再描画が競合しないよう、要求受付後に一覧へ戻る。
+      await page.getByRole('button', { name: 'WordPackプレビューを閉じる' }).click();
     });
 
     await test.step('Then: 再生成完了メッセージが出る', async () => {
-      await expect(page.getByText('alpha 再生成済み')).toBeVisible();
-      await page.getByRole('button', { name: 'WordPackプレビューを閉じる' }).click();
+      // 非同期jobのpollと一覧再描画を含む余裕を持たせる。
+      await expect(page.getByText('alpha 再生成済み')).toBeVisible({ timeout: 12000 });
       const queue = page.getByRole('region', { name: '生成キュー' });
       await expect(queue).toContainText('alpha');
       await expect(queue).toContainText('完了3');

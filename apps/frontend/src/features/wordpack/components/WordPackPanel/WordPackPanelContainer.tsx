@@ -577,6 +577,7 @@ export const WordPackPanel: React.FC<Props> = ({
                 onClose={() => { setDetailOpen(false); try { setModalOpen(false); } catch {} }}
                 title={`WordPack プレビュー: ${data?.lemma ?? 'WordPack'}`}
                 closeLabel="WordPackプレビューを閉じる"
+                allowWideView
               >
                 {detailsContent}
               </Modal>

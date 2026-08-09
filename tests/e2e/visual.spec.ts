@@ -8,6 +8,8 @@ const disableAnimations = async (page: Page): Promise<void> => {
    * 視覚スナップショットの差分を安定化するため、全要素のアニメーション/トランジションを無効化する。
    * なぜ: トーストの経過時間やフェードがフレークの温床になるため。
    */
+  // 認証状態の復元に伴う初回navigationが完了してからstyleを注入し、実行context消失を防ぐ。
+  await page.waitForLoadState('networkidle');
   await page.addStyleTag({
     content: `
       *, *::before, *::after {
@@ -290,6 +292,12 @@ const mockWordPackDetail = async (page: Page): Promise<void> => {
         }),
       ),
   );
+
+  // 例文中の語句ルックアップも固定し、未モック401による認証回復でdialogが閉じるのを防ぐ。
+  await page.route(
+    (url) => url.pathname.startsWith('/api/word/lemma/'),
+    (route) => route.fulfill(json({ detail: 'Not found' }, 404)),
+  );
 };
 
 const mockArticleImport = async (page: Page): Promise<void> => {
@@ -487,6 +495,61 @@ test.describe('ビジュアル回帰: 主要画面', () => {
     });
   });
 
+  test('文章詳細の本文がワイド表示で並列に広がる', async ({ page, context }, testInfo) => {
+    await prepareAuthenticatedPage(context, page);
+    await mockWordPackList(page);
+    await mockArticleImport(page);
+
+    await page.setViewportSize({ width: 2000, height: 1000 });
+    await page.goto('/reader');
+    await disableAnimations(page);
+    await expect(page.getByText('A short briefing on alpha releases')).toBeVisible();
+    await page.getByText('A short briefing on alpha releases').click();
+    const dialog = page.getByRole('dialog', { name: '文章プレビュー' });
+    await expect(dialog).toBeVisible();
+
+    const modalPanel = dialog.locator('[data-modal-panel="true"]');
+    const articleReader = dialog.locator('.article-reader');
+    const englishBlock = dialog.locator('.article-text-block').filter({ hasText: '英文' });
+    const japaneseBlock = dialog.locator('.article-text-block').filter({ hasText: '日本語訳' });
+    const standardPanelBox = await modalPanel.boundingBox();
+    const standardReaderBox = await articleReader.boundingBox();
+    const standardEnglishBox = await englishBlock.boundingBox();
+    const standardJapaneseBox = await japaneseBlock.boundingBox();
+    expect(standardPanelBox).not.toBeNull();
+    expect(standardReaderBox).not.toBeNull();
+    expect(standardEnglishBox).not.toBeNull();
+    expect(standardJapaneseBox).not.toBeNull();
+    expect(Math.abs((standardEnglishBox?.x ?? 0) - (standardJapaneseBox?.x ?? 0))).toBeLessThanOrEqual(1);
+
+    await dialog.getByRole('button', { name: 'ワイド表示' }).click();
+    const widePanelBox = await modalPanel.boundingBox();
+    const wideReaderBox = await articleReader.boundingBox();
+    const wideEnglishBox = await englishBlock.boundingBox();
+    const wideJapaneseBox = await japaneseBlock.boundingBox();
+    expect(widePanelBox).not.toBeNull();
+    expect(wideReaderBox).not.toBeNull();
+    expect(wideEnglishBox).not.toBeNull();
+    expect(wideJapaneseBox).not.toBeNull();
+    expect((widePanelBox?.width ?? 0) / (standardPanelBox?.width ?? 1)).toBeCloseTo(2, 2);
+    expect((wideReaderBox?.width ?? 0) / (standardReaderBox?.width ?? 1)).toBeGreaterThan(1.9);
+    expect(wideJapaneseBox?.x ?? 0).toBeGreaterThan((wideEnglishBox?.x ?? 0) + (wideEnglishBox?.width ?? 0));
+    const usedBodyWidth = (wideJapaneseBox?.x ?? 0) + (wideJapaneseBox?.width ?? 0) - (wideEnglishBox?.x ?? 0);
+    expect(usedBodyWidth / (wideReaderBox?.width ?? 1)).toBeGreaterThan(0.95);
+    await page.screenshot({
+      path: testInfo.outputPath('article-detail-wide.png'),
+      animations: 'disabled',
+    });
+
+    await page.setViewportSize({ width: 900, height: 1000 });
+    await expect(dialog.getByRole('button', { name: 'ワイド表示' })).toBeHidden();
+    const narrowEnglishBox = await englishBlock.boundingBox();
+    const narrowJapaneseBox = await japaneseBlock.boundingBox();
+    expect(narrowEnglishBox).not.toBeNull();
+    expect(narrowJapaneseBox).not.toBeNull();
+    expect(Math.abs((narrowEnglishBox?.x ?? 0) - (narrowJapaneseBox?.x ?? 0))).toBeLessThanOrEqual(1);
+  });
+
   test('例文一覧', async ({ page, context }) => {
     await prepareAuthenticatedPage(context, page);
     await mockWordPackList(page);
@@ -504,6 +567,36 @@ test.describe('ビジュアル回帰: 主要画面', () => {
       threshold: 0.2,
       mask: [page.locator(STATIC_MASK_SELECTOR)],
     });
+  });
+
+  test('例文詳細の本文がワイド表示に追従する', async ({ page, context }) => {
+    await prepareAuthenticatedPage(context, page);
+    await mockWordPackList(page);
+    await mockExampleList(page);
+
+    await page.setViewportSize({ width: 2000, height: 1000 });
+    await page.goto('/examples');
+    await disableAnimations(page);
+    await expect(page.getByText('We shipped the alpha build yesterday.')).toBeVisible();
+    await page.getByTestId('example-card').first().click();
+    const dialog = page.getByRole('dialog', { name: '例文 詳細（alpha / Dev）' });
+    await expect(dialog).toBeVisible();
+
+    const modalPanel = dialog.locator('[data-modal-panel="true"]');
+    const detailContent = dialog.locator('.example-detail-modal');
+    const standardPanelBox = await modalPanel.boundingBox();
+    const standardContentBox = await detailContent.boundingBox();
+    expect(standardPanelBox).not.toBeNull();
+    expect(standardContentBox).not.toBeNull();
+
+    await dialog.getByRole('button', { name: 'ワイド表示' }).click();
+    const widePanelBox = await modalPanel.boundingBox();
+    const wideContentBox = await detailContent.boundingBox();
+    expect(widePanelBox).not.toBeNull();
+    expect(wideContentBox).not.toBeNull();
+    expect((widePanelBox?.width ?? 0) / (standardPanelBox?.width ?? 1)).toBeCloseTo(2, 2);
+    expect((wideContentBox?.width ?? 0) / (standardContentBox?.width ?? 1)).toBeGreaterThan(1.9);
+    expect((wideContentBox?.width ?? 0) / (widePanelBox?.width ?? 1)).toBeGreaterThan(0.95);
   });
 
   test('設定ダイアログ（SettingsPanel表示）', async ({ page, context }) => {

@@ -185,13 +185,19 @@ export const ExampleDetailModal: React.FC<ExampleDetailModalProps> = ({
 
   if (!isOpen || !item) return null;
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={`例文 詳細（${item.lemma} / ${item.category}）`}>
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={`例文 詳細（${item.lemma} / ${item.category}）`}
+      allowWideView
+    >
       <section className="example-detail-modal" aria-label={`${item.lemma}の${item.category}例文詳細`}>
         <style>{`
           .example-detail-modal {
             display: grid;
             gap: 1rem;
-            max-width: 58rem;
+            width: 100%;
+            min-width: 0;
           }
           .example-detail-reading {
             display: grid;
