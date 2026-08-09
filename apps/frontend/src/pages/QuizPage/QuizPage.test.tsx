@@ -217,6 +217,12 @@ const setupFetch = (wordPackItems = defaultWordPackItems, quizData: Quiz = quiz)
         }),
       );
     }
+    if (url === '/api/tts' && init?.method === 'POST') {
+      return Promise.resolve(new Response('audio-data', {
+        status: 200,
+        headers: { 'Content-Type': 'audio/mpeg' },
+      }));
+    }
     if (url.startsWith('/api/word/packs?')) {
       const parsed = new URL(url, 'http://localhost');
       const limit = Number(parsed.searchParams.get('limit') ?? '100');
@@ -294,6 +300,52 @@ describe('QuizPage', () => {
     await waitFor(() => {
       expect(screen.getByRole('dialog', { name: 'WordPack プレビュー' })).toHaveTextContent('wp:mitigate');
     });
+  });
+
+  it('plays a saved Quiz passage that exceeds the former 500-character limit', async () => {
+    authState.isGuest = false;
+    const longQuiz: Quiz = structuredClone(quiz);
+    const longPassage = 'a'.repeat(501);
+    longQuiz.passages[0] = { ...longQuiz.passages[0]!, body_en: longPassage };
+    const fetchMock = setupFetch(defaultWordPackItems, longQuiz);
+    const originalAudio = globalThis.Audio;
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    const playMock = vi.fn().mockResolvedValue(undefined);
+    const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => {});
+
+    try {
+      (globalThis as any).Audio = vi.fn().mockImplementation(() => ({
+        play: playMock,
+        onended: null,
+        onerror: null,
+        playbackRate: 1,
+        volume: 1,
+      }));
+      URL.createObjectURL = vi.fn().mockReturnValue('blob:quiz-passage');
+      URL.revokeObjectURL = vi.fn();
+
+      renderQuizPage();
+      expect(await screen.findByRole('heading', { name: 'Reliable API Deployments' })).toBeInTheDocument();
+
+      const user = userEvent.setup();
+      await act(async () => {
+        await user.click(screen.getByRole('button', { name: 'Deployment reviewを聞く' }));
+      });
+
+      await waitFor(() => expect(playMock).toHaveBeenCalledTimes(1));
+      const ttsCall = fetchMock.mock.calls.find(([input]) => String(input) === '/api/tts');
+      expect(ttsCall).toBeDefined();
+      expect(JSON.parse(String(ttsCall?.[1]?.body)).text).toBe(longPassage);
+      expect(alertMock).not.toHaveBeenCalled();
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Deployment reviewを聞く' })).toBeEnabled();
+      });
+    } finally {
+      (globalThis as any).Audio = originalAudio;
+      URL.createObjectURL = originalCreateObjectURL;
+      URL.revokeObjectURL = originalRevokeObjectURL;
+    }
   });
 
   it('復旧したWordPack生成の更新イベントで選択中Quizの関連語を再取得する', async () => {

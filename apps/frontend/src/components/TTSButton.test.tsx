@@ -5,7 +5,7 @@ import { vi } from 'vitest';
 import * as SettingsContext from '../SettingsContext';
 import * as AuthContext from '../AuthContext';
 import { TTSButton } from './TTSButton';
-import { TTS_TEXT_MAX_LENGTH } from '../constants/tts';
+import { TTS_API_REQUEST_MAX_LENGTH } from '../constants/tts';
 import { guestLockMessage } from './GuestLock';
 
 describe('TTSButton', () => {
@@ -108,22 +108,48 @@ describe('TTSButton', () => {
     expect(consoleMock).toHaveBeenCalled();
   });
 
-  it('alerts and blocks fetch when text exceeds the maximum length', async () => {
+  it('splits long text into API-sized chunks and plays it without the former length alert', async () => {
     const alertMock = vi.fn();
     window.alert = alertMock;
-    const fetchMock = vi.fn();
+    const fetchMock = vi.fn().mockImplementation(() => (
+      Promise.resolve(new Response('audio-data', { status: 200 }))
+    ));
     global.fetch = fetchMock as unknown as typeof fetch;
+    URL.createObjectURL = vi.fn()
+      .mockReturnValueOnce('blob:mock-1')
+      .mockReturnValueOnce('blob:mock-2');
+    URL.revokeObjectURL = vi.fn();
 
-    const overLimit = 'a'.repeat(TTS_TEXT_MAX_LENGTH + 1);
+    const audioCtor = vi.fn().mockImplementation(() => {
+      const instance: any = {
+        onended: null as (() => void) | null,
+        onerror: null as (() => void) | null,
+        playbackRate: 1,
+        volume: 1,
+      };
+      instance.play = vi.fn().mockImplementation(async () => {
+        queueMicrotask(() => instance.onended?.());
+      });
+      return instance;
+    });
+    (global as any).Audio = audioCtor;
 
-    render(<TTSButton text={overLimit} />);
+    const longText = 'a'.repeat(TTS_API_REQUEST_MAX_LENGTH + 25);
+
+    render(<TTSButton text={longText} />);
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: '音声' }));
+    await act(async () => {
+      await user.click(screen.getByRole('button', { name: '音声' }));
+    });
 
-    expect(alertMock).toHaveBeenCalledWith(
-      `テキストは ${TTS_TEXT_MAX_LENGTH} 文字以内で入力してください。`
-    );
-    expect(fetchMock).not.toHaveBeenCalled();
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+    const requestTexts = fetchMock.mock.calls.map(([, init]) => (
+      JSON.parse(String(init?.body)).text as string
+    ));
+    expect(requestTexts.every((chunk) => chunk.length <= TTS_API_REQUEST_MAX_LENGTH)).toBe(true);
+    expect(requestTexts.join('')).toBe(longText);
+    await waitFor(() => expect(audioCtor).toHaveBeenCalledTimes(2));
+    expect(alertMock).not.toHaveBeenCalled();
   });
 
   it('applies playback rate from settings context when available', async () => {
