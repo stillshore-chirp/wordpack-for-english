@@ -1282,6 +1282,7 @@ export const WordPackListPanel: React.FC = () => {
         onClose={closePreview}
         title={`WordPack プレビュー: ${previewMeta?.lemma ?? 'WordPack'}`}
         closeLabel="WordPackプレビューを閉じる"
+        allowWideView
       >
         {previewWordPackId ? (
           <div data-testid="modal-wordpack-content">

@@ -8,6 +8,8 @@ const disableAnimations = async (page: Page): Promise<void> => {
    * 視覚スナップショットの差分を安定化するため、全要素のアニメーション/トランジションを無効化する。
    * なぜ: トーストの経過時間やフェードがフレークの温床になるため。
    */
+  // 認証状態の復元に伴う初回navigationが完了してからstyleを注入し、実行context消失を防ぐ。
+  await page.waitForLoadState('networkidle');
   await page.addStyleTag({
     content: `
       *, *::before, *::after {
@@ -289,6 +291,12 @@ const mockWordPackDetail = async (page: Page): Promise<void> => {
           confidence: 'medium',
         }),
       ),
+  );
+
+  // 例文中の語句ルックアップも固定し、未モック401による認証回復でdialogが閉じるのを防ぐ。
+  await page.route(
+    (url) => url.pathname.startsWith('/api/word/lemma/'),
+    (route) => route.fulfill(json({ detail: 'Not found' }, 404)),
   );
 };
 

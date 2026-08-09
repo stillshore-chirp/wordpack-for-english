@@ -9,6 +9,11 @@ test.describe('認証導線', () => {
     await mockConfig(page, { requestTimeoutMs: 20000 });
 
     await page.route('**/api/word/packs?*', (route) => route.fulfill(json(EMPTY_LIST_RESPONSE)));
+    // Reader移動後の一覧も固定し、テスト用Cookieを実backendへ送って401になる経路を除外する。
+    await page.route(
+      (url) => url.pathname === '/api/article',
+      (route) => route.fulfill(json({ ...EMPTY_LIST_RESPONSE, limit: 20, offset: 0 })),
+    );
 
     await test.step('Given: 認証 Cookie と localStorage がセット済み', async () => {
       await page.goto('/');

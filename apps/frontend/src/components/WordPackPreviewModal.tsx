@@ -60,7 +60,13 @@ export const WordPackPreviewModal: React.FC<WordPackPreviewModalProps> = ({
   }, [navigationIds, wordPackId]);
 
   return (
-    <Modal isOpen={isOpen} onClose={onClose} title={title} closeLabel="WordPackプレビューを閉じる">
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={title}
+      closeLabel="WordPackプレビューを閉じる"
+      allowWideView
+    >
       {wordPackId ? (
         <>
           <style>{`

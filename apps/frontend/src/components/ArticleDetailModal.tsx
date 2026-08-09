@@ -143,6 +143,7 @@ export const ArticleDetailModal: React.FC<Props> = ({
       onClose={onClose}
       title={title}
       closeLabel={`${title}を閉じる`}
+      allowWideView
     >
       {article ? (
         <div>

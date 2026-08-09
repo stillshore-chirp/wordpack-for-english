@@ -66,6 +66,7 @@ describe('ExampleDetailModal', () => {
 
     expect(screen.getByRole('button', { name: '原文の音声' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '日本語訳の音声' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'ワイド表示' })).toHaveAttribute('aria-pressed', 'false');
     expect(screen.getByText(item.en)).toBeInTheDocument();
     expect(screen.getByText(item.ja)).toBeInTheDocument();
   });
