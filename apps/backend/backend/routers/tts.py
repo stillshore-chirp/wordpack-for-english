@@ -34,8 +34,8 @@ except Exception:  # pragma: no cover - openai SDK が無い環境では初期�
     OpenAI = None  # type: ignore[assignment]
 
 
-# TTS 入力文字数の上限。フロントエンド (apps/frontend/src/constants/tts.ts) と同期する。
-TTS_TEXT_MAX_LENGTH = 500
+# OpenAI Speech APIの1リクエスト入力上限。長文はフロントエンドが自動分割する。
+TTS_API_REQUEST_MAX_LENGTH = 4096
 
 router = APIRouter(prefix="/api/tts", tags=["tts"])
 
@@ -64,7 +64,7 @@ client = _init_client()
 
 
 class TTSIn(BaseModel):
-    text: constr(min_length=1, max_length=TTS_TEXT_MAX_LENGTH)
+    text: constr(min_length=1, max_length=TTS_API_REQUEST_MAX_LENGTH)
     voice: str = "alloy"
 
 
@@ -75,9 +75,9 @@ def _build_text_too_long_error() -> dict[str, Any]:
         "error": "tts_text_too_long",
         "message": (
             "読み上げテキストは"
-            f"{TTS_TEXT_MAX_LENGTH}文字以内で入力してください。"
+            f"{TTS_API_REQUEST_MAX_LENGTH}文字以内で入力してください。"
         ),
-        "max_length": TTS_TEXT_MAX_LENGTH,
+        "max_length": TTS_API_REQUEST_MAX_LENGTH,
     }
 
 
@@ -152,7 +152,7 @@ def synth(
             request_id=request_id,
             reason="text_too_long",
             text_chars=raw_text_chars,
-            max_length=TTS_TEXT_MAX_LENGTH,
+            max_length=TTS_API_REQUEST_MAX_LENGTH,
         )
         raise exc
 

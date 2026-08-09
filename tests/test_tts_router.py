@@ -64,21 +64,45 @@ def test_tts_synth_streams_audio(monkeypatch) -> None:
         tts.client = original_client  # type: ignore[assignment]
 
 
-def test_tts_rejects_excessively_long_text(monkeypatch) -> None:
-    """音声合成リクエストの文字数超過時に 413 が返却されることを検証する。"""
+def test_tts_accepts_text_above_former_500_character_limit(monkeypatch) -> None:
+    """保存済み長文を旧UI上限で拒否しないことを検証する。"""
+
+    original_client = tts.client
+    dummy_response = _DummyResponse([b"audio"])
+    captured: dict[str, object] = {}
+
+    def _capture(**kwargs: object) -> object:
+        captured.update(kwargs)
+        return dummy_response
+
+    tts.client = _DummyClient(_capture)  # type: ignore[assignment]
+    try:
+        text = "a" * 501
+        app = create_app()
+        with TestClient(app) as client:
+            response = client.post("/api/tts", json={"text": text})
+        assert response.status_code == 200
+        assert response.content == b"audio"
+        assert captured["input"] == text
+    finally:
+        tts.client = original_client  # type: ignore[assignment]
+
+
+def test_tts_rejects_text_above_provider_request_limit(monkeypatch) -> None:
+    """Speech APIの単発上限超過時に 413 が返却されることを検証する。"""
 
     original_client = tts.client
     tts.client = None  # type: ignore[assignment]
     try:
-        over_limit = "a" * (tts.TTS_TEXT_MAX_LENGTH + 1)
+        over_limit = "a" * (tts.TTS_API_REQUEST_MAX_LENGTH + 1)
         app = create_app()
         with TestClient(app) as client:
             response = client.post("/api/tts", json={"text": over_limit})
         assert response.status_code == 413
         detail = response.json()["detail"]
         assert detail["error"] == "tts_text_too_long"
-        assert detail["max_length"] == tts.TTS_TEXT_MAX_LENGTH
-        assert str(tts.TTS_TEXT_MAX_LENGTH) in detail["message"]
+        assert detail["max_length"] == tts.TTS_API_REQUEST_MAX_LENGTH
+        assert str(tts.TTS_API_REQUEST_MAX_LENGTH) in detail["message"]
     finally:
         tts.client = original_client  # type: ignore[assignment]
 
