@@ -249,12 +249,7 @@ export const ArticleDetailModal: React.FC<Props> = ({
             }
             @media (min-width: 961px) {
               [data-modal-wide-view="true"] .article-reader {
-                grid-template-columns: repeat(2, minmax(0, 1fr));
                 max-width: none;
-              }
-              [data-modal-wide-view="true"] .article-reader__header,
-              [data-modal-wide-view="true"] .article-notes {
-                grid-column: 1 / -1;
               }
               [data-modal-wide-view="true"] .article-text-block {
                 max-width: none;

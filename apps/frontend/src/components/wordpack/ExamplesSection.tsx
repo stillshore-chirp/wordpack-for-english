@@ -83,17 +83,9 @@ export const ExamplesSection: React.FC<ExamplesSectionProps> = ({
       .ex-en[role="button"] { cursor: pointer; }
       .ex-en[role="button"]:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
       @media (min-width: 961px) {
-        [data-modal-wide-view="true"] .wordpack-examples-section .ex-card {
-          grid-template-columns: repeat(2, minmax(0, 1fr));
-          align-items: start;
-        }
         [data-modal-wide-view="true"] .wordpack-examples-section .ex-block {
           max-width: none;
           min-width: 0;
-        }
-        [data-modal-wide-view="true"] .wordpack-examples-section .ex-grammar,
-        [data-modal-wide-view="true"] .wordpack-examples-section .ex-actions {
-          grid-column: 1 / -1;
         }
       }
     `,
