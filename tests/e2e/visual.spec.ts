@@ -471,6 +471,88 @@ test.describe('ビジュアル回帰: 主要画面', () => {
     });
   });
 
+  test('WordPackプレビューの例文本文がワイド表示に追従する', async ({ page, context }, testInfo) => {
+    await prepareAuthenticatedPage(context, page);
+    await mockWordPackList(page);
+    await mockWordPackDetail(page);
+
+    await page.setViewportSize({ width: 2000, height: 1000 });
+    await page.goto('/lexicon');
+    await disableAnimations(page);
+    await page.getByTestId('wp-card').first().click();
+    const dialog = page.getByRole('dialog', { name: /WordPack プレビュー: alpha/ });
+    await expect(dialog).toBeVisible();
+    const exampleCard = page.getByTestId('example-Dev-0');
+    await expect(exampleCard).toBeVisible();
+    await exampleCard.scrollIntoViewIfNeeded();
+
+    const modalPanel = dialog.locator('[data-modal-panel="true"]');
+    const englishBlock = exampleCard.locator('.ex-block.ex-en');
+    const japaneseBlock = exampleCard.locator('.ex-block.ex-ja');
+    const grammarBlock = exampleCard.locator('.ex-block.ex-grammar');
+    const actions = exampleCard.locator('.ex-actions');
+    const standardPanelBox = await modalPanel.boundingBox();
+    const standardEnglishBox = await englishBlock.boundingBox();
+    const standardJapaneseBox = await japaneseBlock.boundingBox();
+    expect(standardPanelBox).not.toBeNull();
+    expect(standardEnglishBox).not.toBeNull();
+    expect(standardJapaneseBox).not.toBeNull();
+    expect(Math.abs((standardEnglishBox?.x ?? 0) - (standardJapaneseBox?.x ?? 0))).toBeLessThanOrEqual(1);
+    await page.screenshot({
+      path: testInfo.outputPath('wordpack-content-standard.png'),
+      animations: 'disabled',
+    });
+
+    const widthToggle = dialog.getByRole('button', { name: 'ワイド表示' });
+    await widthToggle.click();
+    await expect(widthToggle).toHaveAttribute('aria-pressed', 'true');
+    await exampleCard.scrollIntoViewIfNeeded();
+    const widePanelBox = await modalPanel.boundingBox();
+    const wideCardBox = await exampleCard.boundingBox();
+    const wideEnglishBox = await englishBlock.boundingBox();
+    const wideJapaneseBox = await japaneseBlock.boundingBox();
+    const wideGrammarBox = await grammarBlock.boundingBox();
+    const wideActionsBox = await actions.boundingBox();
+    expect(widePanelBox).not.toBeNull();
+    expect(wideCardBox).not.toBeNull();
+    expect(wideEnglishBox).not.toBeNull();
+    expect(wideJapaneseBox).not.toBeNull();
+    expect(wideGrammarBox).not.toBeNull();
+    expect(wideActionsBox).not.toBeNull();
+    const widePanelOverflow = await modalPanel.evaluate((panel) => ({
+      clientWidth: panel.clientWidth,
+      scrollWidth: panel.scrollWidth,
+      scrollLeft: panel.scrollLeft,
+    }));
+    await page.screenshot({
+      path: testInfo.outputPath('wordpack-content-wide.png'),
+      animations: 'disabled',
+    });
+
+    expect(widePanelOverflow.scrollWidth).toBeLessThanOrEqual(widePanelOverflow.clientWidth + 1);
+    expect(widePanelOverflow.scrollLeft).toBe(0);
+    expect((widePanelBox?.width ?? 0) / (standardPanelBox?.width ?? 1)).toBeCloseTo(2, 2);
+    expect(wideJapaneseBox?.x ?? 0).toBeGreaterThan((wideEnglishBox?.x ?? 0) + (wideEnglishBox?.width ?? 0));
+    const usedBodyWidth = (wideJapaneseBox?.x ?? 0) + (wideJapaneseBox?.width ?? 0) - (wideEnglishBox?.x ?? 0);
+    expect(usedBodyWidth / (wideCardBox?.width ?? 1)).toBeGreaterThan(0.95);
+    expect(Math.abs((wideGrammarBox?.x ?? 0) - (wideEnglishBox?.x ?? 0))).toBeLessThanOrEqual(1);
+    expect((wideGrammarBox?.width ?? 0) / (wideCardBox?.width ?? 1)).toBeGreaterThan(0.95);
+    expect(wideActionsBox?.y ?? 0).toBeGreaterThanOrEqual((wideGrammarBox?.y ?? 0) + (wideGrammarBox?.height ?? 0));
+
+    await page.setViewportSize({ width: 900, height: 1000 });
+    if (!(await dialog.isVisible())) {
+      await page.getByTestId('wp-card').first().click();
+    }
+    await expect(dialog).toBeVisible();
+    await expect(exampleCard).toBeVisible();
+    await expect(widthToggle).toBeHidden();
+    const narrowEnglishBox = await englishBlock.boundingBox();
+    const narrowJapaneseBox = await japaneseBlock.boundingBox();
+    expect(narrowEnglishBox).not.toBeNull();
+    expect(narrowJapaneseBox).not.toBeNull();
+    expect(Math.abs((narrowEnglishBox?.x ?? 0) - (narrowJapaneseBox?.x ?? 0))).toBeLessThanOrEqual(1);
+  });
+
   test('文章インポート（例文からのインポート確認UI）', async ({ page, context }) => {
     await prepareAuthenticatedPage(context, page);
     await mockWordPackList(page);

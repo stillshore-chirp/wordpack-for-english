@@ -82,6 +82,20 @@ export const ExamplesSection: React.FC<ExamplesSectionProps> = ({
       .lemma-tooltip { position: fixed; z-index: 10000; max-width: min(320px, calc(100vw - 16px)); overflow-wrap: anywhere; white-space: normal; background: #212121; color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.3); pointer-events: none; }
       .ex-en[role="button"] { cursor: pointer; }
       .ex-en[role="button"]:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+      @media (min-width: 961px) {
+        [data-modal-wide-view="true"] .wordpack-examples-section .ex-card {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          align-items: start;
+        }
+        [data-modal-wide-view="true"] .wordpack-examples-section .ex-block {
+          max-width: none;
+          min-width: 0;
+        }
+        [data-modal-wide-view="true"] .wordpack-examples-section .ex-grammar,
+        [data-modal-wide-view="true"] .wordpack-examples-section .ex-actions {
+          grid-column: 1 / -1;
+        }
+      }
     `,
     [],
   );
@@ -180,7 +194,7 @@ export const ExamplesSection: React.FC<ExamplesSectionProps> = ({
   );
 
   return (
-    <section id={sectionId} className="wp-section">
+    <section id={sectionId} className="wp-section wordpack-examples-section">
       <h3>
         例文
         <span style={{ fontSize: '0.7em', fontWeight: 'normal', color: 'var(--color-subtle)', marginLeft: '0.5rem' }}>
