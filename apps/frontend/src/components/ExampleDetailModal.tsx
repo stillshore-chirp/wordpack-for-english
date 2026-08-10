@@ -228,7 +228,7 @@ export const ExampleDetailModal: React.FC<ExampleDetailModalProps> = ({
           }
           .example-detail-pair {
             display: grid;
-            grid-template-columns: 2rem minmax(0, 1fr) minmax(0, 1fr);
+            grid-template-columns: 2rem minmax(0, 1fr);
             gap: 0.75rem;
             align-items: stretch;
             padding: 0.75rem;
@@ -237,6 +237,8 @@ export const ExampleDetailModal: React.FC<ExampleDetailModalProps> = ({
             background: var(--color-surface);
           }
           .example-detail-pair__index {
+            grid-column: 1;
+            grid-row: 1 / span 2;
             align-self: start;
             justify-self: center;
             display: inline-grid;
@@ -250,6 +252,7 @@ export const ExampleDetailModal: React.FC<ExampleDetailModalProps> = ({
             font-variant-numeric: tabular-nums;
           }
           .example-detail-pair__text {
+            grid-column: 2;
             min-width: 0;
             display: grid;
             gap: 0.25rem;
@@ -341,17 +344,6 @@ export const ExampleDetailModal: React.FC<ExampleDetailModalProps> = ({
             margin: 0;
             color: var(--color-subtle);
             line-height: 1.5;
-          }
-          @media (max-width: 640px) {
-            .example-detail-pair {
-              grid-template-columns: 2rem minmax(0, 1fr);
-            }
-            .example-detail-pair__text {
-              grid-column: 2;
-            }
-            .example-detail-pair__index {
-              grid-row: 1 / span 2;
-            }
           }
         `}</style>
         <section className="example-detail-reading" aria-labelledby={readingHeadingId}>
