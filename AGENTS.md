@@ -42,7 +42,7 @@
 
 | 作業 | 正本 |
 |---|---|
-| アプリ本体 UI、ユーザーに見える状態・文言・操作、アクセシビリティ | [`.agents/skills/ui-ux-review/SKILL.md`](.agents/skills/ui-ux-review/SKILL.md) |
+| アプリ本体 UI、ユーザーに見える状態・文言・操作、アクセシビリティ、layout、typography、color、theme、motion、UI変更差分review | [`.agents/skills/ui-ux-review/SKILL.md`](.agents/skills/ui-ux-review/SKILL.md) |
 | ソースコード変更、またはIssue、branch、commit、push、PR、CI、review、release準備 | [`.agents/skills/github-delivery/SKILL.md`](.agents/skills/github-delivery/SKILL.md) |
 | 本番障害、実データ異常、デプロイ後挙動の調査 | [`.agents/skills/production-investigation/SKILL.md`](.agents/skills/production-investigation/SKILL.md) |
 | 公開される文書、ログ要約、レポート、Issue / PR本文 | [`.agents/skills/security-publication/SKILL.md`](.agents/skills/security-publication/SKILL.md) |
@@ -61,11 +61,14 @@ GitHub が画面を提供する Issue / PR テンプレート、Markdown、workf
 - 無関係な既存差分を上書き、削除、commit しない。
 - 破壊的操作は依頼または明示的な権限の範囲内だけで行い、merge、Issue / PRのclose、release、production deployは別の明示指示なしに行わない。
 - UI/UX 作業では、正本が定義する P0 を残したまま完了扱いにしない。
+- UI変更差分reviewでは、base / headを確定し、Introduced / RegressionとPre-existingを混同しない。
 - 変更後の最新状態に対して、関連する検証が失敗中または未確認なら、その状態を明記する。
 
 ## 設計原則の扱い
 
 DRY、KISS、SRP、SoC、YAGNI、OCP、POLA、テストピラミッドなどは判断を助ける heuristic です。数値や回数だけで機械適用せず、変更容易性、誤用リスク、可読性、既存構造、今回の要件を比較して決めます。セキュリティ、データ整合性、公開契約、証跡完全性に関わる規則は hard gate を優先します。
+
+UI/UXの数値目安も同様に、既存design system、対応環境、標準、実測結果を優先し、文脈に合わない機械適用をしません。
 
 ## 検証と文書
 
@@ -74,6 +77,7 @@ DRY、KISS、SRP、SoC、YAGNI、OCP、POLA、テストピラミッドなどは�
 - UI の操作、主要フロー、画面文言が変わる場合は `UserManual.md` を確認します。
 - API、認証、DB、インフラ、環境変数、運用、LLMOps の意味が変わる場合は、対応する `docs/` または `OPERATIONS.md` を更新します。
 - 文書の配置は [`docs/documentation-structure.md`](docs/documentation-structure.md) に従います。
+- UI/UXガバナンス変更では `bash scripts/verify-ui-quality-governance.sh` を追加で実行します。
 
 ## 完了報告
 
@@ -95,6 +99,7 @@ DRY、KISS、SRP、SoC、YAGNI、OCP、POLA、テストピラミッドなどは�
 
 ```bash
 python -m pip install -r requirements-agent-harness.txt
+bash scripts/verify-ui-quality-governance.sh
 bash scripts/verify-agent-harness.sh
 bash scripts/verify-ai-governance.sh
 ```
