@@ -33,7 +33,7 @@ description: "大小を問わないすべてのソースコード変更と、Iss
 - 一つの責務の実装・関連test・文書・検証が完了したら、次の独立責務を編集する前にstage確認とcommitを完了する。複数責務を共有作業ツリーへ蓄積し、最後に全差分を再読して後付け分解しない。
 - サブエージェントの完了報告を受けたら、メインが担当fileと差分をreviewし、その責務だけを上記の時点でcommitへ回収する。他担当の未完了差分はstageしない。
 - 作業時間、行数、担当者だけを理由にcommitを分割または一括化しない。
-- `git add .`と`git add -A`を使わず、stage対象のpathを明示する。commit前にstaged file名、staged diff、`git diff --check`、secret・実データ・無関係差分の不在を確認する。
+- `git add .`と`git add -A`を使わず、stage対象のpathを明示する。commit前にstaged file名、staged diff、`git diff --cached --check`、working treeの`git diff --check`、secret・実データ・無関係差分の不在を確認する。
 - commit messageは変更の責務を短く表す日本語にする。
 - ソースコード変更依頼はcommit、push、非ドラフトPR作成・更新、CI再実行、reviewへの返信・修正、対応済みthreadの解決までを許可する。これらの通常配送について追加の包括確認を求めない。
 
