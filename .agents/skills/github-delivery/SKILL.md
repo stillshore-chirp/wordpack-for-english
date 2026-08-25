@@ -24,12 +24,17 @@ description: "大小を問わないすべてのソースコード変更と、Iss
 - ソースコードを含まない文書やメタデータだけの軽微な変更でIssueを省略する場合は、PR本文へ短い理由を書く。
 - [`docs/ai-governance/14-issue-quality-gate.md`](../../../docs/ai-governance/14-issue-quality-gate.md)に従い、理由、根拠、現在と目標、範囲、非対象、受け入れ条件、検証、リスクを書く。
 
-## 3. Branchと実装
+## 3. Branch、実装、commit
 
 - default branchの最新状態から作業branchを作る。標準名は `agent/<purpose>` とし、既存branchやユーザー指定がある場合はそれを尊重する。
 - 複数工程でも、真のblockerがない限り調査、実装、検証、配送まで継続する。
-- 意味のある変更単位で、日本語のcommit messageを付ける。
-- commit前に差分、追加ファイル、secret混入、無関係な変更を確認する。
+- 実装前に、受け入れ条件と依存関係から予定commitの責務、関連test・文書、実装順序を決める。責務の境界が実装中に変わった場合は、次の編集前に計画を更新する。
+- commitは独立してreview・revertできる一つの論理的責務または受け入れ条件の単位にする。関連するtest、文書、schema・client等の生成物は同じcommitへ含める。
+- 一つの責務の実装・関連test・文書・検証が完了したら、次の独立責務を編集する前にstage確認とcommitを完了する。複数責務を共有作業ツリーへ蓄積し、最後に全差分を再読して後付け分解しない。
+- サブエージェントの完了報告を受けたら、メインが担当fileと差分をreviewし、その責務だけを上記の時点でcommitへ回収する。他担当の未完了差分はstageしない。
+- 作業時間、行数、担当者だけを理由にcommitを分割または一括化しない。
+- `git add .`と`git add -A`を使わず、stage対象のpathを明示する。commit前にstaged file名、staged diff、`git diff --cached --check`、working treeの`git diff --check`、secret・実データ・無関係差分の不在を確認する。
+- commit messageは変更の責務を短く表す日本語にする。
 - ソースコード変更依頼はcommit、push、非ドラフトPR作成・更新、CI再実行、reviewへの返信・修正、対応済みthreadの解決までを許可する。これらの通常配送について追加の包括確認を求めない。
 
 ## 4. PR

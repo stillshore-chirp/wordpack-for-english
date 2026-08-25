@@ -8,6 +8,8 @@ pytest-cov
 google-auth
 # Firestore backend を安定運用するため v2 系へ明示固定
 google-cloud-firestore>=2.28.0,<3.0.0
+# 2.35.0は(default)をURL encodeするため、googleapis/google-cloud-python#18207の修正まで除外
+google-api-core>=2.34.0,<2.35.0
 itsdangerous
 langgraph
 chromadb
