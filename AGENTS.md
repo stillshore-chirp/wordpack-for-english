@@ -34,6 +34,8 @@
 - 製品コード、test、script、workflow、schema、挙動を変える設定の追加・変更・削除は、大小を問わずすべてソースコード変更です。
 - ユーザーからのソースコード変更依頼そのものを、GitHub配送Skillが定義する通常配送を行う権限として扱います。包括的な再確認を求めず、GitHub上でCIとコードレビュー対応が完了し、マージ可能な状態になるまで継続します。
 - 通常配送の実行順序と権限範囲は [`.agents/skills/github-delivery/SKILL.md`](.agents/skills/github-delivery/SKILL.md)、観測可能な完了条件は [`docs/ai-governance/03-evidence-and-completion-gates.md`](docs/ai-governance/03-evidence-and-completion-gates.md) を正本とします。満たせない条件があれば未完了です。
+- 複数工程のソースコード変更は着手前に予定commitの責務、関連test・文書、実装順序を決めます。各責務の実装・関連test・文書・検証が完了した時点で、次の独立責務へ進む前にcommitし、複数責務を蓄積して最後に全差分を後付けで分解しません。
+- 共有作業ツリーのサブエージェント差分は、担当責務の完了ごとにメインがfile範囲と内容をreviewしてcommitへ回収します。作業時間、行数、担当者だけを理由にcommitを分割・一括化しません。
 - merge、Issue / PRのclose、release、production deploy、破壊的操作は通常配送に含めず、対象を特定した別の明示指示がある場合だけ行います。
 
 ## タスク別ルーティング
