@@ -36,13 +36,34 @@ require_section_text() {
   local pattern="$3"
   local section
   section="$(awk -v heading="$heading" '
-    $0 == heading { found = 1; next }
-    found && /^## / { exit }
-    found { print }
+    function fence_marker(line, trimmed) {
+      trimmed = line
+      sub(/^[[:space:]]*/, "", trimmed)
+      if (substr(trimmed, 1, 3) == "```") return "```"
+      if (substr(trimmed, 1, 3) == "~~~") return "~~~"
+      return ""
+    }
+    {
+      marker = fence_marker($0)
+      if (marker != "") {
+        if (fence == "") fence = marker
+        else if (fence == marker) fence = ""
+        if (found) print
+        next
+      }
+      if (fence == "" && $0 == heading) { found = 1; next }
+      if (found && fence == "" && /^## /) exit
+      if (found) print
+    }
     END { if (!found) exit 2 }
   ' "$file")" || fail "$file must contain section: $heading"
   grep -Fq -- "$pattern" <<< "$section" || fail "$file section $heading must contain: $pattern"
 }
+
+require_section_text \
+  <(printf '%s\n' '## Checked' '```md' '## Example' '```' 'required invariant' '## Next') \
+  "## Checked" \
+  "required invariant"
 
 reject_text() {
   local file="$1"
