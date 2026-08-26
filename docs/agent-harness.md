@@ -140,13 +140,23 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 - 形式で検査できる条件を自然言語だけで維持する
 
 ## GitHub reviewの収束
+<!-- agent-harness:review-convergence:start -->
 
 - latest meaningful changeに対して対象branchで定義されたpush / pull_request等のCIと、GitHub上で確認可能な自動または人間のコードレビューを確認する。
-- actionableな指摘を修正した場合は、最新headでCIと該当reviewを再確認する。
-- 変更のないheadで追加のclean reviewを複数回集めない。
+- 同一PR・同一HEAD系列の包括レビューは、配送対象の最終HEADに対する初回レビュー1回と、指摘修正後の再レビュー1回までを原則とする。修正によるHEAD更新を含む同じ配送系列への包括レビュー実行回数で数え、review comment、thread、指摘の件数では数えない。
+- 3回目以降の包括レビューは実行しません。次のいずれかで前回証拠が失効した場合だけ、対象risk laneと変更pathを明示した限定再確認を行う。
+  - 未解決のP0またはP1がある。
+  - セキュリティ、秘密情報、データ整合性に関わる未解決事項がある。
+  - 前回レビュー後に新しい変更範囲またはrisk laneが追加された。
+  - 前回のレビュー証拠に具体的な不足または矛盾が見つかった。
+- P2以下の指摘だけが残る場合は、影響とnon-blocking判断をPRへ記録し、必要なら別Issueへ分離して同じPRの包括レビュー周回を終了する。
+- 再レビューまたは限定再確認ではfull historyを渡さず、修正commit、変更path、元の指摘、focused test結果だけを文脈として使う。
+- メインエージェントはPRごとにHEAD系列、包括レビュー実行回数、確認済みsnapshot、結果、証拠の失効理由を記録する。
+- 変更のないheadで追加のclean reviewを集めない。
 - ソースコード変更でreviewが提供されない環境では、自己レビューを完了条件の代替にせず、未確認範囲とblockerを報告する。
 - actionableな未解決threadがなく、GitHubのmergeabilityがcleanであることを確認する。
 - mergeまたはcloseは別の明示指示がある場合だけ行う。
+<!-- agent-harness:review-convergence:end -->
 
 ## Subagent orchestration
 <!-- agent-harness:subagent-orchestration:start -->

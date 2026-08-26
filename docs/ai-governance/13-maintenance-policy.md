@@ -77,14 +77,17 @@ AGENTS.md、Skill、docs、tool専用ruleに同じ長文を複製
 - P0を格下げする場合は、完了不可ではない根拠を記録する。
 
 ## Review収束
+<!-- agent-harness:review-maintenance:start -->
 
 - ソースコード変更ではlatest meaningful changeに対して対象branchで定義されたpush / pull_request等のCIと、GitHub上で確認可能なコードレビューを必須とする。
-- 指摘対応でheadが変わった時だけ再確認する。
-- 変更のないheadに対するclean reviewを複数回要求しない。
+- 包括レビューの回数定義、原則2周、3周目以降の限定条件、P2以下の収束、再レビューの最小文脈は [`docs/agent-harness.md`](../agent-harness.md) のGitHub reviewの収束を正本とする。
+- rootとGitHub配送Skillは短い入口だけを持ち、nested rule、adapterへレビュー周回の詳細本文を複製しない。
+- 運用変更時は、P0 / P1とsecurity等のhard gateを維持しながら、P2以下だけを理由とする包括レビュー反復と、証拠失効理由のないreview / full gate再実行を増やさない。
 - 特定製品のreview名を3製品共通の完了条件へしない。
 - reviewが一つも提供されない場合、自己レビューだけで代替してマージ可能としない。
 - actionableな未解決threadがなく、GitHubのmergeabilityがcleanであることを確認する。
 - merge、closeは別の明示指示がある場合だけ行う。
+<!-- agent-harness:review-maintenance:end -->
 
 ## サブエージェント運用
 <!-- agent-harness:subagent-maintenance:start -->
