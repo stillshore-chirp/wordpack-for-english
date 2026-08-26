@@ -30,6 +30,199 @@ require_text() {
   grep -Fq -- "$pattern" "$file" || fail "$file must contain: $pattern"
 }
 
+require_block_text() {
+  local file="$1"
+  local heading="$2"
+  local block="$3"
+  local pattern="$4"
+  local start="<!-- agent-harness:${block}:start -->"
+  local end="<!-- agent-harness:${block}:end -->"
+  local content
+  content="$(python3 - "$file" "$heading" "$start" "$end" <<'PY'
+import sys
+
+from markdown_it import MarkdownIt
+
+path, heading, start, end = sys.argv[1:]
+source = open(path, encoding="utf-8").read()
+tokens = MarkdownIt("commonmark").parse(source)
+
+headings = [
+    index
+    for index, token in enumerate(tokens[:-2])
+    if token.type == "heading_open"
+    and token.tag == "h2"
+    and token.level == 0
+    and tokens[index + 1].type == "inline"
+    and tokens[index + 1].content == heading.removeprefix("## ")
+    and tokens[index + 2].type == "heading_close"
+]
+starts = [
+    index
+    for index, token in enumerate(tokens)
+    if token.type == "html_block" and token.level == 0 and token.content.strip() == start
+]
+ends = [
+    index
+    for index, token in enumerate(tokens)
+    if token.type == "html_block" and token.level == 0 and token.content.strip() == end
+]
+if len(headings) != 1 or len(starts) != 1 or len(ends) != 1:
+    raise SystemExit(2)
+heading_index = headings[0]
+start_index = starts[0]
+end_index = ends[0]
+heading_map = tokens[heading_index].map
+start_map = tokens[start_index].map
+if (
+    heading_map is None
+    or start_map is None
+    or start_map[0] != heading_map[1]
+    or start_index <= heading_index + 2
+    or end_index <= start_index
+):
+    raise SystemExit(2)
+if any(
+    token.type == "heading_open" and token.level == 0 and token.tag in {"h1", "h2"}
+    for token in tokens[start_index + 1 : end_index]
+):
+    raise SystemExit(2)
+if end_index + 1 < len(tokens):
+    next_token = tokens[end_index + 1]
+    if not (
+        next_token.type == "heading_open"
+        and next_token.level == 0
+        and next_token.tag in {"h1", "h2"}
+    ):
+        raise SystemExit(2)
+
+visible_lines: list[str] = []
+for token in tokens[start_index + 1 : end_index]:
+    if token.type == "html_block":
+        raise SystemExit(2)
+    if token.type != "inline":
+        continue
+    inline_text: list[str] = []
+    for child in token.children or []:
+        if child.type in {"text", "code_inline"}:
+            inline_text.append(child.content)
+        elif child.type in {"softbreak", "hardbreak"}:
+            inline_text.append("\n")
+        elif child.type == "image":
+            inline_text.append(f" {child.content} ")
+        elif child.type == "html_inline":
+            raise SystemExit(2)
+        elif child.content:
+            inline_text.append(f" {child.content} ")
+    visible_lines.append("".join(inline_text))
+
+print("\n".join(visible_lines))
+PY
+)" || fail "$file block $block must immediately follow heading: $heading"
+  grep -Fq -- "$pattern" <<< "$content" || fail "$file block $block must contain: $pattern"
+}
+
+require_block_text \
+  <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '> ````md' '> <!-- literal in fenced code -->' '> # Replacement' '> ## Example' '> ````' 'required invariant' '<!-- agent-harness:self-test:end -->') \
+  "## Checked" \
+  "self-test" \
+  "required invariant"
+require_block_text \
+  <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' 'required **invariant**' '<!-- agent-harness:self-test:end -->') \
+  "## Checked" \
+  "self-test" \
+  "required invariant"
+if (
+  require_block_text \
+    <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '> ```md' '> required invariant' '> ```' '<!-- agent-harness:self-test:end -->') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification accepted required text inside fenced code"
+fi
+if (
+  require_block_text \
+    <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '<!-- required invariant -->' '<!-- agent-harness:self-test:end -->') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification accepted required text inside an HTML comment"
+fi
+if (
+  require_block_text \
+    <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '<div hidden>' '' 'required invariant' '' '</div>' '' '<!-- agent-harness:self-test:end -->') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification accepted required text inside a hidden HTML container"
+fi
+if (
+  require_block_text \
+    <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '<span hidden>required invariant</span>' '<!-- agent-harness:self-test:end -->') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification accepted required text inside inline HTML"
+fi
+if (
+  require_block_text \
+    <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' 'required' 'invariant' '<!-- agent-harness:self-test:end -->') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification joined required text across a soft break"
+fi
+if (
+  require_block_text \
+    <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' 'required![other content](missing.png)invariant' '<!-- agent-harness:self-test:end -->') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification dropped image content inside required text"
+fi
+if (
+  require_block_text \
+    <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '<!-- agent-harness:self-test:end -->' 'required invariant') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification accepted required text outside its canonical block"
+fi
+if (
+  require_block_text \
+    <(printf '%s\n' '<!--' '## Checked' '<!-- agent-harness:self-test:start -->' 'required invariant' '<!-- agent-harness:self-test:end -->' '-->') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification accepted a canonical block inside an HTML comment"
+fi
+if (
+  require_block_text \
+    <(printf '%s\n' '````md' '## Checked' '<!-- agent-harness:self-test:start -->' 'required invariant' '<!-- agent-harness:self-test:end -->' '````') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification accepted a canonical block inside fenced code"
+fi
+if (
+  require_block_text \
+    <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '# Replacement' 'required invariant' '<!-- agent-harness:self-test:end -->') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification accepted a canonical block spanning a peer heading"
+fi
+
 reject_text() {
   local file="$1"
   local pattern="$2"
@@ -149,6 +342,41 @@ reject_text "scripts/verify-ai-governance.sh" "P0 または P1 を含まない�
 require_text "docs/agent-harness.md" "Hard gateとheuristic"
 require_text "docs/agent-harness.md" "Instruction budget"
 require_text "docs/agent-harness.md" "clean review"
+require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "サブエージェントは独立したrisk laneへ積極的に使います"
+require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "docs/agent-harness.md"
+require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "配送対象の最終HEADではfull gateを原則1回実行します"
+require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "包括レビューは同一PR・同一HEAD系列で原則2周まで"
+require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "P2以下だけなら影響とnon-blocking判断を記録して収束"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "同一PR・同一HEAD系列の包括レビューは、配送対象の最終HEADに対する初回レビュー1回と、指摘修正後の再レビュー1回までを原則とする"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "同じ配送系列への包括レビュー実行回数で数え、review comment、thread、指摘の件数では数えない"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "3回目以降の包括レビューは実行しません。次のいずれかで前回証拠が失効した場合だけ、対象risk laneと変更pathを明示した限定再確認を行う"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "未解決のP0またはP1"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "セキュリティ、秘密情報、データ整合性に関わる未解決事項"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "前回レビュー後に新しい変更範囲またはrisk laneが追加された"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "前回のレビュー証拠に具体的な不足または矛盾が見つかった"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "P2以下の指摘だけが残る場合は、影響とnon-blocking判断をPRへ記録し、必要なら別Issueへ分離して同じPRの包括レビュー周回を終了する"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "修正commit、変更path、元の指摘、focused test結果だけを文脈として使う"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "成功済みレビューまたはfull gateを再実行する場合は、対象変更、新規risk lane、実行条件変更、証拠期限切れなど、証拠が失効した具体的な理由を記録する"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "対象HEAD、対象path、確認する具体的な問い"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "既存報告やメインエージェント自身の一次証拠確認では不足する理由"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "同一HEAD・同一risk laneの独立監査は原則1回"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "包括監査を複数agentへ同時委任せず"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "再監査を認めるのは、対象コードが変わった、新しい実行証拠が得られた、前回監査に明確な不足がある、または未解決の証拠矛盾がある場合"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "修正後に変更pathを対象再検証すること"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "監査結果が矛盾した場合は追加agentの多数決を取りません"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "full-history forkを既定にしません"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "必要なHEAD、path、acceptance、既知の指摘だけを短く渡します"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "開発中は変更によって影響を受けるfocused test"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "配送対象の最終HEADが確定した時点でfrontend / backend / operationsなど必要なfull gateを原則1回実行する"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "成功済み検証を再実行する時は、対象変更、生成物変更、実行条件変更、証拠期限切れなど、証拠が失効した理由を記録する"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "HEADだけを監査済みsnapshotとして扱いません"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| verified snapshot |"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| invalidation condition |"
+require_block_text "docs/ai-governance/13-maintenance-policy.md" "## サブエージェント運用" "subagent-maintenance" "docs/agent-harness.md"
+require_block_text "docs/ai-governance/13-maintenance-policy.md" "## サブエージェント運用" "subagent-maintenance" "同一HEADの重複監査"
+require_block_text "docs/ai-governance/13-maintenance-policy.md" "## Review収束" "review-maintenance" "docs/agent-harness.md"
+require_block_text "docs/ai-governance/13-maintenance-policy.md" "## Review収束" "review-maintenance" "P2以下だけを理由とする包括レビュー反復"
+require_text ".agents/skills/github-delivery/SKILL.md" "docs/agent-harness.md"
 require_text "docs/agent-principles.md" "重複回数だけで抽象化を強制しない"
 require_text "AGENTS.md" "大小を問わずすべてソースコード変更"
 require_text "AGENTS.md" "GitHub配送Skillが定義する通常配送"

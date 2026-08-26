@@ -47,9 +47,10 @@ description: "大小を問わないすべてのソースコード変更と、Iss
 ## 5. CIとreview
 
 - latest headに紐づき、対象branchで定義されたpush / pull_request等のCIを確認する。失敗時はログから原因を特定し、修正、commit、push、再確認する。
+- 包括レビューの周回上限、3周目以降の限定条件、P2以下の収束、再レビュー文脈は [`docs/agent-harness.md`](../../../docs/agent-harness.md) のGitHub reviewの収束を正本とする。
 - CI成功後、GitHub上で確認可能な自動または人間のコードレビュー、review thread、review commentをlatest headで確認する。
-- actionableな指摘はまとめて修正し、変更後のheadでCIと該当reviewを再確認する。
-- latest meaningful changeに対するclean reviewが1回得られ、actionableな未解決threadがなく、GitHubのmergeabilityがcleanで、CIと必須条件を満たせばreviewを終了する。
+- actionableな指摘はまとめて修正し、正本のreview予算と限定条件に従って変更後の証拠を再確認する。
+- 正本のreview収束条件を満たし、actionableな未解決threadがなく、GitHubのmergeabilityがcleanで、CIと必須条件を満たせばreviewを終了する。
 - 変更のないheadでclean結果を増やすためだけの再レビューを行わない。
 - ソースコード変更でコードレビューが提供されない場合、自己レビューは補助証跡に限り、完了条件の代替にしない。未完了のblockerとして報告する。
 

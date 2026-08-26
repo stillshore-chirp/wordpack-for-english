@@ -140,13 +140,56 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 - 形式で検査できる条件を自然言語だけで維持する
 
 ## GitHub reviewの収束
+<!-- agent-harness:review-convergence:start -->
 
 - latest meaningful changeに対して対象branchで定義されたpush / pull_request等のCIと、GitHub上で確認可能な自動または人間のコードレビューを確認する。
-- actionableな指摘を修正した場合は、最新headでCIと該当reviewを再確認する。
-- 変更のないheadで追加のclean reviewを複数回集めない。
+- 同一PR・同一HEAD系列の包括レビューは、配送対象の最終HEADに対する初回レビュー1回と、指摘修正後の再レビュー1回までを原則とする。修正によるHEAD更新を含む同じ配送系列への包括レビュー実行回数で数え、review comment、thread、指摘の件数では数えない。
+- 3回目以降の包括レビューは実行しません。次のいずれかで前回証拠が失効した場合だけ、対象risk laneと変更pathを明示した限定再確認を行う。
+  - 未解決のP0またはP1がある。
+  - セキュリティ、秘密情報、データ整合性に関わる未解決事項がある。
+  - 前回レビュー後に新しい変更範囲またはrisk laneが追加された。
+  - 前回のレビュー証拠に具体的な不足または矛盾が見つかった。
+- P2以下の指摘だけが残る場合は、影響とnon-blocking判断をPRへ記録し、必要なら別Issueへ分離して同じPRの包括レビュー周回を終了する。
+- 再レビューまたは限定再確認ではfull historyを渡さず、修正commit、変更path、元の指摘、focused test結果だけを文脈として使う。
+- 成功済みレビューまたはfull gateを再実行する場合は、対象変更、新規risk lane、実行条件変更、証拠期限切れなど、証拠が失効した具体的な理由を記録する。
+- メインエージェントはPRごとにHEAD系列、包括レビュー実行回数、確認済みsnapshot、結果、証拠の失効理由を記録する。
+- 変更のないheadで追加のclean reviewを集めない。
 - ソースコード変更でreviewが提供されない環境では、自己レビューを完了条件の代替にせず、未確認範囲とblockerを報告する。
 - actionableな未解決threadがなく、GitHubのmergeabilityがcleanであることを確認する。
 - mergeまたはcloseは別の明示指示がある場合だけ行う。
+<!-- agent-harness:review-convergence:end -->
+
+## Subagent orchestration
+<!-- agent-harness:subagent-orchestration:start -->
+
+サブエージェントは専門riskを独立して並列化するために使い、同じ証拠を読む担当を増やすために使いません。メインエージェントは委任前に、次を満たす重複しないlaneを定義します。
+
+- そのagentだけが担当するrisk lane。
+- 対象HEAD、対象path、確認する具体的な問い。
+- 既存報告やメインエージェント自身の一次証拠確認では不足する理由。
+
+この3点を定義できない委任は行いません。包括監査を複数agentへ同時委任せず、同一HEAD・同一risk laneの独立監査は原則1回とします。再監査を認めるのは、対象コードが変わった、新しい実行証拠が得られた、前回監査に明確な不足がある、または未解決の証拠矛盾がある場合です。修正後に変更pathを対象再検証することと、未変更HEADへ同じ監査を繰り返すことを区別します。
+
+監査結果が矛盾した場合は追加agentの多数決を取りません。メインエージェントがsource code、test設定、実際のcommand結果、commit hashなどの一次証拠を確認して解決します。
+
+委任時はfull-history forkを既定にしません。必要なHEAD、path、acceptance、既知の指摘だけを短く渡します。報告は変更path、P0 / P1、実行結果、未実行項目と残るriskを中心に簡潔にします。
+
+検証は次の段階を守ります。
+
+1. 開発中は変更によって影響を受けるfocused testを先に実行する。
+2. 配送対象の最終HEADが確定した時点でfrontend / backend / operationsなど必要なfull gateを原則1回実行する。
+3. 成功済み検証を再実行する時は、対象変更、生成物変更、実行条件変更、証拠期限切れなど、証拠が失効した理由を記録する。
+
+メインエージェントは次のrisk lane台帳を保ち、担当scopeと結果を統合して重複を止めます。clean commitを確認した場合はcommit SHAを記録します。未commitの共有worktreeを確認した場合は、base HEADに加えて、確認したpathとdiffを一意に識別できる値を記録し、HEADだけを監査済みsnapshotとして扱いません。
+
+| Field | Meaning |
+|---|---|
+| risk lane | 重複しない確認責務 |
+| owner | agentまたはメインエージェント |
+| verified snapshot | clean commit、またはbase HEADと確認済みdiffの識別子 |
+| status | pending / active / passed / finding / blocked |
+| invalidation condition | 再検証が必要になる対象変更または新証拠 |
+<!-- agent-harness:subagent-orchestration:end -->
 
 ## ルール変更時の確認
 
