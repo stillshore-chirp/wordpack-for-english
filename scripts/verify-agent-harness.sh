@@ -82,6 +82,19 @@ if (
     or end_index <= start_index
 ):
     raise SystemExit(2)
+if any(
+    token.type == "heading_open" and token.level == 0 and token.tag in {"h1", "h2"}
+    for token in tokens[start_index + 1 : end_index]
+):
+    raise SystemExit(2)
+if end_index + 1 < len(tokens):
+    next_token = tokens[end_index + 1]
+    if not (
+        next_token.type == "heading_open"
+        and next_token.level == 0
+        and next_token.tag in {"h1", "h2"}
+    ):
+        raise SystemExit(2)
 
 visible_lines: list[str] = []
 for token in tokens[start_index + 1 : end_index]:
@@ -146,6 +159,15 @@ if (
     "required invariant"
 ) >/dev/null 2>&1; then
   fail "block verification accepted a canonical block inside fenced code"
+fi
+if (
+  require_block_text \
+    <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '# Replacement' 'required invariant' '<!-- agent-harness:self-test:end -->') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification accepted a canonical block spanning a peer heading"
 fi
 
 reject_text() {
