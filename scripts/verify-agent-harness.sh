@@ -78,19 +78,18 @@ in_comment = False
 fence_char = ""
 fence_length = 0
 for raw_line in lines[start_index + 1 : end_index]:
-    line, in_comment = strip_html_comments(raw_line, in_comment)
-    stripped = line.lstrip(" ")
-    indent = len(line) - len(stripped)
-
     if fence_char:
-        if indent <= 3 and stripped.startswith(fence_char):
-            run_length = len(stripped) - len(stripped.lstrip(fence_char))
-            remainder = stripped[run_length:]
+        raw_stripped = raw_line.lstrip(" ")
+        raw_indent = len(raw_line) - len(raw_stripped)
+        if raw_indent <= 3 and raw_stripped.startswith(fence_char):
+            run_length = len(raw_stripped) - len(raw_stripped.lstrip(fence_char))
+            remainder = raw_stripped[run_length:]
             if run_length >= fence_length and not remainder.strip():
                 fence_char = ""
                 fence_length = 0
         continue
 
+    line, in_comment = strip_html_comments(raw_line, in_comment)
     opening = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
     if opening:
         delimiter, info = opening.groups()
@@ -110,7 +109,7 @@ PY
 }
 
 require_block_text \
-  <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '````md' '```' '# Replacement' '## Example' '````' 'required invariant' '<!-- agent-harness:self-test:end -->') \
+  <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '````md' '```` <!-- literal in fenced code -->' '# Replacement' '## Example' '````' 'required invariant' '<!-- agent-harness:self-test:end -->') \
   "## Checked" \
   "self-test" \
   "required invariant"
