@@ -38,33 +38,100 @@ require_block_text() {
   local start="<!-- agent-harness:${block}:start -->"
   local end="<!-- agent-harness:${block}:end -->"
   local content
-  content="$(awk -v heading="$heading" -v start="$start" -v end="$end" '
-    $0 == start {
-      starts++
-      if (previous != heading || found || closed) invalid = 1
-      found = 1
-      previous = $0
-      next
-    }
-    $0 == end {
-      ends++
-      if (!found || closed) invalid = 1
-      closed = 1
-      previous = $0
-      next
-    }
-    found && !closed { print }
-    { previous = $0 }
-    END { if (starts != 1 || ends != 1 || invalid || !closed) exit 2 }
-  ' "$file")" || fail "$file block $block must immediately follow heading: $heading"
+  content="$(python3 - "$file" "$heading" "$start" "$end" <<'PY'
+import re
+import sys
+
+
+def strip_html_comments(line: str, in_comment: bool) -> tuple[str, bool]:
+    visible: list[str] = []
+    cursor = 0
+    while cursor < len(line):
+        if in_comment:
+            close = line.find("-->", cursor)
+            if close < 0:
+                return "".join(visible), True
+            in_comment = False
+            cursor = close + 3
+            continue
+        opening = line.find("<!--", cursor)
+        if opening < 0:
+            visible.append(line[cursor:])
+            break
+        visible.append(line[cursor:opening])
+        in_comment = True
+        cursor = opening + 4
+    return "".join(visible), in_comment
+
+
+path, heading, start, end = sys.argv[1:]
+lines = open(path, encoding="utf-8").read().splitlines()
+if lines.count(start) != 1 or lines.count(end) != 1:
+    raise SystemExit(2)
+start_index = lines.index(start)
+end_index = lines.index(end)
+if start_index == 0 or lines[start_index - 1] != heading or end_index <= start_index:
+    raise SystemExit(2)
+
+visible_lines: list[str] = []
+in_comment = False
+fence_char = ""
+fence_length = 0
+for raw_line in lines[start_index + 1 : end_index]:
+    line, in_comment = strip_html_comments(raw_line, in_comment)
+    stripped = line.lstrip(" ")
+    indent = len(line) - len(stripped)
+
+    if fence_char:
+        if indent <= 3 and stripped.startswith(fence_char):
+            run_length = len(stripped) - len(stripped.lstrip(fence_char))
+            remainder = stripped[run_length:]
+            if run_length >= fence_length and not remainder.strip():
+                fence_char = ""
+                fence_length = 0
+        continue
+
+    opening = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
+    if opening:
+        delimiter, info = opening.groups()
+        if delimiter[0] == "~" or "`" not in info:
+            fence_char = delimiter[0]
+            fence_length = len(delimiter)
+            continue
+
+    if line.startswith("    ") or line.startswith("\t"):
+        continue
+    visible_lines.append(line)
+
+print("\n".join(visible_lines))
+PY
+)" || fail "$file block $block must immediately follow heading: $heading"
   grep -Fq -- "$pattern" <<< "$content" || fail "$file block $block must contain: $pattern"
 }
 
 require_block_text \
-  <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '````md' '```' '# Replacement' '## Example' 'required invariant' '````' '<!-- agent-harness:self-test:end -->') \
+  <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '````md' '```' '# Replacement' '## Example' '````' 'required invariant' '<!-- agent-harness:self-test:end -->') \
   "## Checked" \
   "self-test" \
   "required invariant"
+if (
+  require_block_text \
+    <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '````md' 'required invariant' '````' '<!-- agent-harness:self-test:end -->') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification accepted required text inside fenced code"
+fi
+if (
+  require_block_text \
+    <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '<!-- required invariant -->' '<!-- agent-harness:self-test:end -->') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification accepted required text inside an HTML comment"
+fi
 if (
   require_block_text \
     <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '<!-- agent-harness:self-test:end -->' 'required invariant') \
