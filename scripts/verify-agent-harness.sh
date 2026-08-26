@@ -355,7 +355,7 @@ require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "full-history forkを既定にしません"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "必要なHEAD、path、acceptance、既知の指摘だけを短く渡します"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "開発中は変更によって影響を受けるfocused test"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "配送対象の最終HEADが確定した時点で"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "配送対象の最終HEADが確定した時点でfrontend / backend / operationsなど必要なfull gateを原則1回実行する"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "成功済み検証を再実行する時は"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "HEADだけを監査済みsnapshotとして扱いません"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| verified snapshot |"
