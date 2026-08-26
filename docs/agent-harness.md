@@ -149,6 +149,7 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 - mergeまたはcloseは別の明示指示がある場合だけ行う。
 
 ## Subagent orchestration
+<!-- agent-harness:subagent-orchestration:start -->
 
 サブエージェントは専門riskを独立して並列化するために使い、同じ証拠を読む担当を増やすために使いません。メインエージェントは委任前に、次を満たす重複しないlaneを定義します。
 
@@ -177,6 +178,7 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 | verified snapshot | clean commit、またはbase HEADと確認済みdiffの識別子 |
 | status | pending / active / passed / finding / blocked |
 | invalidation condition | 再検証が必要になる対象変更または新証拠 |
+<!-- agent-harness:subagent-orchestration:end -->
 
 ## ルール変更時の確認
 

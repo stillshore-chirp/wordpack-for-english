@@ -87,10 +87,12 @@ AGENTS.md、Skill、docs、tool専用ruleに同じ長文を複製
 - merge、closeは別の明示指示がある場合だけ行う。
 
 ## サブエージェント運用
+<!-- agent-harness:subagent-maintenance:start -->
 
 委任、再監査、検証段階、risk lane台帳の正本は [`docs/agent-harness.md`](../agent-harness.md) のSubagent orchestrationとします。root `AGENTS.md`は全agentが到達する短い入口だけを持ち、nested rule、Skill、adapterへ同じ運用本文を複製しません。
 
 運用を変更する時は、積極利用と重複防止の両方を保ちます。新しい専門riskを独立laneへ委任できることを維持しつつ、同一HEADの重複監査、根拠のない再実行、過剰なfork文脈を増やさないことをreviewします。
+<!-- agent-harness:subagent-maintenance:end -->
 
 ## 研究・標準
 

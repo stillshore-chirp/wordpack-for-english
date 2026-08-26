@@ -30,40 +30,50 @@ require_text() {
   grep -Fq -- "$pattern" "$file" || fail "$file must contain: $pattern"
 }
 
-require_section_text() {
+require_block_text() {
   local file="$1"
   local heading="$2"
-  local pattern="$3"
-  local section
-  section="$(awk -v heading="$heading" '
-    function fence_marker(line, trimmed) {
-      trimmed = line
-      sub(/^[[:space:]]*/, "", trimmed)
-      if (substr(trimmed, 1, 3) == "```") return "```"
-      if (substr(trimmed, 1, 3) == "~~~") return "~~~"
-      return ""
+  local block="$3"
+  local pattern="$4"
+  local start="<!-- agent-harness:${block}:start -->"
+  local end="<!-- agent-harness:${block}:end -->"
+  local content
+  content="$(awk -v heading="$heading" -v start="$start" -v end="$end" '
+    $0 == start {
+      starts++
+      if (previous != heading || found || closed) invalid = 1
+      found = 1
+      previous = $0
+      next
     }
-    {
-      marker = fence_marker($0)
-      if (marker != "") {
-        if (fence == "") fence = marker
-        else if (fence == marker) fence = ""
-        if (found) print
-        next
-      }
-      if (fence == "" && $0 == heading) { found = 1; next }
-      if (found && fence == "" && /^## /) exit
-      if (found) print
+    $0 == end {
+      ends++
+      if (!found || closed) invalid = 1
+      closed = 1
+      previous = $0
+      next
     }
-    END { if (!found) exit 2 }
-  ' "$file")" || fail "$file must contain section: $heading"
-  grep -Fq -- "$pattern" <<< "$section" || fail "$file section $heading must contain: $pattern"
+    found && !closed { print }
+    { previous = $0 }
+    END { if (starts != 1 || ends != 1 || invalid || !closed) exit 2 }
+  ' "$file")" || fail "$file block $block must immediately follow heading: $heading"
+  grep -Fq -- "$pattern" <<< "$content" || fail "$file block $block must contain: $pattern"
 }
 
-require_section_text \
-  <(printf '%s\n' '## Checked' '```md' '## Example' '```' 'required invariant' '## Next') \
+require_block_text \
+  <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '````md' '```' '# Replacement' '## Example' 'required invariant' '````' '<!-- agent-harness:self-test:end -->') \
   "## Checked" \
+  "self-test" \
   "required invariant"
+if (
+  require_block_text \
+    <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '<!-- agent-harness:self-test:end -->' 'required invariant') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification accepted required text outside its canonical block"
+fi
 
 reject_text() {
   local file="$1"
@@ -184,19 +194,19 @@ reject_text "scripts/verify-ai-governance.sh" "P0 または P1 を含まない�
 require_text "docs/agent-harness.md" "Hard gateとheuristic"
 require_text "docs/agent-harness.md" "Instruction budget"
 require_text "docs/agent-harness.md" "clean review"
-require_section_text "AGENTS.md" "## 作業の進め方" "サブエージェントは独立したrisk laneへ積極的に使います"
-require_section_text "AGENTS.md" "## 作業の進め方" "docs/agent-harness.md"
-require_section_text "docs/agent-harness.md" "## Subagent orchestration" "対象HEAD、対象path、確認する具体的な問い"
-require_section_text "docs/agent-harness.md" "## Subagent orchestration" "既存報告やメインエージェント自身の一次証拠確認では不足する理由"
-require_section_text "docs/agent-harness.md" "## Subagent orchestration" "同一HEAD・同一risk laneの独立監査は原則1回"
-require_section_text "docs/agent-harness.md" "## Subagent orchestration" "監査結果が矛盾した場合は追加agentの多数決を取りません"
-require_section_text "docs/agent-harness.md" "## Subagent orchestration" "full-history forkを既定にしません"
-require_section_text "docs/agent-harness.md" "## Subagent orchestration" "開発中は変更によって影響を受けるfocused test"
-require_section_text "docs/agent-harness.md" "## Subagent orchestration" "HEADだけを監査済みsnapshotとして扱いません"
-require_section_text "docs/agent-harness.md" "## Subagent orchestration" "| verified snapshot |"
-require_section_text "docs/agent-harness.md" "## Subagent orchestration" "| invalidation condition |"
-require_section_text "docs/ai-governance/13-maintenance-policy.md" "## サブエージェント運用" "docs/agent-harness.md"
-require_section_text "docs/ai-governance/13-maintenance-policy.md" "## サブエージェント運用" "同一HEADの重複監査"
+require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "サブエージェントは独立したrisk laneへ積極的に使います"
+require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "docs/agent-harness.md"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "対象HEAD、対象path、確認する具体的な問い"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "既存報告やメインエージェント自身の一次証拠確認では不足する理由"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "同一HEAD・同一risk laneの独立監査は原則1回"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "監査結果が矛盾した場合は追加agentの多数決を取りません"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "full-history forkを既定にしません"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "開発中は変更によって影響を受けるfocused test"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "HEADだけを監査済みsnapshotとして扱いません"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| verified snapshot |"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| invalidation condition |"
+require_block_text "docs/ai-governance/13-maintenance-policy.md" "## サブエージェント運用" "subagent-maintenance" "docs/agent-harness.md"
+require_block_text "docs/ai-governance/13-maintenance-policy.md" "## サブエージェント運用" "subagent-maintenance" "同一HEADの重複監査"
 require_text "docs/agent-principles.md" "重複回数だけで抽象化を強制しない"
 require_text "AGENTS.md" "大小を問わずすべてソースコード変更"
 require_text "AGENTS.md" "GitHub配送Skillが定義する通常配送"
