@@ -100,9 +100,11 @@ visible_lines: list[str] = []
 for token in tokens[start_index + 1 : end_index]:
     if token.type != "inline":
         continue
+    inline_text: list[str] = []
     for child in token.children or []:
         if child.type in {"text", "code_inline"}:
-            visible_lines.append(child.content)
+            inline_text.append(child.content)
+    visible_lines.append("".join(inline_text))
 
 print("\n".join(visible_lines))
 PY
@@ -112,6 +114,11 @@ PY
 
 require_block_text \
   <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '> ````md' '> <!-- literal in fenced code -->' '> # Replacement' '> ## Example' '> ````' 'required invariant' '<!-- agent-harness:self-test:end -->') \
+  "## Checked" \
+  "self-test" \
+  "required invariant"
+require_block_text \
+  <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' 'required **invariant**' '<!-- agent-harness:self-test:end -->') \
   "## Checked" \
   "self-test" \
   "required invariant"
