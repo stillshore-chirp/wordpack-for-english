@@ -168,13 +168,13 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 2. 配送対象の最終HEADが確定した時点でfrontend / backend / operationsなど必要なfull gateを原則1回実行する。
 3. 成功済み検証を再実行する時は、対象変更、生成物変更、実行条件変更、証拠期限切れなど、証拠が失効した理由を記録する。
 
-メインエージェントは次のrisk lane台帳を保ち、担当scopeと結果を統合して重複を止めます。
+メインエージェントは次のrisk lane台帳を保ち、担当scopeと結果を統合して重複を止めます。clean commitを確認した場合はcommit SHAを記録します。未commitの共有worktreeを確認した場合は、base HEADに加えて、確認したpathとdiffを一意に識別できる値を記録し、HEADだけを監査済みsnapshotとして扱いません。
 
 | Field | Meaning |
 |---|---|
 | risk lane | 重複しない確認責務 |
 | owner | agentまたはメインエージェント |
-| verified HEAD | 報告と証拠が対応するcommit |
+| verified snapshot | clean commit、またはbase HEADと確認済みdiffの識別子 |
 | status | pending / active / passed / finding / blocked |
 | invalidation condition | 再検証が必要になる対象変更または新証拠 |
 

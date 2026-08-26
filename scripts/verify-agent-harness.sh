@@ -30,6 +30,20 @@ require_text() {
   grep -Fq -- "$pattern" "$file" || fail "$file must contain: $pattern"
 }
 
+require_section_text() {
+  local file="$1"
+  local heading="$2"
+  local pattern="$3"
+  local section
+  section="$(awk -v heading="$heading" '
+    $0 == heading { found = 1; next }
+    found && /^## / { exit }
+    found { print }
+    END { if (!found) exit 2 }
+  ' "$file")" || fail "$file must contain section: $heading"
+  grep -Fq -- "$pattern" <<< "$section" || fail "$file section $heading must contain: $pattern"
+}
+
 reject_text() {
   local file="$1"
   local pattern="$2"
@@ -149,11 +163,19 @@ reject_text "scripts/verify-ai-governance.sh" "P0 または P1 を含まない�
 require_text "docs/agent-harness.md" "Hard gateとheuristic"
 require_text "docs/agent-harness.md" "Instruction budget"
 require_text "docs/agent-harness.md" "clean review"
-require_text "AGENTS.md" "risk lane"
-require_text "docs/agent-harness.md" "同一HEAD・同一risk laneの独立監査は原則1回"
-require_text "docs/agent-harness.md" "full-history forkを既定にしません"
-require_text "docs/agent-harness.md" "risk lane台帳"
-require_text "docs/ai-governance/13-maintenance-policy.md" "サブエージェント運用"
+require_section_text "AGENTS.md" "## 作業の進め方" "サブエージェントは独立したrisk laneへ積極的に使います"
+require_section_text "AGENTS.md" "## 作業の進め方" "docs/agent-harness.md"
+require_section_text "docs/agent-harness.md" "## Subagent orchestration" "対象HEAD、対象path、確認する具体的な問い"
+require_section_text "docs/agent-harness.md" "## Subagent orchestration" "既存報告やメインエージェント自身の一次証拠確認では不足する理由"
+require_section_text "docs/agent-harness.md" "## Subagent orchestration" "同一HEAD・同一risk laneの独立監査は原則1回"
+require_section_text "docs/agent-harness.md" "## Subagent orchestration" "監査結果が矛盾した場合は追加agentの多数決を取りません"
+require_section_text "docs/agent-harness.md" "## Subagent orchestration" "full-history forkを既定にしません"
+require_section_text "docs/agent-harness.md" "## Subagent orchestration" "開発中は変更によって影響を受けるfocused test"
+require_section_text "docs/agent-harness.md" "## Subagent orchestration" "HEADだけを監査済みsnapshotとして扱いません"
+require_section_text "docs/agent-harness.md" "## Subagent orchestration" "| verified snapshot |"
+require_section_text "docs/agent-harness.md" "## Subagent orchestration" "| invalidation condition |"
+require_section_text "docs/ai-governance/13-maintenance-policy.md" "## サブエージェント運用" "docs/agent-harness.md"
+require_section_text "docs/ai-governance/13-maintenance-policy.md" "## サブエージェント運用" "同一HEADの重複監査"
 require_text "docs/agent-principles.md" "重複回数だけで抽象化を強制しない"
 require_text "AGENTS.md" "大小を問わずすべてソースコード変更"
 require_text "AGENTS.md" "GitHub配送Skillが定義する通常配送"
