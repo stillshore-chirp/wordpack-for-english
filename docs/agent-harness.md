@@ -148,6 +148,36 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 - actionableな未解決threadがなく、GitHubのmergeabilityがcleanであることを確認する。
 - mergeまたはcloseは別の明示指示がある場合だけ行う。
 
+## Subagent orchestration
+
+サブエージェントは専門riskを独立して並列化するために使い、同じ証拠を読む担当を増やすために使いません。メインエージェントは委任前に、次を満たす重複しないlaneを定義します。
+
+- そのagentだけが担当するrisk lane。
+- 対象HEAD、対象path、確認する具体的な問い。
+- 既存報告やメインエージェント自身の一次証拠確認では不足する理由。
+
+この3点を定義できない委任は行いません。包括監査を複数agentへ同時委任せず、同一HEAD・同一risk laneの独立監査は原則1回とします。再監査を認めるのは、対象コードが変わった、新しい実行証拠が得られた、前回監査に明確な不足がある、または未解決の証拠矛盾がある場合です。修正後に変更pathを対象再検証することと、未変更HEADへ同じ監査を繰り返すことを区別します。
+
+監査結果が矛盾した場合は追加agentの多数決を取りません。メインエージェントがsource code、test設定、実際のcommand結果、commit hashなどの一次証拠を確認して解決します。
+
+委任時はfull-history forkを既定にしません。必要なHEAD、path、acceptance、既知の指摘だけを短く渡します。報告は変更path、P0 / P1、実行結果、未実行項目と残るriskを中心に簡潔にします。
+
+検証は次の段階を守ります。
+
+1. 開発中は変更によって影響を受けるfocused testを先に実行する。
+2. 配送対象の最終HEADが確定した時点でfrontend / backend / operationsなど必要なfull gateを原則1回実行する。
+3. 成功済み検証を再実行する時は、対象変更、生成物変更、実行条件変更、証拠期限切れなど、証拠が失効した理由を記録する。
+
+メインエージェントは次のrisk lane台帳を保ち、担当scopeと結果を統合して重複を止めます。
+
+| Field | Meaning |
+|---|---|
+| risk lane | 重複しない確認責務 |
+| owner | agentまたはメインエージェント |
+| verified HEAD | 報告と証拠が対応するcommit |
+| status | pending / active / passed / finding / blocked |
+| invalidation condition | 再検証が必要になる対象変更または新証拠 |
+
 ## ルール変更時の確認
 
 1. 変更を `common / path / task / machine` のどこへ置くか決めた。

@@ -86,6 +86,12 @@ AGENTS.md、Skill、docs、tool専用ruleに同じ長文を複製
 - actionableな未解決threadがなく、GitHubのmergeabilityがcleanであることを確認する。
 - merge、closeは別の明示指示がある場合だけ行う。
 
+## サブエージェント運用
+
+委任、再監査、検証段階、risk lane台帳の正本は [`docs/agent-harness.md`](../agent-harness.md) のSubagent orchestrationとします。root `AGENTS.md`は全agentが到達する短い入口だけを持ち、nested rule、Skill、adapterへ同じ運用本文を複製しません。
+
+運用を変更する時は、積極利用と重複防止の両方を保ちます。新しい専門riskを独立laneへ委任できることを維持しつつ、同一HEADの重複監査、根拠のない再実行、過剰なfork文脈を増やさないことをreviewします。
+
 ## 研究・標準
 
 新しい研究やガイドラインを取り込む時は、標準・仕様、長く使われるHCI原則、認知アクセシビリティ指針、最新研究、単発研究の順に強制力を判断します。単発研究や製品固有の一時的挙動を、根拠なくhard gateへしません。
