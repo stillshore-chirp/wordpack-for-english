@@ -39,68 +39,57 @@ require_block_text() {
   local end="<!-- agent-harness:${block}:end -->"
   local content
   content="$(python3 - "$file" "$heading" "$start" "$end" <<'PY'
-import re
 import sys
 
-
-def strip_html_comments(line: str, in_comment: bool) -> tuple[str, bool]:
-    visible: list[str] = []
-    cursor = 0
-    while cursor < len(line):
-        if in_comment:
-            close = line.find("-->", cursor)
-            if close < 0:
-                return "".join(visible), True
-            in_comment = False
-            cursor = close + 3
-            continue
-        opening = line.find("<!--", cursor)
-        if opening < 0:
-            visible.append(line[cursor:])
-            break
-        visible.append(line[cursor:opening])
-        in_comment = True
-        cursor = opening + 4
-    return "".join(visible), in_comment
-
+from markdown_it import MarkdownIt
 
 path, heading, start, end = sys.argv[1:]
-lines = open(path, encoding="utf-8").read().splitlines()
-if lines.count(start) != 1 or lines.count(end) != 1:
+source = open(path, encoding="utf-8").read()
+tokens = MarkdownIt("commonmark").parse(source)
+
+headings = [
+    index
+    for index, token in enumerate(tokens[:-2])
+    if token.type == "heading_open"
+    and token.tag == "h2"
+    and token.level == 0
+    and tokens[index + 1].type == "inline"
+    and tokens[index + 1].content == heading.removeprefix("## ")
+    and tokens[index + 2].type == "heading_close"
+]
+starts = [
+    index
+    for index, token in enumerate(tokens)
+    if token.type == "html_block" and token.level == 0 and token.content.strip() == start
+]
+ends = [
+    index
+    for index, token in enumerate(tokens)
+    if token.type == "html_block" and token.level == 0 and token.content.strip() == end
+]
+if len(headings) != 1 or len(starts) != 1 or len(ends) != 1:
     raise SystemExit(2)
-start_index = lines.index(start)
-end_index = lines.index(end)
-if start_index == 0 or lines[start_index - 1] != heading or end_index <= start_index:
+heading_index = headings[0]
+start_index = starts[0]
+end_index = ends[0]
+heading_map = tokens[heading_index].map
+start_map = tokens[start_index].map
+if (
+    heading_map is None
+    or start_map is None
+    or start_map[0] != heading_map[1]
+    or start_index <= heading_index + 2
+    or end_index <= start_index
+):
     raise SystemExit(2)
 
 visible_lines: list[str] = []
-in_comment = False
-fence_char = ""
-fence_length = 0
-for raw_line in lines[start_index + 1 : end_index]:
-    if fence_char:
-        raw_stripped = raw_line.lstrip(" ")
-        raw_indent = len(raw_line) - len(raw_stripped)
-        if raw_indent <= 3 and raw_stripped.startswith(fence_char):
-            run_length = len(raw_stripped) - len(raw_stripped.lstrip(fence_char))
-            remainder = raw_stripped[run_length:]
-            if run_length >= fence_length and not remainder.strip():
-                fence_char = ""
-                fence_length = 0
+for token in tokens[start_index + 1 : end_index]:
+    if token.type != "inline":
         continue
-
-    line, in_comment = strip_html_comments(raw_line, in_comment)
-    opening = re.match(r"^ {0,3}(`{3,}|~{3,})(.*)$", line)
-    if opening:
-        delimiter, info = opening.groups()
-        if delimiter[0] == "~" or "`" not in info:
-            fence_char = delimiter[0]
-            fence_length = len(delimiter)
-            continue
-
-    if line.startswith("    ") or line.startswith("\t"):
-        continue
-    visible_lines.append(line)
+    for child in token.children or []:
+        if child.type in {"text", "code_inline"}:
+            visible_lines.append(child.content)
 
 print("\n".join(visible_lines))
 PY
@@ -109,13 +98,13 @@ PY
 }
 
 require_block_text \
-  <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '````md' '```` <!-- literal in fenced code -->' '# Replacement' '## Example' '````' 'required invariant' '<!-- agent-harness:self-test:end -->') \
+  <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '> ````md' '> <!-- literal in fenced code -->' '> # Replacement' '> ## Example' '> ````' 'required invariant' '<!-- agent-harness:self-test:end -->') \
   "## Checked" \
   "self-test" \
   "required invariant"
 if (
   require_block_text \
-    <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '````md' 'required invariant' '````' '<!-- agent-harness:self-test:end -->') \
+    <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '> ```md' '> required invariant' '> ```' '<!-- agent-harness:self-test:end -->') \
     "## Checked" \
     "self-test" \
     "required invariant"
@@ -139,6 +128,24 @@ if (
     "required invariant"
 ) >/dev/null 2>&1; then
   fail "block verification accepted required text outside its canonical block"
+fi
+if (
+  require_block_text \
+    <(printf '%s\n' '<!--' '## Checked' '<!-- agent-harness:self-test:start -->' 'required invariant' '<!-- agent-harness:self-test:end -->' '-->') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification accepted a canonical block inside an HTML comment"
+fi
+if (
+  require_block_text \
+    <(printf '%s\n' '````md' '## Checked' '<!-- agent-harness:self-test:start -->' 'required invariant' '<!-- agent-harness:self-test:end -->' '````') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification accepted a canonical block inside fenced code"
 fi
 
 reject_text() {
