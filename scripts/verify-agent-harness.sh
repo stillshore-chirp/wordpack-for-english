@@ -98,12 +98,22 @@ if end_index + 1 < len(tokens):
 
 visible_lines: list[str] = []
 for token in tokens[start_index + 1 : end_index]:
+    if token.type == "html_block":
+        raise SystemExit(2)
     if token.type != "inline":
         continue
     inline_text: list[str] = []
     for child in token.children or []:
         if child.type in {"text", "code_inline"}:
             inline_text.append(child.content)
+        elif child.type in {"softbreak", "hardbreak"}:
+            inline_text.append("\n")
+        elif child.type == "image":
+            inline_text.append(f" {child.content} ")
+        elif child.type == "html_inline":
+            raise SystemExit(2)
+        elif child.content:
+            inline_text.append(f" {child.content} ")
     visible_lines.append("".join(inline_text))
 
 print("\n".join(visible_lines))
@@ -139,6 +149,42 @@ if (
     "required invariant"
 ) >/dev/null 2>&1; then
   fail "block verification accepted required text inside an HTML comment"
+fi
+if (
+  require_block_text \
+    <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '<div hidden>' '' 'required invariant' '' '</div>' '' '<!-- agent-harness:self-test:end -->') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification accepted required text inside a hidden HTML container"
+fi
+if (
+  require_block_text \
+    <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' '<span hidden>required invariant</span>' '<!-- agent-harness:self-test:end -->') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification accepted required text inside inline HTML"
+fi
+if (
+  require_block_text \
+    <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' 'required' 'invariant' '<!-- agent-harness:self-test:end -->') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification joined required text across a soft break"
+fi
+if (
+  require_block_text \
+    <(printf '%s\n' '## Checked' '<!-- agent-harness:self-test:start -->' 'required![other content](missing.png)invariant' '<!-- agent-harness:self-test:end -->') \
+    "## Checked" \
+    "self-test" \
+    "required invariant"
+) >/dev/null 2>&1; then
+  fail "block verification dropped image content inside required text"
 fi
 if (
   require_block_text \
