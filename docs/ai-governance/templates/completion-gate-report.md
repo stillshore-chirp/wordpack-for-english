@@ -59,11 +59,13 @@
 |---|---|---|---|---|---|---|
 | P0/P1/P2 | Introduced / Regression |  |  |  |  |  |
 
-- Pre-existing（今回の変更責任と完了判定から分離）:
+- Pre-existing（今回の変更責任・変更起因件数から分離）:
 
-| 優先度 | 箇所 | 観測事実・証跡 | 分離理由 | 別Issue / 後続 |
-|---|---|---|---|---|
-|  |  |  |  |  |
+| 優先度 | 箇所 | 観測事実・証跡 | 分離理由 | 完了判定への影響 | 別Issue / 後続 |
+|---|---|---|---|---|---|
+|  |  |  |  |  |  |
+
+Pre-existingの通常の変更起因件数・責任は分離します。変更目的または安全性を阻害するP0/P1等のblocking findingは、完了可否と判定理由に残し、scopeと完了判断を明示的に見直します。別Issue化だけで完了扱いにしません。
 
 ### フロー監査（発動時）
 
@@ -73,7 +75,7 @@
 - findingとStep / screenshotの対応・証跡上の限界:
 - 未確認範囲・残るリスク・次に必要な確認:
 
-併用時は変更scope・変更起因findingとcurrent-runのstep証跡をこの同じ報告へ記録し、Pre-existingを変更起因の件数・完了判定へ含めません。
+standaloneのフロー監査はdiff由来findingがないため、Change statusにN/A / 未分類（standalone）を記録し、Introduced / Regression / Pre-existingを必須にしません。UI変更レビューまたは併用では、各findingのChange statusをIntroduced / Regression / Pre-existingのいずれかで記録します。併用時は変更scope・変更起因findingとcurrent-runのstep証跡をこの同じ報告へ記録します。Pre-existingの通常の変更起因件数・責任は分離しますが、変更目的または安全性を阻害するP0/P1等のblocking findingは完了可否と判定理由に残し、別Issue化だけで完了扱いにしません。
 
 ## 検証
 

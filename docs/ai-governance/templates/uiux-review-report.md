@@ -112,11 +112,13 @@
 |---|---|---|---|---|---|---|---|
 | P0/P1/P2 | Introduced / Regression |  |  |  |  |  | 未対応/対応済 |
 
-Pre-existingは今回の変更findingと完了判定へ混ぜず、次の欄へ分離します。
+通常のPre-existingは今回の変更findingと完了判定へ混ぜず、変更起因件数・責任を次の欄へ分離します。
 
-| Pre-existingの優先度 | 箇所 | 観測事実・証跡 | 今回の判定から分離する理由 | 別Issue / 後続 |
-|---|---|---|---|---|
-|  |  |  |  |  |
+| Pre-existingの優先度 | 箇所 | 観測事実・証跡 | 今回の判定から分離する理由 | 完了判定への影響 | 別Issue / 後続 |
+|---|---|---|---|---|---|
+|  |  |  |  |  |  |
+
+変更目的または安全性を阻害するP0/P1等のblocking findingは、Pre-existingであっても上部の判定と完了判定への影響欄に残し、別Issue化だけで完了扱いにしません。
 <!-- agent-harness:uiux-report-provenance:end -->
 
 ## 12. 証跡
@@ -138,9 +140,9 @@ Pre-existingは今回の変更findingと完了判定へ混ぜず、次の欄へ�
 
 | Finding / P0・P1・P2 | Change status | Step / screenshot | 観測事実 | ユーザー影響 | 推奨対応 | 証跡上の限界 |
 |---|---|---|---|---|---|---|
-|  | Introduced / Regression / Pre-existing |  |  |  |  |  |
+|  | Introduced / Regression / Pre-existing / N/A |  |  |  |  |  |
 
-Pre-existingを含む場合は上の分離欄にも記録し、変更起因の件数と完了判定から除外します。
+standaloneのフロー監査はdiff由来findingがないため、Change statusにN/A / 未分類（standalone）を記録してよく、Introduced / Regression / Pre-existingは必須ではありません。UI変更レビューまたは併用では、各findingのChange statusをIntroduced / Regression / Pre-existingのいずれかで記録します。Pre-existingの通常の変更起因件数・責任は上の分離欄へ記録しますが、変更目的または安全性を阻害するP0/P1等のblocking findingは上部の判定へ残し、scopeと完了判断を明示的に見直します。別Issue化だけで完了扱いにしません。
 
 ## 13. 実行した検証
 
