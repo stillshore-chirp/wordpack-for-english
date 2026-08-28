@@ -15,6 +15,7 @@ on:
       - 'docs/ai-governance/**'
       - 'docs/documentation-structure.md'
       - 'scripts/verify-agent-harness.sh'
+      - 'scripts/verify_task_skills.py'
       - 'scripts/validate_agent_frontmatter.py'
       - 'requirements-agent-harness.txt'
       - 'scripts/verify-ai-governance.sh'
@@ -35,6 +36,7 @@ on:
       - 'docs/ai-governance/**'
       - 'docs/documentation-structure.md'
       - 'scripts/verify-agent-harness.sh'
+      - 'scripts/verify_task_skills.py'
       - 'scripts/validate_agent_frontmatter.py'
       - 'requirements-agent-harness.txt'
       - 'scripts/verify-ai-governance.sh'
@@ -71,7 +73,7 @@ jobs:
       - name: Validate script syntax
         run: |
           bash -n scripts/verify-agent-harness.sh scripts/verify-ai-governance.sh
-          python -m py_compile scripts/validate_agent_frontmatter.py
+          python -m py_compile scripts/validate_agent_frontmatter.py scripts/verify_task_skills.py
 
       - name: Install shellcheck
         run: |
@@ -82,4 +84,6 @@ jobs:
         run: shellcheck scripts/verify-agent-harness.sh scripts/verify-ai-governance.sh
 
       - name: Verify agent harness and AI governance
-        run: bash scripts/verify-ai-governance.sh
+        run: |
+          bash scripts/verify-ai-governance.sh
+          python scripts/verify_task_skills.py
