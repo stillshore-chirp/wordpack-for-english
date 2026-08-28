@@ -22,7 +22,11 @@ export interface SentenceAlignment {
 const paragraphBreakPattern = /((?:\r?\n)[\t ]*(?:\r?\n)+)/g;
 const englishSentencePattern = /[^.!?]+[.!?]+["')\]]*|[^.!?]+$/g;
 const japaneseSentencePattern = /[^。！？!?]+[。！？!?]+["'）】」』]*|[^。！？!?]+$/gu;
+const protectedDot = '\u0000';
+const closingPunctuation = new Set(['"', "'", '”', '’', ')', ']', '}', '』', '」']);
+const sentenceStartAfterInitialismPattern = /^["')\]}”’]*\s+(?:A|An|The|I|We|You|He|She|It|They|This|That|These|Those|However|Therefore|Meanwhile|Instead|Finally|Next|Then)\b/u;
 
+type SentenceSplitMode = 'legacy' | 'deterministic';
 type SentenceSegmenter = {
   segment: (input: string) => Iterable<{ segment: string; index: number }>;
 };
@@ -32,6 +36,40 @@ const getEnglishSentenceSegmenter = (): SentenceSegmenter | null => {
     Segmenter?: new (locale: string, options: { granularity: 'sentence' }) => SentenceSegmenter;
   }).Segmenter;
   return typeof SegmenterCtor === 'function' ? new SegmenterCtor('en', { granularity: 'sentence' }) : null;
+};
+
+const protectEnglishDots = (text: string): string => {
+  let protectedText = text
+    .replace(/(\d)\.(?=\d)/g, `$1${protectedDot}`);
+  protectedText = protectedText.replace(
+    /\b(?:[A-Za-z]\.){2,}/gi,
+    (match, offset: number, source: string) => {
+      const alwaysInternal = match.toLowerCase() === 'e.g.' || match.toLowerCase() === 'i.e.';
+      const nextText = source.slice(offset + match.length);
+      if (alwaysInternal || !sentenceStartAfterInitialismPattern.test(nextText)) {
+        return match.replace(/\./g, protectedDot);
+      }
+      return `${match.slice(0, -1).replace(/\./g, protectedDot)}.`;
+    },
+  );
+  protectedText = protectedText.replace(
+    /\b(?:etc|vs)\./gi,
+    (match, offset: number, source: string) => {
+      const nextText = source.slice(offset + match.length);
+      return sentenceStartAfterInitialismPattern.test(nextText)
+        ? match
+        : match.replace(/\./g, protectedDot);
+    },
+  );
+  protectedText = protectedText.replace(
+    /\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|No|e\.g|i\.e)\./gi,
+    (match) => match.replace(/\./g, protectedDot),
+  );
+  protectedText = protectedText.replace(
+    /([A-Za-z])\.(?=[A-Za-z])/g,
+    `$1${protectedDot}`,
+  );
+  return protectedText;
 };
 
 const trimSentenceSegment = (
@@ -47,6 +85,51 @@ const trimSentenceSegment = (
 };
 
 export const splitTextSentences = (
+  text: string,
+  paragraphStart: number,
+  language: SentenceLanguage,
+): Array<{ text: string; start: number; end: number }> => {
+  const protectedText = language === 'en' ? protectEnglishDots(text) : text;
+  const terminators = language === 'ja'
+    ? new Set(['。', '！', '？', '!', '?'])
+    : new Set(['.', '!', '?']);
+  const sentences: Array<{ text: string; start: number; end: number }> = [];
+  let sentenceStart = 0;
+  let index = 0;
+  while (index < protectedText.length) {
+    if (!terminators.has(protectedText[index])) {
+      index += 1;
+      continue;
+    }
+    let end = index + 1;
+    while (end < protectedText.length && terminators.has(protectedText[end])) end += 1;
+    while (end < protectedText.length && closingPunctuation.has(protectedText[end])) end += 1;
+    if (language === 'ja' || end === protectedText.length || /\s/u.test(protectedText[end])) {
+      const sentence = trimSentenceSegment(
+        text.slice(sentenceStart, end),
+        paragraphStart + sentenceStart,
+      );
+      if (sentence) sentences.push(sentence);
+      sentenceStart = end;
+    }
+    index = end;
+  }
+  if (sentenceStart < text.length) {
+    const sentence = trimSentenceSegment(
+      text.slice(sentenceStart),
+      paragraphStart + sentenceStart,
+    );
+    if (sentence) sentences.push(sentence);
+  }
+  if (sentences.length) return sentences;
+
+  const fallback = text.trim();
+  if (!fallback) return [];
+  const start = paragraphStart + (text.match(/^\s*/)?.[0].length ?? 0);
+  return [{ text: fallback, start, end: start + fallback.length }];
+};
+
+const splitLegacyTextSentences = (
   text: string,
   paragraphStart: number,
   language: SentenceLanguage,
@@ -79,7 +162,11 @@ export const splitTextSentences = (
   return [{ text: fallback, start, end: start + fallback.length }];
 };
 
-export const buildLanguageParagraphs = (value: string, language: SentenceLanguage): SentenceParagraph[] => {
+export const buildLanguageParagraphs = (
+  value: string,
+  language: SentenceLanguage,
+  mode: SentenceSplitMode = 'deterministic',
+): SentenceParagraph[] => {
   const chunks = value.split(paragraphBreakPattern);
   const paragraphs: SentenceParagraph[] = [];
   let cursor = 0;
@@ -99,7 +186,8 @@ export const buildLanguageParagraphs = (value: string, language: SentenceLanguag
     if (end > start) {
       const paragraphIndex = paragraphs.length;
       const paragraphText = value.slice(start, end);
-      const sentences = splitTextSentences(paragraphText, start, language).map((sentence, sentenceIndex) => {
+      const splitSentences = mode === 'legacy' ? splitLegacyTextSentences : splitTextSentences;
+      const sentences = splitSentences(paragraphText, start, language).map((sentence, sentenceIndex) => {
         sentenceCounter += 1;
         return {
           key: `${language}-p${paragraphIndex}-s${sentenceIndex}`,
@@ -185,9 +273,13 @@ const assignPairKeys = (
   };
 };
 
-export const buildSentenceAlignment = (bodyEn: string, bodyJa?: string | null): SentenceAlignment => {
-  const englishParagraphs = buildLanguageParagraphs(bodyEn, 'en');
-  const japaneseBaseParagraphs = bodyJa ? buildLanguageParagraphs(bodyJa, 'ja') : [];
+export const buildSentenceAlignment = (
+  bodyEn: string,
+  bodyJa?: string | null,
+  mode: SentenceSplitMode = 'legacy',
+): SentenceAlignment => {
+  const englishParagraphs = buildLanguageParagraphs(bodyEn, 'en', mode);
+  const japaneseBaseParagraphs = bodyJa ? buildLanguageParagraphs(bodyJa, 'ja', mode) : [];
   const japaneseParagraphs = regroupJapaneseParagraphs(englishParagraphs, japaneseBaseParagraphs);
   return assignPairKeys(englishParagraphs, japaneseParagraphs);
 };

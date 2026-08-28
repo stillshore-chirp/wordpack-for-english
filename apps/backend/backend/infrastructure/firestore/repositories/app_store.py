@@ -451,6 +451,10 @@ class AppFirestoreRepository:
         quiz_id: str | None = None,
         result_json: str | None = None,
         error: str | None = None,
+        error_code: str | None = None,
+        attempt_count: int | None = None,
+        attempt_limit: int | None = None,
+        retry_phase: str | None = None,
     ) -> Mapping[str, Any] | None:
         return self.quizzes.update_quiz_generation_job(
             job_id,
@@ -458,6 +462,10 @@ class AppFirestoreRepository:
             quiz_id=quiz_id,
             result_json=result_json,
             error=error,
+            error_code=error_code,
+            attempt_count=attempt_count,
+            attempt_limit=attempt_limit,
+            retry_phase=retry_phase,
         )
 
     def get_quiz_generation_job(self, job_id: str) -> Mapping[str, Any] | None:

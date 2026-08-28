@@ -24,13 +24,16 @@ export interface NotificationItem {
   jobId?: string | null; // 任意: 非同期再生成ジョブの状態確認用
   jobType?: NotificationJobType | null; // 任意: ジョブ状態APIの判別用
   articleId?: string | null; // 任意: 文章インポート完了結果の参照用
+  attemptCount?: number | null;
+  attemptLimit?: number | null;
+  retryPhase?: string | null;
   pollingOwner?: NotificationPollingOwner | null; // 現在の画面が能動poll中かを示す非永続状態
 }
 
 interface NotificationsContextValue {
   notifications: NotificationItem[];
-  add: (input: { title: string; message?: string; status?: NotificationStatus; id?: string; model?: string; category?: string; wordPackId?: string | null; lemma?: string | null; jobId?: string | null; jobType?: NotificationJobType | null; articleId?: string | null; pollingOwner?: NotificationPollingOwner | null }) => string;
-  update: (id: string, patch: Partial<Pick<NotificationItem, 'title' | 'message' | 'status' | 'model' | 'category' | 'wordPackId' | 'lemma' | 'jobId' | 'jobType' | 'articleId' | 'pollingOwner'>>) => void;
+  add: (input: { title: string; message?: string; status?: NotificationStatus; id?: string; model?: string; category?: string; wordPackId?: string | null; lemma?: string | null; jobId?: string | null; jobType?: NotificationJobType | null; articleId?: string | null; attemptCount?: number | null; attemptLimit?: number | null; retryPhase?: string | null; pollingOwner?: NotificationPollingOwner | null }) => string;
+  update: (id: string, patch: Partial<Pick<NotificationItem, 'title' | 'message' | 'status' | 'model' | 'category' | 'wordPackId' | 'lemma' | 'jobId' | 'jobType' | 'articleId' | 'attemptCount' | 'attemptLimit' | 'retryPhase' | 'pollingOwner'>>) => void;
   remove: (id: string) => void;
   clearAll: () => void;
 }
@@ -85,6 +88,9 @@ export const NotificationsProvider: React.FC<{ children: React.ReactNode } & { p
       jobId: input.jobId,
       jobType: input.jobType,
       articleId: input.articleId,
+      attemptCount: input.attemptCount,
+      attemptLimit: input.attemptLimit,
+      retryPhase: input.retryPhase,
       pollingOwner: input.pollingOwner,
     };
     setNotifications((prev) => {

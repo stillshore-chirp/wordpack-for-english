@@ -175,6 +175,7 @@ class Quiz(BaseModel):
     generation_started_at: str | None = None
     generation_completed_at: str | None = None
     generation_duration_ms: int | None = Field(default=None, ge=0)
+    translation_alignment_version: Literal["deterministic_v1"] | None = None
     guest_public: bool = False
     created_at: str
     updated_at: str
@@ -342,3 +343,7 @@ class QuizGenerationJobResponse(BaseModel):
     quiz_id: str | None = None
     result: Quiz | None = None
     error: str | None = None
+    error_code: str | None = None
+    attempt_count: int = Field(default=0, ge=0)
+    attempt_limit: int = Field(default=5, ge=1)
+    retry_phase: Literal["generation", "json_repair", "translation_alignment"] | None = None

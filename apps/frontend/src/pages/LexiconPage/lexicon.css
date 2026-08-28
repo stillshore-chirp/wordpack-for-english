@@ -446,6 +446,24 @@
   background: linear-gradient(90deg, #2f73ff, #71a1ff);
 }
 
+.generation-queue-progress span.is-indeterminate {
+  width: 36%;
+  animation: generation-queue-progress-indeterminate 1.4s ease-in-out infinite;
+}
+
+@keyframes generation-queue-progress-indeterminate {
+  0% { transform: translateX(-110%); }
+  100% { transform: translateX(310%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .generation-queue-progress span.is-indeterminate {
+    width: 100%;
+    animation: none;
+    opacity: 0.72;
+  }
+}
+
 .generation-queue-item__remove {
   width: 100%;
   min-height: 2.15rem;

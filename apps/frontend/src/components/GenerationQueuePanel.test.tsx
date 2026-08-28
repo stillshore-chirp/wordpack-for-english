@@ -111,6 +111,32 @@ const setupFetchMocks = () => {
         headers: { 'Content-Type': 'application/json' },
       });
     }
+    if (url.endsWith('/api/quiz/generate/jobs/quiz-job%3Aretry')) {
+      return new Response(JSON.stringify({
+        job_id: 'quiz-job:retry',
+        status: 'running',
+        attempt_count: 3,
+        attempt_limit: 5,
+        retry_phase: 'translation_alignment',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+    if (url.endsWith('/api/quiz/generate/jobs/quiz-job%3Afailed')) {
+      return new Response(JSON.stringify({
+        job_id: 'quiz-job:failed',
+        status: 'failed',
+        error_code: 'QUIZ_TRANSLATION_ALIGNMENT_FAILED',
+        error: '英文と日本語訳の文対応を確認できなかったため、5回試行後にQuiz生成を停止しました。時間をおいてもう一度生成してください。',
+        attempt_count: 5,
+        attempt_limit: 5,
+        retry_phase: 'translation_alignment',
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
     if (url.endsWith('/api/article/generate_and_import/jobs/category-job%3Aalpha')) {
       return new Response(JSON.stringify({
         job_id: 'category-job:alpha',
@@ -430,6 +456,59 @@ describe('GenerationQueuePanel', () => {
     ).toBe(true);
     expect(quizUpdated).toHaveBeenCalledOnce();
     window.removeEventListener('quiz:updated', quizUpdated);
+  });
+
+  it('再読込後のQuiz生成ジョブへ文対応の再試行状況を反映する', async () => {
+    const persistedAt = Date.now() - 10 * 1000;
+    localStorage.setItem(
+      'wpfe.notifications.v1',
+      JSON.stringify([{
+        id: 'n-restored-quiz-retry',
+        title: 'Quiz生成中',
+        message: '生成はサーバーで継続中です',
+        status: 'progress',
+        createdAt: persistedAt,
+        updatedAt: persistedAt,
+        model: 'gpt-5.6-luna',
+        jobId: 'quiz-job:retry',
+        jobType: 'quiz-generation',
+      }]),
+    );
+    renderQueue();
+
+    expect(await screen.findByText('文対応を再確認しています（3/5）')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: /生成試行状況/ }))
+      .not.toHaveAttribute('aria-valuenow');
+    await waitFor(() => {
+      const persisted = JSON.parse(localStorage.getItem('wpfe.notifications.v1') || '[]');
+      expect(persisted[0]).toMatchObject({
+        attemptCount: 3,
+        attemptLimit: 5,
+        retryPhase: 'translation_alignment',
+      });
+    });
+  });
+
+  it('5回目の文対応失敗を利用者向けメッセージで表示する', async () => {
+    const persistedAt = Date.now() - 10 * 1000;
+    localStorage.setItem(
+      'wpfe.notifications.v1',
+      JSON.stringify([{
+        id: 'n-restored-quiz-failed',
+        title: 'Quiz生成中',
+        message: '生成はサーバーで継続中です',
+        status: 'progress',
+        createdAt: persistedAt,
+        updatedAt: persistedAt,
+        model: 'gpt-5.6-luna',
+        jobId: 'quiz-job:failed',
+        jobType: 'quiz-generation',
+      }]),
+    );
+    renderQueue();
+
+    expect(await screen.findByText(/5回試行後にQuiz生成を停止しました/)).toBeInTheDocument();
+    expect(screen.getByText('Quiz生成失敗')).toBeInTheDocument();
   });
 
   it('再読込後のカテゴリ生成・記事化ジョブはWordPackと記事を更新する', async () => {

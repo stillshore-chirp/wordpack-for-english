@@ -30,8 +30,29 @@ def test_quiz_prompt_requests_aligned_translation_paragraphs_and_detailed_explan
         avoid_topics=[],
     )
 
-    assert "Keep the same paragraph breaks as body_en" in prompt
+    assert "Preserve the exact paragraph structure of body_en" in prompt
+    assert "translate every English sentence into exactly one Japanese sentence" in prompt
+    assert "Do not split, combine, omit, or reorder sentences" in prompt
     assert "about 2 to 4 clear Japanese sentences" in prompt
     assert "must include only incorrect choice ids" in prompt
     assert "must omit correct_choice_id" in prompt
     assert "Do not return only a tiny keyword fragment" in prompt
+
+
+def test_quiz_prompt_applies_alignment_contract_to_optional_translation() -> None:
+    prompt = build_quiz_generation_prompt(
+        format_profile=QuizFormatProfile.single_passage,
+        generation_domain=QuizGenerationDomain.technical,
+        domain_intensity=QuizDomainIntensity.standard,
+        difficulty=QuizDifficulty.medium,
+        lemmas=["latency"],
+        section_count=1,
+        questions_per_section=1,
+        include_translation=False,
+        topic_seed=None,
+        avoid_topics=[],
+    )
+
+    assert "Set body_ja to null unless translation is essential" in prompt
+    assert "If body_ja is included" in prompt
+    assert "translate every English sentence into exactly one Japanese sentence" in prompt

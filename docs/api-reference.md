@@ -272,7 +272,22 @@ Quiz API は保存済み WordPack や lemma から長文読解 Quiz を生成、
 
 指定 Quiz の詳細を返します。ゲスト閲覧では非公開 Quiz は 404 です。Attempt 保存はログイン済みユーザーのみ利用できます。
 
-新規生成 Quiz は `generation_provenance` に生成・必要時の修復呼び出し来歴を持ちます。導入前の保存データでは空配列です。
+新規生成 Quiz は `generation_provenance` に最終成功呼び出しの来歴を持ちます。導入前の保存データでは空配列です。
+
+新規生成 Quiz は、英文と日本語訳について段落数と各対応段落内の文数が一致した場合だけ保存されます。文対応が一致しない場合はQuiz全体を再生成し、初回生成とJSON修復を含むLLM呼び出し合計5回まで試行します。失敗した生成本文はQuizへ保存しません。
+
+整合確認済みの新規Quizには `translation_alignment_version: "deterministic_v1"` を保存し、表示時も生成時と同じ分割規則を使います。フィールドがない既存Quizは従来の表示分割を維持し、移行・自動再生成しません。
+
+### `POST /api/quiz/generate/jobs` / `GET /api/quiz/generate/jobs/{job_id}`
+
+生成ジョブは次の進捗フィールドを返します。
+
+- `attempt_count`: 実行を開始したLLM呼び出し回数
+- `attempt_limit`: 上限。現在は `5`
+- `retry_phase`: `generation`、`json_repair`、`translation_alignment` のいずれか
+- `error_code`: 失敗時の機械判定用コード
+
+`QUIZ_TRANSLATION_ALIGNMENT_FAILED` は5回試行しても段落別の文数対応が一致しなかったこと、`QUIZ_JSON_PARSE_FAILED` は生成結果のJSON形式を確認できなかったことを示します。試行理由、対象passage・paragraph、英日文数は本文を含めずCloud LoggingとLangfuseの観測メタデータへ記録します。
 
 ### `POST /api/quiz/{id}/guest-public`
 

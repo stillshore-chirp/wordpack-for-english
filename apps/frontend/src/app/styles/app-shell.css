@@ -489,6 +489,7 @@ body.theme-dark .guest-badge {
 
 .main-inner {
   box-sizing: border-box;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   max-width: var(--main-max-width);
@@ -581,6 +582,10 @@ body.theme-dark .guest-badge {
 }
 
 @media (max-width: 900px) {
+  .app-shell {
+    overflow-x: clip;
+  }
+
   .sidebar {
     position: fixed;
     top: 0;
