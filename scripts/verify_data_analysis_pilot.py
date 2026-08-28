@@ -5,10 +5,13 @@ from __future__ import annotations
 
 import argparse
 import csv
+import errno
+import os
 from collections import defaultdict
 from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 REQUIRED_COLUMNS = (
     "week_start",
@@ -59,8 +62,17 @@ def public_source_label(source: Path) -> str:
 def ensure_output_path_is_distinct(source: Path, output: Path) -> None:
     """Reject output paths that resolve to the input source."""
 
-    if source.resolve() == output.resolve():
+    source_resolved = source.resolve()
+    output_resolved = output.resolve()
+    if source_resolved == output_resolved:
         fail("output path must differ from source path")
+    try:
+        if source_resolved.samefile(output_resolved):
+            fail("output path must not share the same file identity as source")
+    except FileNotFoundError:
+        pass
+    except OSError as exc:
+        fail(f"cannot verify source/output file identity: {type(exc).__name__}")
 
 
 def _table_column_count(row: str) -> int:
@@ -557,6 +569,45 @@ def run_self_test() -> None:
         fail("self-test failed: source/output collision was accepted")
     if fixture_source_path.read_bytes() != fixture_source_before:
         fail("self-test failed: source changed during output collision rejection")
+    with TemporaryDirectory() as directory:
+        hard_link_source = Path(directory) / "source.csv"
+        hard_link_output = Path(directory) / "hard-link.csv"
+        hard_link_source.write_bytes(fixture_source_before)
+        try:
+            os.link(hard_link_source, hard_link_output)
+        except (AttributeError, NotImplementedError):
+            print("Hard-link collision self-test: SKIP (platform does not expose hard links)")
+        except OSError as exc:
+            unavailable = {
+                errno.EACCES,
+                errno.EXDEV,
+                errno.ENOSYS,
+                errno.ENOTSUP,
+                errno.EOPNOTSUPP,
+                errno.EPERM,
+            }
+            if exc.errno in unavailable:
+                print(
+                    "Hard-link collision self-test: SKIP "
+                    f"(filesystem does not support the test: errno {exc.errno})"
+                )
+            else:
+                fail(
+                    "self-test failed: hard-link fixture could not be created: "
+                    f"{type(exc).__name__}"
+                )
+        else:
+            hard_link_source_before = hard_link_source.read_bytes()
+            try:
+                write_report(hard_link_source, hard_link_output, fixture_report)
+            except SystemExit as exc:
+                if "same file identity" not in str(exc):
+                    fail(f"self-test failed: unexpected hard-link rejection: {exc}")
+            else:
+                fail("self-test failed: hard-link output collision was accepted")
+            if hard_link_source.read_bytes() != hard_link_source_before:
+                fail("self-test failed: source changed during hard-link collision rejection")
+            print("Hard-link collision self-test: PASS")
     external_source = REPOSITORY_ROOT.parent / "private-input.csv"
     external_report = build_report(external_source, fixture_rows)
     if "<external source>" not in external_report:
