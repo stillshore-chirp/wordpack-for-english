@@ -4,12 +4,13 @@
 from __future__ import annotations
 
 import argparse
-import re
 import subprocess
 import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from urllib.parse import unquote
+
+from markdown_it import MarkdownIt
 
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_ROOT = ROOT / ".agents" / "skills"
@@ -26,9 +27,6 @@ MAX_SKILL_BYTES = 16_384
 MAX_ADAPTER_LINES = 30
 MAX_ADAPTER_BYTES = 4_096
 MAX_REFERENCE_BYTES = 32_768
-LINK_PATTERN = re.compile(r"\]\(([^)]+)\)")
-FENCED_CODE_PATTERN = re.compile(r"(?ms)^\s*(```|~~~).*?^\s*\1\s*$")
-HTML_COMMENT_PATTERN = re.compile(r"<!--.*?-->", re.DOTALL)
 LOCAL_PATH_PATTERNS = ("/Users/", "/home/", "C:\\Users\\")
 TOOL_COMMAND_PATTERNS = (
     "start_codex_security_",
@@ -98,22 +96,25 @@ def local_markdown_targets(
     content: str,
     root: Path = ROOT,
 ) -> set[Path]:
-    rendered = HTML_COMMENT_PATTERN.sub("", content)
-    rendered = FENCED_CODE_PATTERN.sub("", rendered)
     targets: set[Path] = set()
-    for match in LINK_PATTERN.finditer(rendered):
-        target = unquote(match.group(1).strip())
-        if target.startswith("<") and target.endswith(">"):
-            target = target[1:-1].strip()
-        target = target.split("#", 1)[0].strip()
-        if not target or target.startswith(("https://", "http://", "mailto:")):
+    for block_token in MarkdownIt("commonmark").parse(content):
+        if block_token.type != "inline":
             continue
-        resolved = (router_path.parent / target).resolve()
-        try:
-            resolved.relative_to(root.resolve())
-        except ValueError:
-            continue
-        targets.add(resolved)
+        for child in block_token.children or []:
+            if child.type != "link_open":
+                continue
+            target = child.attrs.get("href") if child.attrs else None
+            if not target:
+                continue
+            target = unquote(target.split("#", 1)[0].strip())
+            if not target or target.startswith(("https://", "http://", "mailto:")):
+                continue
+            resolved = (router_path.parent / target).resolve()
+            try:
+                resolved.relative_to(root.resolve())
+            except ValueError:
+                continue
+            targets.add(resolved)
     return targets
 
 
@@ -123,17 +124,22 @@ def check_portability(path: Path, content: str) -> None:
 
 
 def check_reference_links(skill_path: Path, content: str) -> None:
-    for match in LINK_PATTERN.finditer(content):
-        target = unquote(match.group(1).split("#", 1)[0].strip())
-        if not target.startswith("references/"):
+    for block_token in MarkdownIt("commonmark").parse(content):
+        if block_token.type != "inline":
             continue
-        resolved = (skill_path.parent / target).resolve()
-        try:
-            resolved.relative_to(skill_path.parent.resolve())
-        except ValueError:
-            fail(f"{relative(skill_path)} reference escapes its Skill directory: {target}")
-        if not resolved.is_file():
-            fail(f"{relative(skill_path)} has a broken reference: {target}")
+        for child in block_token.children or []:
+            if child.type != "link_open" or not child.attrs:
+                continue
+            target = unquote(child.attrs.get("href", "").split("#", 1)[0].strip())
+            if not target.startswith("references/"):
+                continue
+            resolved = (skill_path.parent / target).resolve()
+            try:
+                resolved.relative_to(skill_path.parent.resolve())
+            except ValueError:
+                fail(f"{relative(skill_path)} reference escapes its Skill directory: {target}")
+            if not resolved.is_file():
+                fail(f"{relative(skill_path)} has a broken reference: {target}")
 
 
 def check_skill_tree(skill_path: Path) -> None:
@@ -168,6 +174,31 @@ def run_self_test() -> None:
         )
         if skill.resolve() in local_markdown_targets(router, hidden, root):
             fail("self-test failed: non-rendered router link was accepted")
+
+        non_linked = (
+            "`[sample](.agents/skills/sample/SKILL.md)`\n"
+            "\n"
+            "    [sample](.agents/skills/sample/SKILL.md)\n"
+            "````md\n[sample](.agents/skills/sample/SKILL.md)\n````\n"
+            "![sample](.agents/skills/sample/SKILL.md)\n"
+        )
+        if skill.resolve() in local_markdown_targets(router, non_linked, root):
+            fail("self-test failed: non-link Markdown syntax was accepted")
+
+        adapter = root / ".claude" / "skills" / "sample" / "SKILL.md"
+        adapter.parent.mkdir(parents=True)
+        expected_link = "../../../.agents/skills/sample/SKILL.md"
+        if skill.resolve() not in local_markdown_targets(
+            adapter, f"[sample]({expected_link})\n", root
+        ):
+            fail("self-test failed: rendered adapter link was not resolved")
+        adapter_non_link = (
+            f"`[sample]({expected_link})`\n"
+            f"![sample]({expected_link})\n"
+            f"[sample]({expected_link}.bak)\n"
+        )
+        if skill.resolve() in local_markdown_targets(adapter, adapter_non_link, root):
+            fail("self-test failed: invalid adapter link was accepted")
 
         oversized = ("line\n" * (MAX_NESTED_LINES + 1)).encode()
         if not budget_errors(oversized, MAX_NESTED_LINES, MAX_NESTED_BYTES):
@@ -219,8 +250,9 @@ def verify_repository() -> int:
         if "唯一の手順正本" not in adapter:
             fail(f"{relative(adapter_path)} must identify the canonical Skill")
         expected_link = f"../../../{canonical_path}"
-        if expected_link not in adapter:
-            fail(f"{relative(adapter_path)} must link to {expected_link}")
+        expected_target = (adapter_path.parent / expected_link).resolve()
+        if expected_target not in local_markdown_targets(adapter_path, adapter):
+            fail(f"{relative(adapter_path)} must link exactly to {expected_link}")
 
     for path in [*router_files, *COMMON_CORE_DOCS]:
         content = read_text(path)
