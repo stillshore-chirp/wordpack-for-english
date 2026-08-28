@@ -1,6 +1,6 @@
 ---
 name: ui-ux-review
-description: "アプリ本体またはリポジトリが制御する独自UIの変更レビューと既存フロー監査で、ユーザー価値、状態、アクセシビリティ、視覚階層、コピー、熟練者効率、信頼感を証跡付きで確認する。"
+description: "アプリ本体またはリポジトリが制御する独自UIの変更レビューと既存フロー監査で、変更scopeと由来、ユーザー価値、状態、アクセシビリティ、視覚階層、コピー、熟練者効率、信頼感を証跡付きで確認する。"
 ---
 
 # UI/UXレビュー Skill
@@ -26,17 +26,21 @@ description: "アプリ本体またはリポジトリが制御する独自UIの�
 <!-- agent-harness:uiux-review-routing:start -->
 
 - **UI変更レビュー**: 変更した画面、component、状態、文言、操作を確認する。単一画面の局所変更だけならフロー監査を追加しない。
+- 差分を伴うUI変更レビューでは、変更scopeを先に確定してからUI品質を確認します。
 - **フロー監査**: 既存画面または複数ステップの体験を監査する依頼、または画面遷移を追わなければタスク達成を評価できない場合に使う。
 - **併用**: UI変更が複数ステップの主要タスクへ影響する場合、取得可能な変更前フローを基準にし、変更レビュー後に同じタスクの変更後フローを監査する。片方の証跡で他方を代用しない。
 
 GitHub共同作業面では、GitHubが所有する未変更の操作フローを監査対象へ広げず、リポジトリが制御する文言、構造、表示、リンクに経路を限定します。
+
+差分を伴うUI変更レビューとフロー監査を併用する場合も、変更scopeとcurrent-runのフロー証跡を既存の同じ報告へ接続します。別の監査体系を作らず、変更レビューの証跡だけでフロー監査を代用しません。
 <!-- agent-harness:uiux-review-routing:end -->
 
 ## 3. 読む正本
 
 - 全作業: `AGENTS.md` と変更対象に最も近い `AGENTS.md`
 - UI品質・P0/P1/P2: `docs/ai-governance/02-uiux-review-framework.md`
-- 証跡・完了条件: `docs/ai-governance/03-evidence-and-completion-gates.md`
+- 証跡・完了条件、変更scopeとfindingの由来: `docs/ai-governance/03-evidence-and-completion-gates.md`
+- AIレビューの役割と順序: `docs/ai-governance/09-ai-agent-review-protocol.md`
 - 変更内容に直接関係する詳細文書だけ:
   - 認知・初見理解: `04-cognitive-psychology-principles.md`
   - アクセシビリティ: `05-accessibility-and-inclusive-design.md`
@@ -55,6 +59,13 @@ indexや全詳細文書を機械的に読み直さず、変更範囲から必要
 
 対象surface、対象ユーザー、ユーザー目的、監査対象タスクを特定します。フロー監査では取得手段、開始状態、完了状態、重要な分岐も操作前に定めます。
 
+差分を伴うUI変更レビューでは、品質確認の前に次を確定します。
+
+1. review target、base ref / SHA、head ref / SHA、対象commit数、staged / unstaged差分。
+2. diffの追加側と削除側、Issue / PR / commit messageからの変更意図。
+3. changed fileから直接consumer、parent、route、stateへ展開し、shared primitive、global token、common componentの変更は代表surfaceを追加する。
+4. 確認したcoverage、未確認consumer、除外した生成物等の理由。
+
 ### 4.2 UI変更レビュー
 
 1. 対象ユーザー、目的、主要タスク、変更画面、影響状態を特定する。
@@ -66,7 +77,8 @@ indexや全詳細文書を機械的に読み直さず、変更範囲から必要
 7. 反復操作の手数、入力保持、再選択、shortcut、一括操作、毎回の説明を確認する。
 8. 待機、成功、失敗、危険操作、保存、送信、削除、権限の信頼感を確認する。
 9. 実装を落とす立場で反証レビューし、P0/P1/P2と証跡不足を探す。
-10. 実行した検証、未実行検証、残るリスクを記録する。
+10. 差分を伴う場合は、findingをIntroduced / Regression / Pre-existingへ分類し、Pre-existingを今回の完了判定から分離する。
+11. 実行した検証、未実行検証、残るリスクを記録する。
 
 ### 4.3 フロー監査
 
@@ -80,13 +92,15 @@ indexや全詳細文書を機械的に読み直さず、変更範囲から必要
 
 ### 4.4 併用
 
-併用時の順序は、共通準備、変更前フロー監査、UI変更レビュー、変更後の同一フロー監査です。新規フローなど変更前を取得できない場合は、取得不能な重要ステップごとのblocker、仕様・既存testなどの代替基準、残る比較リスクを示します。
+併用時の順序は、共通準備、変更scopeの確定、変更前フロー監査、UI変更レビュー、変更後の同一フロー監査です。新規フローなど変更前を取得できない場合は、取得不能な重要ステップごとのblocker、仕様・既存testなどの代替基準、残る比較リスクを示します。
 
 ## 5. 証跡
 
 アプリ本体UIでは [`docs/ai-governance/03-evidence-and-completion-gates.md`](../../../docs/ai-governance/03-evidence-and-completion-gates.md) に従い、該当画面・状態の前後screenshot、テスト、手動確認、state matrix、各レビュー結果を残します。
 
 フロー監査の証跡セットと採否は、`03-evidence-and-completion-gates.md` に従います。
+
+変更差分reviewのscope、追加・削除、変更意図、影響surface、findingの由来は、同じ03の変更scope証跡へ記録します。フロー監査を併用する場合は、stepごとのcurrent-run証跡と変更由来findingを別欄で追跡します。
 
 前後screenshotを取得できない場合は、取得不能理由、代替証跡、残るリスク、次に必要な確認を示し、取得必須の変更を完了扱いにしません。
 
@@ -97,6 +111,8 @@ GitHub共同作業面だけの場合は、差分、Markdown / form構造、リ�
 - P0が残る場合は完了不可。
 - P1は原則として同じ変更内で修正し、分離する場合は理由と追跡先を示す。
 - P2は完了を止めないが、対応しない理由または後続先を記録する。
+- 変更差分reviewでは、target、base / head、変更意図、追加・削除、影響surface、coverageを記録する。
+- Pre-existingは今回の変更責任と完了判定から分離し、必要なら別Issueまたはscope変更として扱う。
 - フロー監査で必須証跡または具体的なblockerがなく、findingを対応する証跡へ追跡できない場合は完了不可。
 - screenshotだけからaccessibilityや未観測の挙動を断定しない。
 - screenshot、test、ユーザーフィードバック、アクセシビリティ結果を捏造しない。

@@ -1,6 +1,6 @@
 # 証跡と完了ゲート
 
-この文書は、アプリ本体UIとGitHub共同作業面を区別し、変更を完了扱いするための証跡と判定条件を定義します。
+この文書は、アプリ本体UIとGitHub共同作業面を区別し、変更を完了扱いするための証跡と判定条件を定義します。UI変更レビューで差分を扱う場合は、比較snapshot、追加・削除、影響coverage、変更意図、findingの由来を既存の証跡へ統合します。
 
 ## 1. 対象面
 
@@ -15,7 +15,24 @@
 
 表示場所だけで分類しません。GitHub PagesやGitHub Appなど、リポジトリが独自のlayout、操作、状態を実装する場合はアプリ本体UIです。
 
-## 2. アプリ本体UIの証跡
+## 2. 変更scopeの証跡
+
+差分を伴うUI変更レビューでは、UI品質を判定する前に、比較対象と影響範囲を次の記録へ固定します。これはUI影響を確認するための証跡であり、GitHub配送一般の完了条件を定義するものではありません。
+
+| 項目 | 記録 |
+|---|---|
+| Target snapshot / ref | working tree、commit range、branch、PR等のレビュー対象と識別子 |
+| Base ref / SHA、Head ref / SHA | 比較に使ったbaseとhead |
+| Commit / diff | 対象commit数、staged / unstaged、追加側・削除側 |
+| Intent | Issue、PR本文、commit message、受け入れ条件から確認した変更意図 |
+| Expanded surfaces | changed fileの直接consumer、parent、route、state、代表surface |
+| Coverage / unknowns | 確認したsurface、未確認consumer、除外とその理由 |
+
+変更fileは証拠の入口であり、レビュー対象を直接変更箇所だけに限定しません。shared primitive、global style / token、common component、theme等の変更は、代表的なconsumer surfaceへ展開し、確認できない範囲を未確認として残します。
+
+追加側と削除側を同じ重さで確認します。削除されたlabel、semantic element、focus、state、error recovery、responsive rule、copy、token等に等価な代替があるかを確認し、削除行の存在だけでfindingを断定しません。
+
+## 3. アプリ本体UIの証跡
 
 変更に該当する範囲で、次を残します。
 
@@ -46,7 +63,7 @@
 
 受け入れ条件または変更内容上screenshotが必須なのに取得できない場合は、完了扱いにしません。
 
-## 3. フロー監査の証跡
+## 4. フロー監査の証跡
 
 既存画面または複数ステップの体験を監査する場合は、対象面に応じた既存証跡へ次を追加します。
 
@@ -61,7 +78,23 @@
 
 フローを完走できない、重要ステップを取得・保存・検査できない、または必要な主張を実行証跡で支えられない場合はblockerです。取得手段・環境のblockerは証跡の状態として製品findingのseverityと分けます。監査できた部分を報告することはできますが、完全なフロー監査として完了扱いにしません。
 
-## 4. GitHub共同作業面の証跡
+UI変更レビューとフロー監査を併用する場合は、変更scopeの比較証跡と、各stepのcurrent-run証跡を同じ報告へ接続します。変更差分の証跡だけでフローを監査済みとせず、フローのscreenshotやstep記録だけでbase / headの変更由来を断定しません。
+
+## 5. 変更由来findingの証跡
+
+差分を伴うUI変更レビューでは、各findingを次のいずれかへ分類します。分類はbase / head、diff、必要な描画・操作・test証跡で支え、単なる変更箇所の近さで決めません。
+
+| Change status | 判定 |
+|---|---|
+| Introduced | head側の今回の変更が、新しい問題を作った。 |
+| Regression | base側で成立していた品質が、今回の変更で弱くなった。 |
+| Pre-existing | base側でも同じ問題があり、今回の変更が作成・弱体化していない。 |
+
+IntroducedとRegressionは今回の変更のfindingとしてP0 / P1 / P2、修正状態、証跡を記録します。Pre-existingは影響に応じた優先度を記録した上で、今回の変更責任、変更起因findingの件数・P0 / P1 / P2集計、完了可否から分離し、必要なら別Issueまたはscope変更として追跡します。今回の目的達成や安全性を妨げる場合は、別Issue化だけで完了扱いにせず、scopeと完了判断を明示的に見直します。
+
+同じroot causeは一件へ統合し、影響するsurfaceを列挙します。未確認consumerをreview済み、またはPre-existingを今回の修正済みとして表現しません。
+
+## 6. GitHub共同作業面の証跡
 
 Issue / PR template、repository Markdown、workflowの入力・説明などでは、次を確認します。
 
@@ -74,7 +107,7 @@ Issue / PR template、repository Markdown、workflowの入力・説明などで�
 
 GitHubが所有し、リポジトリが変更していないlayout、keyboard、focus、loading、permission stateへ、アプリ本体UIと同じstate matrixやaccessibility証跡を要求しません。screenshotは、リポジトリが制御する視覚構成・操作が実質的に変わる場合、受け入れ条件に含まれる場合、または明示依頼がある場合に必要です。
 
-## 5. 完了ゲート
+## 7. 完了ゲート
 
 ### 共通
 
@@ -93,6 +126,14 @@ GitHubが所有し、リポジトリが変更していないlayout、keyboard、
 - accessibility、視覚階層、copy、熟練者効率、信頼感を確認している。
 - 反証レビューを実施している。
 - 必要な前後screenshotをPRで確認できる。
+
+### UI変更レビュー（差分を伴う場合）
+
+- target snapshot / ref、base / head、変更意図、追加側・削除側が記録されている。
+- changed fileから直接consumerへ展開し、shared primitive、global token、common component等は代表surfaceを追加確認している。
+- coverage、未確認consumer、除外理由を示している。
+- IntroducedとRegressionを今回の判定対象としている。
+- Pre-existingを今回の変更責任と完了判定から分離している。
 
 ### フロー監査
 
@@ -113,7 +154,7 @@ PRをマージ可能な状態として報告する場合は、次を満たしま
 
 ソースコード変更でコードレビューが提供されない場合、代替自己レビューは補助証跡に限り、マージ可能状態の代替にしません。同じheadでclean reviewを複数回集める必要はありません。指摘対応でheadが変わった場合だけ、CIと該当reviewを再確認します。mergeまたはcloseは別の明示指示がある場合だけ行います。
 
-## 6. 推奨検証
+## 8. 推奨検証
 
 環境と変更範囲に応じて選びます。
 
@@ -130,6 +171,6 @@ PRをマージ可能な状態として報告する場合は、次を満たしま
 
 利用できない検証は、存在しない成果物として捏造せず、理由と残るリスクを報告します。
 
-## 7. 報告
+## 9. 報告
 
 `templates/completion-gate-report.md` を使うか、同等の情報をPR本文へ記録します。空の項目を定型的なN/Aで埋めるより、今回の対象面と未確認範囲が明確な報告を優先します。

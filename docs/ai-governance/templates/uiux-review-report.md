@@ -4,10 +4,24 @@
 
 - 対象PR / 作業:
 - 変更した画面・コンポーネント:
+- review route: UI変更レビュー / フロー監査 / 併用
 - 判定: Pass / Fail
 - P0件数:
 - P1件数:
 - P2件数:
+
+### 変更scope（UI変更レビューで差分がある場合）
+
+| 項目 | 内容 |
+|---|---|
+| Target snapshot / ref |  |
+| Base ref / SHA |  |
+| Head ref / SHA |  |
+| Commit / staged・unstaged diff |  |
+| 追加側・削除側 |  |
+| 変更意図（Issue / PR / commit） |  |
+| Expanded surfaces | 直接consumer、parent、route、state、代表surface |
+| Coverage / 未確認consumer / 除外理由 |  |
 
 ## 2. ユーザー価値
 
@@ -91,9 +105,15 @@
 
 ## 11. 指摘一覧
 
-| 優先度 | 箇所 | 問題 | 影響 | 修正案 | 状態 |
-|---|---|---|---|---|---|
-| P0/P1/P2 |  |  |  |  | 未対応/対応済 |
+| 優先度 | Change status | Domain | 箇所 | 問題 | 影響 | 修正案 | 状態 |
+|---|---|---|---|---|---|---|---|
+| P0/P1/P2 | Introduced / Regression |  |  |  |  |  | 未対応/対応済 |
+
+Pre-existingは今回の変更findingと完了判定へ混ぜず、次の欄へ分離します。
+
+| Pre-existingの優先度 | 箇所 | 観測事実・証跡 | 今回の判定から分離する理由 | 別Issue / 後続 |
+|---|---|---|---|---|
+|  |  |  |  |  |
 
 ## 12. 証跡
 
@@ -112,9 +132,11 @@
 |---|---|---|---|---|
 |  |  |  |  |  |
 
-| Finding / P0・P1・P2 | Step / screenshot | 観測事実 | ユーザー影響 | 推奨対応 | 証跡上の限界 |
-|---|---|---|---|---|---|
-|  |  |  |  |  |  |
+| Finding / P0・P1・P2 | Change status | Step / screenshot | 観測事実 | ユーザー影響 | 推奨対応 | 証跡上の限界 |
+|---|---|---|---|---|---|---|
+|  | Introduced / Regression / Pre-existing |  |  |  |  |  |
+
+Pre-existingを含む場合は上の分離欄にも記録し、変更起因の件数と完了判定から除外します。
 
 ## 13. 実行した検証
 
