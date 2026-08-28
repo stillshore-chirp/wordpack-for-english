@@ -48,12 +48,16 @@
 
 - Backend全体: 472 passed / 1 skipped
 - Backend追加・関連: 19 passed
+- Frontend全体: 253 passed / 1 skipped
 - Frontend focused: 7 passed
 - Frontend typecheck: passed
 - Frontend architecture boundary: passed
+- Backend architecture / workflow policy: 24 passed
 - Playwright server query: 3 passed（390px、44px操作領域、axeを含む）
-- Playwright visual focused (macOS): 2 passed、意図した件数ラベル・操作領域差分でbaseline更新
-- Frontend全体、Playwright smoke、Linux visual、workflow検査: 最終HEADで実行する
+- Playwright smoke: 12 passed
+- Playwright visual (macOS): 9 passed、意図した件数ラベル・操作領域差分でbaseline更新
+- Security text scan / agent harness / AI governance: passed
+- Linux visual: GitHub Actionsで確認する
 
 ## 公開安全性
 
@@ -63,3 +67,4 @@
 
 - suffix / contains検索とfacet集計では、認可範囲内の軽量一覧documentを全件読み出す。数千件規模ではFirestore read量とp95を監視し、必要に応じて検索indexまたは集計用read modelへ移行する。
 - 固定mock E2Eは実Firestoreのindex・read costや本番認可設定を検証しない。認可境界はbackend API testで分離して確認する。
+- ローカルBackend全体検証はpytest用in-memory Firestore clientを使用し、実Firestore Emulator統合1件はskipした。CIではJava 21とFirestore Emulatorを起動して確認する。
