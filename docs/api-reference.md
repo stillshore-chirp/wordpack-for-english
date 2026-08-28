@@ -139,11 +139,36 @@ Query:
 | `sort_key` | `created_at` / `updated_at` / `lemma` / `total_examples` | `created_at` | 並び順の基準 |
 | `sort_order` | `asc` / `desc` | `desc` | 昇順または降順 |
 
+Example request:
+
+```http
+GET /api/word/packs?visibility=public&limit=200&offset=0
+```
+
 Response:
 
 ```json
 {
-  "items": [],
+  "items": [
+    {
+      "id": "wp:example-public",
+      "lemma": "example",
+      "sense_title": "例を示すもの",
+      "created_at": "2026-08-28T01:00:00Z",
+      "updated_at": "2026-08-28T02:00:00Z",
+      "is_empty": false,
+      "examples_count": {
+        "Dev": 1,
+        "CS": 0,
+        "LLM": 0,
+        "Business": 0,
+        "Common": 0
+      },
+      "checked_only_count": 0,
+      "learned_count": 0,
+      "guest_public": true
+    }
+  ],
   "total": 201,
   "filtered_total": 1,
   "facet_counts": {
