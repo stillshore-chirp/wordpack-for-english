@@ -2,7 +2,7 @@ name: Agent harness governance
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main, develop, 'agent/**']
     paths:
       - 'AGENTS.md'
       - '**/AGENTS.md'
@@ -16,6 +16,9 @@ on:
       - 'docs/documentation-structure.md'
       - 'scripts/verify-agent-harness.sh'
       - 'scripts/verify_task_skills.py'
+      - 'scripts/verify_plugin_eval_outputs.py'
+      - 'scripts/validate_plugin_eval_benchmark.py'
+      - 'tests/fixtures/plugin-eval/**'
       - 'scripts/validate_agent_frontmatter.py'
       - 'requirements-agent-harness.txt'
       - 'scripts/verify-ai-governance.sh'
@@ -23,7 +26,7 @@ on:
       - '.github/pull_request_template.md'
       - '.github/workflows/agent-harness.yml'
   pull_request:
-    branches: [main, develop]
+    branches: [main, develop, 'agent/**']
     paths:
       - 'AGENTS.md'
       - '**/AGENTS.md'
@@ -37,6 +40,9 @@ on:
       - 'docs/documentation-structure.md'
       - 'scripts/verify-agent-harness.sh'
       - 'scripts/verify_task_skills.py'
+      - 'scripts/verify_plugin_eval_outputs.py'
+      - 'scripts/validate_plugin_eval_benchmark.py'
+      - 'tests/fixtures/plugin-eval/**'
       - 'scripts/validate_agent_frontmatter.py'
       - 'requirements-agent-harness.txt'
       - 'scripts/verify-ai-governance.sh'
@@ -55,7 +61,7 @@ jobs:
   verify:
     name: Verify agent harness
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -73,7 +79,11 @@ jobs:
       - name: Validate script syntax
         run: |
           bash -n scripts/verify-agent-harness.sh scripts/verify-ai-governance.sh
-          python -m py_compile scripts/validate_agent_frontmatter.py scripts/verify_task_skills.py
+          python -m py_compile \
+            scripts/validate_agent_frontmatter.py \
+            scripts/verify_task_skills.py \
+            scripts/verify_plugin_eval_outputs.py \
+            scripts/validate_plugin_eval_benchmark.py
 
       - name: Install shellcheck
         run: |
@@ -87,3 +97,45 @@ jobs:
         run: |
           bash scripts/verify-ai-governance.sh
           python scripts/verify_task_skills.py
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check out pinned Plugin Eval source
+        uses: actions/checkout@v4
+        with:
+          repository: openai/plugins
+          ref: 6d99ee149c9fe3c7a55b96cab062cadc1ad36a9d
+          path: .external/openai-plugins
+          sparse-checkout: plugins/plugin-eval
+          persist-credentials: false
+
+      - name: Validate Plugin Eval benchmark config
+        run: >-
+          python scripts/validate_plugin_eval_benchmark.py
+          .agents/skills/skill-evaluation/references/application-security-benchmark.json
+
+      - name: Run Plugin Eval static pilot
+        run: |
+          set -euo pipefail
+          cli="$GITHUB_WORKSPACE/.external/openai-plugins/plugins/plugin-eval/scripts/plugin-eval.js"
+          out="$RUNNER_TEMP/plugin-eval"
+          mkdir -p "$out"
+
+          node "$cli" analyze tests/fixtures/plugin-eval/application-security-before \
+            --format json --output "$out/before.json"
+          node "$cli" analyze .agents/skills/application-security \
+            --format json --output "$out/after.json"
+          node "$cli" explain-budget .agents/skills/application-security \
+            --format json --output "$out/budget.json"
+          node "$cli" measurement-plan .agents/skills/application-security \
+            --format json --output "$out/measurement.json"
+          node "$cli" compare "$out/before.json" "$out/after.json" \
+            --format json --output "$out/compare.json"
+          node "$cli" init-benchmark .agents/skills/application-security \
+            --format json --output "$out/generated-benchmark.json"
+
+          python scripts/verify_plugin_eval_outputs.py \
+            "$out" .agents/skills/skill-evaluation/references/application-security-benchmark.json

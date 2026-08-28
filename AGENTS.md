@@ -50,6 +50,7 @@
 | アプリ本体 UI、ユーザーに見える状態・文言・操作、アクセシビリティ | [`.agents/skills/ui-ux-review/SKILL.md`](.agents/skills/ui-ux-review/SKILL.md) |
 | ソースコード変更、またはIssue、branch、commit、push、PR、CI、review、release準備 | [`.agents/skills/github-delivery/SKILL.md`](.agents/skills/github-delivery/SKILL.md) |
 | 認証・認可、秘密情報、個人情報、外部入力、ファイル、外部API、AI tool callを含む変更、または専門的なsecurity scan | [`.agents/skills/application-security/SKILL.md`](.agents/skills/application-security/SKILL.md) |
+| 独自Skill・pluginの構造、instruction budget、代表scenario、before / after評価 | [`.agents/skills/skill-evaluation/SKILL.md`](.agents/skills/skill-evaluation/SKILL.md) |
 | 本番障害、実データ異常、デプロイ後挙動の調査 | [`.agents/skills/production-investigation/SKILL.md`](.agents/skills/production-investigation/SKILL.md) |
 | 公開される文書、ログ要約、レポート、Issue / PR本文 | [`.agents/skills/security-publication/SKILL.md`](.agents/skills/security-publication/SKILL.md) |
 | エージェントルール、Skill、アダプター、検証 script の変更 | [`docs/agent-harness.md`](docs/agent-harness.md) と [`docs/ai-governance/13-maintenance-policy.md`](docs/ai-governance/13-maintenance-policy.md) |

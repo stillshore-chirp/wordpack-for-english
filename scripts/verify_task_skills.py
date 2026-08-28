@@ -1,6 +1,4 @@
 #!/usr/bin/env python3
-"""Validate canonical task Skills and thin Claude Code adapters."""
-
 from __future__ import annotations
 
 import re
@@ -24,13 +22,16 @@ MAX_SKILL_LINES = 180
 MAX_SKILL_BYTES = 16_384
 MAX_ADAPTER_LINES = 30
 MAX_ADAPTER_BYTES = 4_096
+MAX_REFERENCE_BYTES = 32_768
 LINK_PATTERN = re.compile(r"\]\(([^)]+)\)")
 LOCAL_PATH_PATTERNS = ("/Users/", "/home/", "C:\\Users\\")
 TOOL_COMMAND_PATTERNS = (
     "start_codex_security_",
     "get_codex_security_",
     "complete_codex_security_",
+    "plugin-eval ",
 )
+TEXT_SUFFIXES = {".md", ".json", ".py", ".sh", ".txt", ".csv", ".yml", ".yaml"}
 EXCLUDED_ROUTER_PARTS = {".git", ".external", ".venv", "node_modules"}
 
 
@@ -66,6 +67,11 @@ def check_budget(path: Path, max_lines: int, max_bytes: int) -> None:
         fail(f"{relative(path)} exceeds {max_bytes} bytes: {len(raw)}")
 
 
+def check_portability(path: Path, content: str) -> None:
+    if any(pattern in content for pattern in LOCAL_PATH_PATTERNS):
+        fail(f"{relative(path)} contains a machine-local absolute path")
+
+
 def check_reference_links(skill_path: Path, content: str) -> None:
     for match in LINK_PATTERN.finditer(content):
         target = unquote(match.group(1).split("#", 1)[0].strip())
@@ -78,6 +84,16 @@ def check_reference_links(skill_path: Path, content: str) -> None:
             fail(f"{relative(skill_path)} reference escapes its Skill directory: {target}")
         if not resolved.is_file():
             fail(f"{relative(skill_path)} has a broken reference: {target}")
+
+
+def check_skill_tree(skill_path: Path) -> None:
+    for path in skill_path.parent.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in TEXT_SUFFIXES:
+            continue
+        content = read_text(path)
+        check_portability(path, content)
+        if path != skill_path and len(content.encode("utf-8")) > MAX_REFERENCE_BYTES:
+            fail(f"{relative(path)} exceeds {MAX_REFERENCE_BYTES} bytes")
 
 
 def main() -> int:
@@ -106,20 +122,18 @@ def main() -> int:
         canonical_path = relative(skill_path)
         if not any(canonical_path in text for text in router_texts.values()):
             fail(f"an AGENTS.md must route to {canonical_path}")
-        if any(pattern in content for pattern in LOCAL_PATH_PATTERNS):
-            fail(f"{canonical_path} contains a machine-local absolute path")
         check_reference_links(skill_path, content)
+        check_skill_tree(skill_path)
 
         adapter_path = CLAUDE_ROOT / skill_path.parent.name / "SKILL.md"
         adapter = read_text(adapter_path)
         check_budget(adapter_path, MAX_ADAPTER_LINES, MAX_ADAPTER_BYTES)
+        check_portability(adapter_path, adapter)
         if "唯一の手順正本" not in adapter:
             fail(f"{relative(adapter_path)} must identify the canonical Skill")
         expected_link = f"../../../{canonical_path}"
         if expected_link not in adapter:
             fail(f"{relative(adapter_path)} must link to {expected_link}")
-        if any(pattern in adapter for pattern in LOCAL_PATH_PATTERNS):
-            fail(f"{relative(adapter_path)} contains a machine-local absolute path")
 
     for path in COMMON_CORE:
         content = read_text(path)
