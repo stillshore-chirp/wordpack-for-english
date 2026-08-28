@@ -229,6 +229,48 @@ describe('WordPackListPanel server-side query', () => {
     ).toBe(true));
   });
 
+  it('検索語が128文字を超える場合は説明を表示し、一覧APIへ送信しない', async () => {
+    const requests: URL[] = [];
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : (input as URL).toString();
+      const method = init?.method ?? 'GET';
+      if (url.endsWith('/api/config') && method === 'GET') {
+        return new Response(JSON.stringify({ request_timeout_ms: 60000 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.startsWith('/api/word/packs?') && method === 'GET') {
+        const parsed = new URL(url, 'http://localhost');
+        requests.push(parsed);
+        return makeResponse([makeItem('wp:alpha', 'alpha')], 1, 1, 0);
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+
+    renderWithAuth();
+    const user = userEvent.setup();
+    await waitFor(() => expect(requests).toHaveLength(1));
+
+    const topSearch = screen.getByRole('searchbox', { name: '保存済みWordPackを検索' });
+    await user.type(topSearch, 'a'.repeat(129));
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(
+      '検索語は128文字以内で入力してください。',
+    ));
+    expect(topSearch).toHaveAttribute('aria-invalid', 'true');
+    expect(requests).toHaveLength(1);
+
+    await user.clear(topSearch);
+    await user.type(topSearch, 'b'.repeat(128));
+    await user.keyboard('{Enter}');
+
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[1].searchParams.get('search')).toBe('b'.repeat(128));
+    expect(screen.queryByText('検索語は128文字以内で入力してください。')).not.toBeInTheDocument();
+  });
+
   it('条件取得に失敗したときは前回の一覧を保持し、条件一致数を未取得として示す', async () => {
     const requests: URL[] = [];
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: RequestInit) => {

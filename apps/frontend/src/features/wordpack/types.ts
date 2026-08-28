@@ -72,6 +72,8 @@ export interface WordPackListFacetCounts {
   not_generated: number;
 }
 
+export const WORDPACK_SEARCH_MAX_LENGTH = 128;
+
 export interface WordPackListResponse {
   items: WordPackListItem[];
   total: number;

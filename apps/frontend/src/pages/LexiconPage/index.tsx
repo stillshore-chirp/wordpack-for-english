@@ -2,6 +2,7 @@ import React from 'react';
 import { WordPackPanel } from '../../components/WordPackPanel';
 import { WordPackListPanel } from '../../components/WordPackListPanel';
 import { AppRightRail } from '../../components/AppRightRail';
+import { WORDPACK_SEARCH_MAX_LENGTH } from '../../features/wordpack/types';
 import { Button } from '../../shared/ui';
 import './lexicon.css';
 
@@ -16,6 +17,7 @@ export const LexiconPage: React.FC<LexiconPageProps> = ({
   onWordPackGenerated,
 }) => {
   const [topSearch, setTopSearch] = React.useState('');
+  const [topSearchError, setTopSearchError] = React.useState<string | null>(null);
   const topSearchRef = React.useRef<HTMLInputElement>(null);
 
   const focusCreateInput = () => {
@@ -24,9 +26,16 @@ export const LexiconPage: React.FC<LexiconPageProps> = ({
 
   const applyTopSearch = (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    const value = topSearch.trim();
+    if (value.length > WORDPACK_SEARCH_MAX_LENGTH) {
+      setTopSearchError(`検索語は${WORDPACK_SEARCH_MAX_LENGTH}文字以内で入力してください。`);
+      topSearchRef.current?.focus();
+      return;
+    }
+    setTopSearchError(null);
     try {
       window.dispatchEvent(new CustomEvent('wordpack:list-search', {
-        detail: { mode: 'contains', value: topSearch },
+        detail: { mode: 'contains', value },
       }));
     } catch {}
   };
@@ -35,8 +44,12 @@ export const LexiconPage: React.FC<LexiconPageProps> = ({
     const handleSearchSynced = (event: Event) => {
       const detail = (event as CustomEvent<{ value?: string }>).detail;
       setTopSearch((detail?.value ?? '').trim());
+      setTopSearchError(null);
     };
-    const handleSearchCleared = () => setTopSearch('');
+    const handleSearchCleared = () => {
+      setTopSearch('');
+      setTopSearchError(null);
+    };
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
@@ -63,7 +76,12 @@ export const LexiconPage: React.FC<LexiconPageProps> = ({
               <p>保存済みの個人辞書を検索・管理します。</p>
             </div>
             <div className="dictionary-top-actions lexicon-top-actions">
-              <form className="lexicon-searchbar" role="search" aria-label="保存済みWordPackを検索" onSubmit={applyTopSearch}>
+              <form
+                className={`lexicon-searchbar${topSearchError ? ' lexicon-searchbar--invalid' : ''}`}
+                role="search"
+                aria-label="保存済みWordPackを検索"
+                onSubmit={applyTopSearch}
+              >
                 <span className="lexicon-searchbar__icon" aria-hidden="true">
                   <svg viewBox="0 0 24 24" focusable="false">
                     <circle cx="11" cy="11" r="6.5" />
@@ -76,10 +94,21 @@ export const LexiconPage: React.FC<LexiconPageProps> = ({
                   ref={topSearchRef}
                   type="search"
                   value={topSearch}
-                  onChange={(event) => setTopSearch(event.target.value)}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setTopSearch(value);
+                    if (value.trim().length <= WORDPACK_SEARCH_MAX_LENGTH) setTopSearchError(null);
+                  }}
                   placeholder="保存済みWordPackを検索"
+                  aria-invalid={topSearchError ? 'true' : undefined}
+                  aria-describedby={topSearchError ? 'lexicon-top-search-error' : undefined}
                 />
                 <kbd aria-hidden="true">⌘ K</kbd>
+                {topSearchError ? (
+                  <span id="lexicon-top-search-error" className="lexicon-searchbar__error" role="alert">
+                    {topSearchError}
+                  </span>
+                ) : null}
               </form>
               <Button variant="primary" className="lexicon-create-shortcut" onClick={focusCreateInput}>
                 <span aria-hidden="true">＋</span>
