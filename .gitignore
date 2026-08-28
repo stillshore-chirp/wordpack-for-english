@@ -128,6 +128,12 @@ tests/e2e/storage-state*.json
 # ローカルの秘密情報ディレクトリは誤コミット防止のため除外
 .secrets/
 
+# Plugin Eval runtime artifacts may contain usage, transcripts, and workspace output
+**/.plugin-eval/runs/
+**/.plugin-eval/benchmark-usage.jsonl
+**/.plugin-eval/*.result.json
+**/.plugin-eval/*.html
+
 終了済みor参考ドキュメント/
 
 **/.vite/
