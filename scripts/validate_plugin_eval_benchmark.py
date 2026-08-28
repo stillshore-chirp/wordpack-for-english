@@ -9,6 +9,11 @@ from pathlib import Path
 from typing import Any
 
 REQUIRED_VERIFIER = "python scripts/verify_task_skills.py"
+REQUIRED_SCENARIO_IDS = {
+    "scoped-diff",
+    "unavailable-surface",
+    "publication-boundary",
+}
 
 
 def load_json(path: Path) -> dict[str, Any]:
@@ -47,18 +52,32 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError(f"benchmark must retain verifier command: {REQUIRED_VERIFIER}")
 
     scenarios = config.get("scenarios", [])
-    if not isinstance(scenarios, list) or not 1 <= len(scenarios) <= 3:
-        raise ValueError("benchmark must contain between one and three scenarios")
+    if not isinstance(scenarios, list):
+        raise ValueError("benchmark scenarios must be a list")
     ids: set[str] = set()
     for scenario in scenarios:
         if not isinstance(scenario, dict):
             raise ValueError("each benchmark scenario must be an object")
         scenario_id = scenario.get("id")
-        if not scenario_id or scenario_id in ids:
+        if not scenario_id or str(scenario_id) in ids:
             raise ValueError("benchmark scenario ids must be present and unique")
         ids.add(str(scenario_id))
         if not scenario.get("userInput") or not scenario.get("successChecklist"):
             raise ValueError("every benchmark scenario needs input and a success checklist")
+
+    if ids != REQUIRED_SCENARIO_IDS:
+        missing = sorted(REQUIRED_SCENARIO_IDS - ids)
+        unexpected = sorted(ids - REQUIRED_SCENARIO_IDS)
+        details = []
+        if missing:
+            details.append(f"missing: {', '.join(missing)}")
+        if unexpected:
+            details.append(f"unexpected: {', '.join(unexpected)}")
+        raise ValueError(
+            "benchmark must retain the three reviewed scenario classes ("
+            + "; ".join(details)
+            + ")"
+        )
 
 
 def main() -> int:
