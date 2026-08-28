@@ -70,7 +70,8 @@ def ensure_output_path_is_distinct(source: Path, output: Path) -> None:
         if source_resolved.samefile(output_resolved):
             fail("output path must not share the same file identity as source")
     except FileNotFoundError:
-        pass
+        # A not-yet-created output has no file identity that can collide.
+        return
     except OSError as exc:
         fail(f"cannot verify source/output file identity: {type(exc).__name__}")
 
