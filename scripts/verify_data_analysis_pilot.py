@@ -115,33 +115,61 @@ def aggregate(
     return dict(weekly), {week: dict(values) for week, values in by_channel.items()}
 
 
-def driver_channel(
-    channel_metrics: dict[str, tuple[Decimal, Decimal, Decimal]],
-) -> str:
-    return max(sorted(channel_metrics), key=lambda channel: abs(channel_metrics[channel][2]))
+def directional_driver(
+    channel_metrics: dict[str, tuple[Decimal, Decimal, Decimal]], total_delta: Decimal
+) -> str | None:
+    aligned = [
+        channel
+        for channel, (_, _, delta) in channel_metrics.items()
+        if delta != 0 and delta * total_delta > 0
+    ]
+    if not aligned:
+        return None
+    return max(sorted(aligned), key=lambda channel: abs(channel_metrics[channel][2]))
 
 
-def narrative_lines(
+def decomposition_share_line(total_delta: Decimal, within_effect: Decimal) -> str:
+    if total_delta == 0:
+        return "- Within-channel share of aggregate change: `not applicable (aggregate rate unchanged)`"
+    ratio = within_effect / total_delta
+    direction = "drop" if total_delta < 0 else "increase"
+    if ratio >= 0:
+        return (
+            f"- Share of the observed {direction} associated with the within-channel rate "
+            f"effect: `{ratio * 100:.2f}%`"
+        )
+    return (
+        f"- Within-channel rate effect relative to the observed {direction}: "
+        f"`{ratio * 100:.2f}% (offsetting)`"
+    )
+
+
+def narrative(
     channel_metrics: dict[str, tuple[Decimal, Decimal, Decimal]],
     total_delta: Decimal,
-    within_channel_effect: Decimal,
+    mix_effect: Decimal,
+    within_effect: Decimal,
 ) -> tuple[str, str, list[str]]:
-    driver = driver_channel(channel_metrics)
-    driver_delta = channel_metrics[driver][2]
-    stable_channels = [
-        channel for channel in CHANNEL_ORDER if channel_metrics[channel][2] == 0
-    ]
+    largest = max(sorted(channel_metrics), key=lambda channel: abs(channel_metrics[channel][2]))
+    largest_delta = channel_metrics[largest][2]
 
     if total_delta == 0:
         if all(metrics[2] == 0 for metrics in channel_metrics.values()):
-            first_inference = "All channel rates remained unchanged."
-        else:
-            first_inference = (
-                "The aggregate rate was unchanged; channel-level movements offset each "
-                f"other, with the largest absolute movement in the {driver} segment "
-                f"({pp(driver_delta)})."
+            observation = "All channel rates remained unchanged."
+        elif mix_effect != 0 or within_effect != 0:
+            observation = (
+                "The aggregate rate was unchanged because the channel-mix effect "
+                f"({pp(mix_effect)}) offset the within-channel rate effect "
+                f"({pp(within_effect)}); the largest absolute channel-rate movement was "
+                f"in the {largest} segment ({pp(largest_delta)})."
             )
-        share_inference = (
+        else:
+            observation = (
+                "The aggregate rate was unchanged because weighted channel-rate movements "
+                f"offset one another; the largest absolute movement was in the {largest} "
+                f"segment ({pp(largest_delta)})."
+            )
+        attribution = (
             "The aggregate rate was unchanged, so a share-of-change attribution is not "
             "applicable."
         )
@@ -150,42 +178,76 @@ def narrative_lines(
             "2. Confirm that tracking definitions and late-arriving events remain stable.",
             "3. Use causal language only after a valid experiment or defensible quasi-experimental design is available.",
         ]
-        return first_inference, share_inference, recommendations
+        return observation, attribution, recommendations
 
-    direction = "deterioration" if total_delta < 0 else "improvement"
-    if stable_channels:
-        stable = stable_channels[0]
-        stable_rate = channel_metrics[stable][1]
-        first_inference = (
-            f"{stable.capitalize()} remained at {pct(stable_rate)}; the visible "
-            f"{direction} is concentrated in the {driver} segment."
+    aggregate_direction = "decline" if total_delta < 0 else "increase"
+    visible_state = "deterioration" if total_delta < 0 else "improvement"
+    driver = directional_driver(channel_metrics, total_delta)
+    stable = [channel for channel in CHANNEL_ORDER if channel_metrics[channel][2] == 0]
+
+    if driver is not None and stable:
+        stable_channel = stable[0]
+        observation = (
+            f"{stable_channel.capitalize()} remained at {pct(channel_metrics[stable_channel][1])}; "
+            f"the visible {visible_state} is concentrated in the {driver} segment."
+        )
+    elif driver is not None:
+        movement = "decline" if channel_metrics[driver][2] < 0 else "increase"
+        observation = (
+            f"The largest channel-rate {movement} aligned with the aggregate "
+            f"{aggregate_direction} is in the {driver} segment ({pp(channel_metrics[driver][2])})."
+        )
+    elif all(metrics[2] == 0 for metrics in channel_metrics.values()):
+        observation = (
+            f"All channel rates remained unchanged; the aggregate {visible_state} is "
+            f"associated with the channel-mix effect ({pp(mix_effect)})."
         )
     else:
-        movement = "decline" if total_delta < 0 else "increase"
-        first_inference = (
-            f"The largest channel-rate {movement} is in the {driver} segment "
-            f"({pp(driver_delta)})."
+        relation = "supported" if mix_effect * total_delta > 0 else "opposed"
+        observation = (
+            f"The aggregate {visible_state} occurred while channel-rate movements did not "
+            f"move in the same direction; the channel-mix effect ({pp(mix_effect)}) "
+            f"{relation} the net change."
         )
 
-    driver_share = abs(within_channel_effect / total_delta)
-    aggregate_direction = "decline" if total_delta < 0 else "increase"
-    share_inference = (
-        "Under this descriptive decomposition, the within-channel rate effect accounts "
-        f"for {driver_share * 100:.2f}% of the aggregate {aggregate_direction}."
-    )
+    ratio = within_effect / total_delta
+    if ratio > 0:
+        attribution = (
+            "Under this descriptive decomposition, the within-channel rate effect accounts "
+            f"for {ratio * 100:.2f}% of the aggregate {aggregate_direction}."
+        )
+    elif ratio < 0:
+        attribution = (
+            f"The within-channel rate effect ({pp(within_effect)}) offsets the aggregate "
+            f"{aggregate_direction} by an amount equal to {abs(ratio) * 100:.2f}% of the "
+            "observed change."
+        )
+    else:
+        attribution = (
+            f"The within-channel rate effect is zero; the aggregate {aggregate_direction} "
+            "is associated with the channel-mix effect."
+        )
+
+    action = "decline" if total_delta < 0 else "improvement"
     if driver == "ads":
         recommendations = [
-            "1. Validate ads tracking completeness and late-arriving conversions before acting on the decline.",
+            f"1. Validate ads tracking completeness and late-arriving conversions before acting on the {action}.",
             "2. Compare campaign, creative, audience, device, and landing-page mix for the two latest weeks.",
             "3. Use causal language only after a valid experiment or defensible quasi-experimental design is available.",
         ]
-    else:
+    elif driver is not None:
         recommendations = [
-            f"1. Validate {driver} tracking completeness and late-arriving conversions before acting on the change.",
+            f"1. Validate {driver} tracking completeness and late-arriving conversions before acting on the {action}.",
             f"2. Compare {driver} source, audience, device, and landing-page mix for the two latest weeks.",
             "3. Use causal language only after a valid experiment or defensible quasi-experimental design is available.",
         ]
-    return first_inference, share_inference, recommendations
+    else:
+        recommendations = [
+            f"1. Validate tracking completeness and volume-mix definitions before acting on the {action}.",
+            "2. Compare channel volume, source composition, device, and landing-page mix for the two latest weeks.",
+            "3. Use causal language only after a valid experiment or defensible quasi-experimental design is available.",
+        ]
+    return observation, attribution, recommendations
 
 
 def build_report(source: Path, rows: list[dict[str, object]]) -> str:
@@ -211,12 +273,8 @@ def build_report(source: Path, rows: list[dict[str, object]]) -> str:
     for channel in sorted(ALLOWED_CHANNELS):
         prior_channel = by_channel[prior_week][channel]
         current_channel = by_channel[current_week][channel]
-        prior_channel_rate = Decimal(prior_channel["paid"]) / Decimal(
-            prior_channel["sessions"]
-        )
-        current_channel_rate = Decimal(current_channel["paid"]) / Decimal(
-            current_channel["sessions"]
-        )
+        prior_channel_rate = Decimal(prior_channel["paid"]) / Decimal(prior_channel["sessions"])
+        current_channel_rate = Decimal(current_channel["paid"]) / Decimal(current_channel["sessions"])
         channel_metrics[channel] = (
             prior_channel_rate,
             current_channel_rate,
@@ -226,24 +284,11 @@ def build_report(source: Path, rows: list[dict[str, object]]) -> str:
 
     counterfactual_rate = expected_paid / Decimal(current["sessions"])
     mix_effect = counterfactual_rate - prior_rate
-    within_channel_effect = current_rate - counterfactual_rate
-    first_inference, share_inference, recommendations = narrative_lines(
-        channel_metrics, total_delta, within_channel_effect
+    within_effect = current_rate - counterfactual_rate
+    first_inference, second_inference, recommendations = narrative(
+        channel_metrics, total_delta, mix_effect, within_effect
     )
     freshness_days = (SNAPSHOT_DATE - max(weeks)).days
-
-    if total_delta == 0:
-        share_calculation = (
-            "- Within-channel share of aggregate change: "
-            "`not applicable (aggregate rate unchanged)`"
-        )
-    else:
-        driver_share = abs(within_channel_effect / total_delta)
-        aggregate_direction = "drop" if total_delta < 0 else "increase"
-        share_calculation = (
-            f"- Share of the observed {aggregate_direction} associated with the "
-            f"within-channel rate effect: `{driver_share * 100:.2f}%`"
-        )
 
     lines = [
         "# Data analysis pilot report",
@@ -288,13 +333,13 @@ def build_report(source: Path, rows: list[dict[str, object]]) -> str:
             f"- Current aggregate rate: `{current['paid']} / {current['sessions']} = {pct(current_rate)}`",
             f"- Current-period counterfactual at prior channel rates: `{pct(counterfactual_rate)}`",
             f"- Channel-mix effect: `{pp(mix_effect)}`",
-            f"- Within-channel rate effect: `{pp(within_channel_effect)}`",
-            share_calculation,
+            f"- Within-channel rate effect: `{pp(within_effect)}`",
+            decomposition_share_line(total_delta, within_effect),
             "",
             "## Inferences",
             "",
             f"- {first_inference}",
-            f"- {share_inference}",
+            f"- {second_inference}",
             "- This decomposition does not establish causality. Campaign mix, attribution, landing-page changes, and late-arriving events were not observed.",
             "",
             "## Recommendations",
@@ -317,12 +362,62 @@ def build_report(source: Path, rows: list[dict[str, object]]) -> str:
     return "\n".join(lines)
 
 
+def run_self_test() -> None:
+    zero_delta = {
+        "organic": (Decimal("0.08"), Decimal("0.07"), Decimal("-0.01")),
+        "ads": (Decimal("0.04"), Decimal("0.03"), Decimal("-0.01")),
+    }
+    text, _, _ = narrative(zero_delta, Decimal("0"), Decimal("0.01"), Decimal("-0.01"))
+    if "channel-mix effect" not in text or "within-channel rate effect" not in text:
+        fail("self-test failed: zero-delta decomposition effects were omitted")
+
+    opposite_largest = {
+        "organic": (Decimal("0.08"), Decimal("0.13"), Decimal("0.05")),
+        "ads": (Decimal("0.04"), Decimal("0.03"), Decimal("-0.01")),
+    }
+    text, _, _ = narrative(
+        opposite_largest, Decimal("-0.005"), Decimal("0"), Decimal("-0.005")
+    )
+    if "ads segment" not in text or "decline" not in text:
+        fail("self-test failed: driver did not follow the aggregate direction")
+
+    ads_improvement = {
+        "organic": (Decimal("0.08"), Decimal("0.08"), Decimal("0")),
+        "ads": (Decimal("0.04"), Decimal("0.06"), Decimal("0.02")),
+    }
+    _, _, recommendations = narrative(
+        ads_improvement, Decimal("0.01"), Decimal("0"), Decimal("0.01")
+    )
+    if "improvement" not in recommendations[0] or "decline" in recommendations[0]:
+        fail("self-test failed: recommendation direction was inconsistent")
+
+    offsetting = {
+        "organic": (Decimal("0.08"), Decimal("0.07"), Decimal("-0.01")),
+        "ads": (Decimal("0.04"), Decimal("0.03"), Decimal("-0.01")),
+    }
+    _, attribution, _ = narrative(
+        offsetting, Decimal("0.002"), Decimal("0.012"), Decimal("-0.01")
+    )
+    calculation = decomposition_share_line(Decimal("0.002"), Decimal("-0.01"))
+    if "offsets the aggregate increase" not in attribution or "offsetting" not in calculation:
+        fail("self-test failed: offsetting effect lost its sign")
+
+    print("Data analysis narrative self-test: PASS")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--source", type=Path, required=True)
+    parser.add_argument("--self-test", action="store_true")
+    parser.add_argument("--source", type=Path)
     parser.add_argument("--expected-report", type=Path)
-    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--output", type=Path)
     args = parser.parse_args()
+
+    if args.self_test:
+        run_self_test()
+        return 0
+    if args.source is None or args.output is None:
+        parser.error("--source and --output are required unless --self-test is used")
 
     report = build_report(args.source, load_rows(args.source))
     if args.expected_report:
