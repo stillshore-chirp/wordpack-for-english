@@ -9,6 +9,7 @@
 - 判定理由:
 
 ## 変更scope（UI変更レビューで差分がある場合）
+<!-- agent-harness:uiux-completion-scope:start -->
 
 | 項目 | 内容 |
 |---|---|
@@ -20,6 +21,7 @@
 | 変更意図（Issue / PR / commit） |  |
 | Expanded surfaces | 直接consumer、parent、route、state、代表surface |
 | Coverage / 未確認consumer / 除外理由 |  |
+<!-- agent-harness:uiux-completion-scope:end -->
 
 ## 変更と影響
 

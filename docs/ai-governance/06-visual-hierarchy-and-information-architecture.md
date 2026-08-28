@@ -143,15 +143,17 @@
 既存design system、対応要件、対象browser、コンテンツの言語・量を優先します。breakpoint、行長、余白、font size、animation duration、container幅などは確認の出発点であり、数値だけでP0/P1/P2や完了可否を機械的に決めません。severityは`02-uiux-review-framework.md`に従い、ユーザーtaskへの影響と実際の証跡を併記します。
 
 ## 14. 検証証跡
+<!-- agent-harness:uiux-visual-quality:start -->
 
 変更範囲に応じて次を記録し、実行できない確認は理由と残riskを明示します。
 
 - viewportだけでなく、主要componentのcontainer幅、zoom、文字拡大、RTL / LTR、theme、state、代表的なlong contentとlarge data。
 - font request、読み込み済みfamily / weight、fallback、wrap、truncationからの全文到達、動的な数値のlayout shift。
-- 3秒確認、主操作とscopeのvisual hierarchy、主要stateのrender、必要に応じたscreenshotまたはvisual diff。
+- 3秒確認、主操作とscopeのvisual hierarchy、主要stateとvisual finishのrender、必要に応じたscreenshotまたはvisual diff。
 - 実際に重なるforeground / background pairのcontrast、dark / light / forced colors、focus indicator。
 - reduced motion、初回表示、enter / exit、hover、連続入力、通知・loadingの時間変化。
 - screenshotは見えている構造・stateの補助証跡とし、semantic structure、accessible name、focus順序、支援技術通知、回復挙動を静止画だけで確認済みとしない。アクセシビリティの検証と証跡の採否は`05-accessibility-and-inclusive-design.md`および`03-evidence-and-completion-gates.md`に従う。
+<!-- agent-harness:uiux-visual-quality:end -->
 
 ## 15. 視覚階層の失敗例
 

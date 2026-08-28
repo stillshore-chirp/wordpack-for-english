@@ -1,6 +1,7 @@
 # UI/UXレビュー報告
 
 ## 1. 概要
+<!-- agent-harness:uiux-report-scope:start -->
 
 - 対象PR / 作業:
 - 変更した画面・コンポーネント:
@@ -22,6 +23,7 @@
 | 変更意図（Issue / PR / commit） |  |
 | Expanded surfaces | 直接consumer、parent、route、state、代表surface |
 | Coverage / 未確認consumer / 除外理由 |  |
+<!-- agent-harness:uiux-report-scope:end -->
 
 ## 2. ユーザー価値
 
@@ -104,6 +106,7 @@
 - 残リスク:
 
 ## 11. 指摘一覧
+<!-- agent-harness:uiux-report-provenance:start -->
 
 | 優先度 | Change status | Domain | 箇所 | 問題 | 影響 | 修正案 | 状態 |
 |---|---|---|---|---|---|---|---|
@@ -114,6 +117,7 @@ Pre-existingは今回の変更findingと完了判定へ混ぜず、次の欄へ�
 | Pre-existingの優先度 | 箇所 | 観測事実・証跡 | 今回の判定から分離する理由 | 別Issue / 後続 |
 |---|---|---|---|---|
 |  |  |  |  |  |
+<!-- agent-harness:uiux-report-provenance:end -->
 
 ## 12. 証跡
 

@@ -16,6 +16,7 @@
 表示場所だけで分類しません。GitHub PagesやGitHub Appなど、リポジトリが独自のlayout、操作、状態を実装する場合はアプリ本体UIです。
 
 ## 2. 変更scopeの証跡
+<!-- agent-harness:uiux-change-scope-evidence:start -->
 
 差分を伴うUI変更レビューでは、UI品質を判定する前に、比較対象と影響範囲を次の記録へ固定します。これはUI影響を確認するための証跡であり、GitHub配送一般の完了条件を定義するものではありません。
 
@@ -31,6 +32,7 @@
 変更fileは証拠の入口であり、レビュー対象を直接変更箇所だけに限定しません。shared primitive、global style / token、common component、theme等の変更は、代表的なconsumer surfaceへ展開し、確認できない範囲を未確認として残します。
 
 追加側と削除側を同じ重さで確認します。削除されたlabel、semantic element、focus、state、error recovery、responsive rule、copy、token等に等価な代替があるかを確認し、削除行の存在だけでfindingを断定しません。
+<!-- agent-harness:uiux-change-scope-evidence:end -->
 
 ## 3. アプリ本体UIの証跡
 
@@ -81,6 +83,7 @@
 UI変更レビューとフロー監査を併用する場合は、変更scopeの比較証跡と、各stepのcurrent-run証跡を同じ報告へ接続します。変更差分の証跡だけでフローを監査済みとせず、フローのscreenshotやstep記録だけでbase / headの変更由来を断定しません。
 
 ## 5. 変更由来findingの証跡
+<!-- agent-harness:uiux-finding-provenance:start -->
 
 差分を伴うUI変更レビューでは、各findingを次のいずれかへ分類します。分類はbase / head、diff、必要な描画・操作・test証跡で支え、単なる変更箇所の近さで決めません。
 
@@ -93,6 +96,7 @@ UI変更レビューとフロー監査を併用する場合は、変更scopeの�
 IntroducedとRegressionは今回の変更のfindingとしてP0 / P1 / P2、修正状態、証跡を記録します。Pre-existingは影響に応じた優先度を記録した上で、今回の変更責任、変更起因findingの件数・P0 / P1 / P2集計、完了可否から分離し、必要なら別Issueまたはscope変更として追跡します。今回の目的達成や安全性を妨げる場合は、別Issue化だけで完了扱いにせず、scopeと完了判断を明示的に見直します。
 
 同じroot causeは一件へ統合し、影響するsurfaceを列挙します。未確認consumerをreview済み、またはPre-existingを今回の修正済みとして表現しません。
+<!-- agent-harness:uiux-finding-provenance:end -->
 
 ## 6. GitHub共同作業面の証跡
 

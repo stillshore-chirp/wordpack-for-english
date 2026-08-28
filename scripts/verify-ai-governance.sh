@@ -75,6 +75,35 @@ for file in "${REQUIRED_FILES[@]}"; do
   require_file "$file"
 done
 
+# #615で既存正本へ統合した内容を、旧番号の正本・専用checklist・専用verifierへ
+# 戻さない。対象を旧構造に限定し、通常の過去reportや関連文書は走査しない。
+RETIRED_PARALLEL_PATHS=(
+  "docs/ai-governance/15-interface-engineering-quality.md"
+  "docs/ai-governance/16-change-scoped-interface-review.md"
+  "docs/ai-governance/checklists/interface-engineering.md"
+  "docs/ai-governance/checklists/change-scoped-interface-review.md"
+  "scripts/verify-ui-quality-governance.sh"
+)
+
+for retired_path in "${RETIRED_PARALLEL_PATHS[@]}"; do
+  [[ ! -e "$retired_path" ]] || fail "retired parallel governance path must not be restored: $retired_path"
+done
+
+RETIRED_REFERENCE_PATHS=(
+  ".agents/skills/ui-ux-review/SKILL.md"
+  "docs/ai-governance/00-index.md"
+  "docs/ai-governance/02-uiux-review-framework.md"
+  "docs/ai-governance/03-evidence-and-completion-gates.md"
+  "docs/ai-governance/templates/uiux-review-report.md"
+  "docs/ai-governance/templates/completion-gate-report.md"
+)
+
+for file in "${RETIRED_REFERENCE_PATHS[@]}"; do
+  for retired_path in "${RETIRED_PARALLEL_PATHS[@]}"; do
+    reject_text "$file" "$retired_path"
+  done
+done
+
 ISSUE_TEMPLATES=(
   ".github/ISSUE_TEMPLATE/feature.md"
   ".github/ISSUE_TEMPLATE/bug.md"

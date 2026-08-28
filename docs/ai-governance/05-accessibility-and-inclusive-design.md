@@ -154,6 +154,7 @@ P0例（`02-uiux-review-framework.md`に照らし、主要taskへの影響が確
 - reduced motionの希望を無視する自動再生や大きなmotionがtask継続を妨げる。
 
 ## 17. 検証証跡
+<!-- agent-harness:uiux-a11y-quality:start -->
 
 変更範囲に応じて次を組み合わせ、実行できない確認は理由と残riskを記録します。
 
@@ -164,6 +165,7 @@ P0例（`02-uiux-review-framework.md`に照らし、主要taskへの影響が確
 - 200% zoom、320 CSS pxまたは256 CSS px相当、text spacing、長文・長いlabel・翻訳相当の伸長、truncationからの全文到達。
 - reduced motion、notificationの保持時間、autoplay、pause / dismiss / 再確認。
 - screenshotは見えている構造・stateの補助証跡とし、accessible name、focus順序、支援技術通知、時間変化、回復挙動を静止画だけで確認済みとしない。証跡の採否と完了判定は`03-evidence-and-completion-gates.md`に従う。
+<!-- agent-harness:uiux-a11y-quality:end -->
 
 ## 18. 参照する標準
 
