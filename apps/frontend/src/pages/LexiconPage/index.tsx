@@ -32,6 +32,11 @@ export const LexiconPage: React.FC<LexiconPageProps> = ({
   };
 
   React.useEffect(() => {
+    const handleSearchSynced = (event: Event) => {
+      const detail = (event as CustomEvent<{ value?: string }>).detail;
+      setTopSearch((detail?.value ?? '').trim());
+    };
+    const handleSearchCleared = () => setTopSearch('');
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
@@ -39,7 +44,13 @@ export const LexiconPage: React.FC<LexiconPageProps> = ({
       }
     };
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('wordpack:list-search-synced', handleSearchSynced);
+    window.addEventListener('wordpack:list-search-cleared', handleSearchCleared);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('wordpack:list-search-synced', handleSearchSynced);
+      window.removeEventListener('wordpack:list-search-cleared', handleSearchCleared);
+    };
   }, []);
 
   return (
