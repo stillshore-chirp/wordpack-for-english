@@ -231,80 +231,481 @@ reject_text() {
   fi
 }
 
-COMMON_FILES=(
+reject_regex() {
+  local file="$1"
+  local pattern="$2"
+  if grep -Eiq -- "$pattern" "$file"; then
+    fail "$file contains environment-specific instruction: $pattern"
+  fi
+}
+
+REGEX_END_OF_LINE=$'\x24'
+REGEX_BACKTICK=$'\x60'
+MODEL_ID_CORE='(gpt-[0-9]+[a-z]?([.][0-9]+)*([_-][[:alnum:]]+)*|o[0-9]+([.][0-9]+)*([_-][[:alnum:]]+)*|claude-(opus|sonnet|haiku|[0-9]+)([.][0-9]+)*([_-][[:alnum:]]+)*|gemini-(pro|flash|ultra|[0-9]+)([.][0-9]+)*([_-][[:alnum:]]+)*|llama-[0-9]+([.][0-9]+)*([_-][[:alnum:]]+)*)'
+MODEL_ID_TOKEN_PATTERN="(^|[[:space:]\"'${REGEX_BACKTICK}:(){}<])${MODEL_ID_CORE}([[:space:]\"'${REGEX_BACKTICK}.,;:!?(){}<>]|${REGEX_END_OF_LINE})"
+MODEL_ID_SAFE_CONTEXT_PATTERN='(do[[:space:]]+not|does[[:space:]]+not|must[[:space:]]+not|not[[:space:]]+(use|select|require|fixed|specified|mandatory|required|permitted|allowed)|never|without|avoid|forbid|forbidden|prohibit|prohibited|disallowed|optional|example|explanation|mentioned|mention|documentation|禁止|説明|例|しない|ではない|不要|任意|固定しない|指定しない|必須ではない|使わない|利用しない)'
+
+VENDOR_CORE='(OpenAI|Anthropic|Google|AWS|Azure)'
+VENDOR_LEAD="(^|[[:space:]${REGEX_BACKTICK}(){}<])"
+VENDOR_TRAIL="([[:space:]${REGEX_BACKTICK}.,;:!?(){}<>]|${REGEX_END_OF_LINE})"
+VENDOR_AFTER_PATTERN="${VENDOR_LEAD}${VENDOR_CORE}([[:space:]]+(API|SDK|service))?[[:space:]]+(must[[:space:]]+(be[[:space:]]+)?(used|use|selected|select|chosen|choose|required)|is[[:space:]]+(required|mandatory|fixed|specified)|are[[:space:]]+(required|mandatory|fixed|specified)|required|mandatory|fixed|specified)${VENDOR_TRAIL}|${VENDOR_LEAD}${VENDOR_CORE}(は|が|を)[[:space:]]*(必須|固定|指定)([[:space:]]*(とする|にする|です)?[[:space:]。,.!?(){}<>]|${REGEX_END_OF_LINE})"
+VENDOR_BEFORE_EN="${VENDOR_LEAD}(must|required|mandatory|fixed|specified)[[:space:]:-]+(use|choose|select|require|provider|vendor)?[[:space:]:-]+${VENDOR_CORE}${VENDOR_TRAIL}|${VENDOR_LEAD}(must|required|mandatory|fixed|specified)[[:space:]:-]+${VENDOR_CORE}${VENDOR_TRAIL}"
+VENDOR_BEFORE_JA="${VENDOR_LEAD}(必須|固定|指定)[[:space:]:：_-]+(vendor|provider|の|として)?[[:space:]:：_-]*${VENDOR_CORE}${VENDOR_TRAIL}"
+VENDOR_USE_PATTERN="${VENDOR_LEAD}(use|choose|select)[[:space:]]+(the[[:space:]]+)?${VENDOR_CORE}([[:space:]]+(API|SDK|service))?${VENDOR_TRAIL}"
+VENDOR_MANDATE_PATTERN="${VENDOR_AFTER_PATTERN}|${VENDOR_BEFORE_EN}|${VENDOR_BEFORE_JA}|${VENDOR_USE_PATTERN}"
+VENDOR_SAFE_CONTEXT_PATTERN='(do[[:space:]]+not|does[[:space:]]+not|must[[:space:]]+not|not[[:space:]]+(use|select|require|mandatory|required)|never|without|avoid|optional|example|explanation|mentioned|mention|official|documentation|禁止|説明|例|しない|ではない|不要|任意|固定しない|指定しない|必須ではない|使わない|利用しない)'
+
+TOOL_NAME_CORE='(gh|codex|claude|cursor)'
+TOOL_ARGUMENT="[[:alnum:]_.:/=-]+"
+TOOL_COMMAND_PATTERN="${REGEX_BACKTICK}${TOOL_NAME_CORE}([[:space:]]+${TOOL_ARGUMENT})+${REGEX_BACKTICK}|(^|[[:space:](){}<])@${TOOL_NAME_CORE}([[:space:]]+${TOOL_ARGUMENT})+"
+# An option keeps a sentence such as "Codex is supported" out of bare-command matches.
+TOOL_BARE_COMMAND_PATTERN="^[[:space:]]*([>${REGEX_END_OF_LINE}][[:space:]]*)?${TOOL_NAME_CORE}[[:space:]]+${TOOL_ARGUMENT}([[:space:]]+${TOOL_ARGUMENT})*[[:space:]]+--${TOOL_ARGUMENT}"
+MCP_TOOL_PATTERN="(^|[[:space:]${REGEX_BACKTICK}(){}<])mcp__[[:alnum:]_-]+([[:space:]${REGEX_BACKTICK}.,;:!?(){}<>]|${REGEX_END_OF_LINE})"
+TOOL_SYNTAX_PATTERN="${TOOL_COMMAND_PATTERN}|${TOOL_BARE_COMMAND_PATTERN}|${MCP_TOOL_PATTERN}"
+TOOL_SAFE_CONTEXT_PATTERN='(do[[:space:]]+not|does[[:space:]]+not|must[[:space:]]+not|not|never|without|avoid|optional|example|explanation|mentioned|mention|official|documentation|禁止|説明|例|しない|ではない|不要|任意|固定しない|指定しない|使わない|利用しない)'
+
+RUNTIME_KEY_CORE='(default_subagent_model|default_subagent_reasoning_effort|max_concurrent_threads_per_session|OPENAI_API_KEY)'
+RUNTIME_KEY_ASSIGNMENT_PATTERN="(^|[[:space:]\"'${REGEX_BACKTICK}{])${RUNTIME_KEY_CORE}[\"']?[[:space:]]*[:=]"
+SAFE_SCOPE_MARKER='__agent_harness_safe_scope__'
+
+expect_regex_match() {
+  local label="$1"
+  local pattern="$2"
+  local text="$3"
+  grep -Eiq -- "$pattern" <<< "$text" || fail "regex self-test expected match: $label"
+}
+
+expect_regex_no_match() {
+  local label="$1"
+  local pattern="$2"
+  local text="$3"
+  if grep -Eiq -- "$pattern" <<< "$text"; then
+    fail "regex self-test expected no match: $label"
+  fi
+}
+
+# Split before a new command/required marker. Safe enumerations keep their
+# context across commas and connectors; decimal model versions stay intact.
+split_segments() {
+  printf '%s\n' "$1" | awk -v safe_scope_marker="$SAFE_SCOPE_MARKER" '
+    BEGIN {
+      if ((getline remaining) <= 0) exit
+      remaining = tolower(remaining)
+      action = "((do|does|must)[[:space:]]+not[[:space:]]+)?(must[[:space:]]+)?(use|select|require|choose|run|execute|call|set|inspect|verify|ensure|is[[:space:]]+(required|mandatory|fixed|specified)|are[[:space:]]+(required|mandatory|fixed|specified)|required|mandatory|fixed|specified|必須|固定|指定|使う|使用|利用|選択|実行|呼び出す)"
+      punctuation = "[;,!?。！？、|:.][[:space:]]*" action "[[:space:]]+"
+      connector = "[[:space:]]+(and|but|or|then|also|as[[:space:]]+well[[:space:]]+as|かつ|または|ただし|そして)[[:space:]]+" action "[[:space:]]+"
+      safe_intro = "(for[[:space:]]+example|e[.]g[.]|as[[:space:]]+an[[:space:]]+example|例として|たとえば|例えば)"
+      safe_scope = 0
+      while (match(remaining, punctuation "|" connector)) {
+        separator = substr(remaining, RSTART, RLENGTH)
+        prefix = substr(remaining, 1, RSTART - 1)
+        if (prefix ~ safe_intro) safe_scope = 1
+        print prefix
+        sentence_end = separator ~ /^[.!?。！？]/
+        if (separator ~ /^[[:space:]]+(and|but|or|then|also|as[[:space:]]+well[[:space:]]+as|かつ|または|ただし|そして)[[:space:]]+/) {
+          sub(/^[[:space:]]+(and|but|or|then|also|as[[:space:]]+well[[:space:]]+as|かつ|または|ただし|そして)[[:space:]]+/, "", separator)
+        } else {
+          sub(/^[;,!?。！？、|:.][[:space:]]*/, "", separator)
+        }
+        if (safe_scope && !sentence_end) separator = safe_scope_marker " " separator
+        remaining = separator substr(remaining, RSTART + RLENGTH)
+        if (sentence_end) safe_scope = 0
+      }
+      print remaining
+      exit
+    }
+  '
+}
+
+segment_is_actionable() {
+  local text="$1"
+  local token_pattern="$2"
+  local safe_pattern="$3"
+  local segment
+  while IFS= read -r segment; do
+    if grep -Eiq -- "$token_pattern" <<< "$segment" \
+      && ! grep -Eiq -- "$safe_pattern" <<< "$segment" \
+      && ! grep -Fq -- "$SAFE_SCOPE_MARKER" <<< "$segment"; then
+      return 0
+    fi
+  done < <(split_segments "$text")
+  return 1
+}
+
+model_id_is_actionable() {
+  segment_is_actionable "$1" "$MODEL_ID_TOKEN_PATTERN" "$MODEL_ID_SAFE_CONTEXT_PATTERN"
+}
+
+reject_model_ids() {
+  local file="$1"
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if model_id_is_actionable "$line"; then
+      fail "$file contains an actionable model ID instruction"
+    fi
+  done < "$file"
+}
+
+vendor_mandate_is_actionable() {
+  segment_is_actionable "$1" "$VENDOR_MANDATE_PATTERN" "$VENDOR_SAFE_CONTEXT_PATTERN"
+}
+
+reject_vendor_mandates() {
+  local file="$1"
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if vendor_mandate_is_actionable "$line"; then
+      fail "$file contains a mandatory vendor instruction"
+    fi
+  done < "$file"
+}
+
+tool_syntax_is_actionable() {
+  segment_is_actionable "$1" "$TOOL_SYNTAX_PATTERN" "$TOOL_SAFE_CONTEXT_PATTERN"
+}
+
+reject_tool_syntax() {
+  local file="$1"
+  local line
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    if tool_syntax_is_actionable "$line"; then
+      fail "$file contains a tool-specific command"
+    fi
+  done < "$file"
+}
+
+expect_regex_match \
+  "model version boundary" \
+  "$MODEL_ID_TOKEN_PATTERN" \
+  "Use ${REGEX_BACKTICK}gpt-5.6${REGEX_BACKTICK}."
+expect_regex_match \
+  "model variant boundary" \
+  "$MODEL_ID_TOKEN_PATTERN" \
+  "Use claude-3.7-sonnet."
+expect_regex_match \
+  "general model token" \
+  "$MODEL_ID_TOKEN_PATTERN" \
+  "Use o3-mini."
+expect_regex_match \
+  "family model token" \
+  "$MODEL_ID_TOKEN_PATTERN" \
+  "Use claude-opus-4-1."
+expect_regex_no_match \
+  "embedded model-like word" \
+  "$MODEL_ID_TOKEN_PATTERN" \
+  "agpt-5.6 is not a model ID."
+expect_regex_match \
+  "quoted model token" \
+  "$MODEL_ID_TOKEN_PATTERN" \
+  "model: \"o3-mini\""
+expect_regex_no_match \
+  "model ID in official URL" \
+  "$MODEL_ID_TOKEN_PATTERN" \
+  "See https://example.test/models/gpt-5.6 for documentation."
+expect_regex_no_match \
+  "model ID in URL query" \
+  "$MODEL_ID_TOKEN_PATTERN" \
+  "See https://example.test/models?model=gpt-5.6 for documentation."
+if ! model_id_is_actionable "Use gpt-5.6."; then
+  fail "regex self-test expected an actionable model instruction"
+fi
+if model_id_is_actionable "For example, use gpt-5.6."; then
+  fail "regex self-test lost the safe scope of a model introduction"
+fi
+for text in \
+  "The policy forbids gpt-5.6." \
+  "For example, gpt-5.6 is mentioned." \
+  "Do not use gpt-5.6."; do
+  if model_id_is_actionable "$text"; then
+    fail "regex self-test accepted a model explanation or negation: $text"
+  fi
+done
+if ! model_id_is_actionable "The policy forbids gpt-5.6; use claude-opus-4-1."; then
+  fail "regex self-test lost an actionable model in a mixed clause"
+fi
+if ! model_id_is_actionable "Do not use gpt-5.6. Use claude-opus-4-1."; then
+  fail "regex self-test lost an actionable model after a sentence boundary"
+fi
+if ! model_id_is_actionable "Do not use gpt-5.6 and use claude-opus-4-1."; then
+  fail "regex self-test lost an actionable model after a connector"
+fi
+if model_id_is_actionable "Do not use gpt-5.6 and do not use claude-opus-4-1."; then
+  fail "regex self-test accepted a fully negated model sentence"
+fi
+for text in \
+  "Do not use gpt-5.6 or claude-opus-4-1." \
+  "For example, gpt-5.6 and claude-opus-4-1."; do
+  if model_id_is_actionable "$text"; then
+    fail "regex self-test broke safe model enumeration: $text"
+  fi
+done
+
+expect_regex_match \
+  "vendor command after" \
+  "$VENDOR_MANDATE_PATTERN" \
+  "OpenAI is required."
+expect_regex_match \
+  "vendor command before" \
+  "$VENDOR_MANDATE_PATTERN" \
+  "must use OpenAI."
+expect_regex_match \
+  "vendor use command" \
+  "$VENDOR_MANDATE_PATTERN" \
+  "Use OpenAI."
+expect_regex_match \
+  "vendor API use command" \
+  "$VENDOR_MANDATE_PATTERN" \
+  "Use the OpenAI API."
+expect_regex_match \
+  "vendor API command after" \
+  "$VENDOR_MANDATE_PATTERN" \
+  "OpenAI API is required."
+expect_regex_match \
+  "Japanese vendor command" \
+  "$VENDOR_MANDATE_PATTERN" \
+  "OpenAIを必須とする。"
+expect_regex_no_match \
+  "vendor negation" \
+  "$VENDOR_MANDATE_PATTERN" \
+  "OpenAI is not required."
+expect_regex_no_match \
+  "vendor explanation" \
+  "$VENDOR_MANDATE_PATTERN" \
+  "OpenAI is an example provider."
+expect_regex_no_match \
+  "vendor in official URL" \
+  "$VENDOR_MANDATE_PATTERN" \
+  "Official URL: https://openai.com/required"
+expect_regex_no_match \
+  "Japanese vendor negation" \
+  "$VENDOR_MANDATE_PATTERN" \
+  "ベンダーを固定しない。OpenAIを例に挙げる。"
+if vendor_mandate_is_actionable "Do not use OpenAI."; then
+  fail "regex self-test accepted a vendor negation"
+fi
+if ! vendor_mandate_is_actionable "Do not use OpenAI; Use Anthropic."; then
+  fail "regex self-test lost an actionable vendor in a mixed clause"
+fi
+if ! vendor_mandate_is_actionable "Use OpenAI."; then
+  fail "regex self-test expected an actionable vendor instruction"
+fi
+if vendor_mandate_is_actionable "For example, use OpenAI."; then
+  fail "regex self-test lost the safe scope of a vendor introduction"
+fi
+if ! vendor_mandate_is_actionable "Do not use OpenAI. Use Anthropic."; then
+  fail "regex self-test lost an actionable vendor after a sentence boundary"
+fi
+if ! vendor_mandate_is_actionable "Do not use OpenAI and use Anthropic."; then
+  fail "regex self-test lost an actionable vendor after a connector"
+fi
+if vendor_mandate_is_actionable "Do not use OpenAI and do not use Anthropic."; then
+  fail "regex self-test accepted a fully negated vendor sentence"
+fi
+for text in \
+  "Do not use OpenAI or Anthropic." \
+  "For example, OpenAI and Anthropic."; do
+  if vendor_mandate_is_actionable "$text"; then
+    fail "regex self-test broke safe vendor enumeration: $text"
+  fi
+done
+
+expect_regex_match \
+  "at-command syntax" \
+  "$TOOL_SYNTAX_PATTERN" \
+  "@codex review --focus"
+expect_regex_match \
+  "backticked command syntax" \
+  "$TOOL_SYNTAX_PATTERN" \
+  "Use ${REGEX_BACKTICK}gh pr create --draft${REGEX_BACKTICK}."
+expect_regex_match \
+  "bare command syntax" \
+  "$TOOL_SYNTAX_PATTERN" \
+  "gh pr create --draft"
+expect_regex_match \
+  "MCP tool syntax" \
+  "$TOOL_SYNTAX_PATTERN" \
+  "Call mcp__server__tool."
+expect_regex_no_match \
+  "generic product description" \
+  "$TOOL_SYNTAX_PATTERN" \
+  "Codex is one of the supported products."
+expect_regex_no_match \
+  "backticked product name" \
+  "$TOOL_SYNTAX_PATTERN" \
+  "The product is ${REGEX_BACKTICK}Codex${REGEX_BACKTICK}."
+expect_regex_no_match \
+  "at-command in official URL" \
+  "$TOOL_SYNTAX_PATTERN" \
+  "See https://example.test/@codex/review."
+expect_regex_no_match \
+  "MCP tool in official URL" \
+  "$TOOL_SYNTAX_PATTERN" \
+  "See https://example.test/mcp__server__tool."
+if tool_syntax_is_actionable "Do not use ${REGEX_BACKTICK}gh pr create${REGEX_BACKTICK}."; then
+  fail "regex self-test accepted a tool negation"
+fi
+if ! tool_syntax_is_actionable "Use ${REGEX_BACKTICK}codex review${REGEX_BACKTICK}."; then
+  fail "regex self-test expected an actionable tool instruction"
+fi
+if tool_syntax_is_actionable "For example, run ${REGEX_BACKTICK}codex review${REGEX_BACKTICK}."; then
+  fail "regex self-test lost the safe scope of a tool introduction"
+fi
+if ! tool_syntax_is_actionable "Do not use ${REGEX_BACKTICK}gh pr create${REGEX_BACKTICK}. Use ${REGEX_BACKTICK}codex review${REGEX_BACKTICK}."; then
+  fail "regex self-test lost an actionable tool after a sentence boundary"
+fi
+if ! tool_syntax_is_actionable "The example is ${REGEX_BACKTICK}gh pr${REGEX_BACKTICK}; run ${REGEX_BACKTICK}codex review${REGEX_BACKTICK}."; then
+  fail "regex self-test lost an actionable tool in a mixed clause"
+fi
+if ! tool_syntax_is_actionable "Do not use ${REGEX_BACKTICK}gh pr create${REGEX_BACKTICK} and use ${REGEX_BACKTICK}codex review --focus${REGEX_BACKTICK}."; then
+  fail "regex self-test lost an actionable tool after a connector"
+fi
+if tool_syntax_is_actionable "Do not use ${REGEX_BACKTICK}gh pr create${REGEX_BACKTICK} and do not use ${REGEX_BACKTICK}codex review --focus${REGEX_BACKTICK}."; then
+  fail "regex self-test accepted a fully negated tool sentence"
+fi
+for text in \
+  "Do not use ${REGEX_BACKTICK}gh pr create${REGEX_BACKTICK} or ${REGEX_BACKTICK}codex review --focus${REGEX_BACKTICK}." \
+  "For example, ${REGEX_BACKTICK}gh pr create${REGEX_BACKTICK} and ${REGEX_BACKTICK}codex review --focus${REGEX_BACKTICK}."; do
+  if tool_syntax_is_actionable "$text"; then
+    fail "regex self-test broke safe tool enumeration: $text"
+  fi
+done
+
+expect_regex_match \
+  "YAML runtime key assignment" \
+  "$RUNTIME_KEY_ASSIGNMENT_PATTERN" \
+  "default_subagent_model: value"
+expect_regex_match \
+  "JSON runtime key assignment" \
+  "$RUNTIME_KEY_ASSIGNMENT_PATTERN" \
+  "{\"default_subagent_model\": \"value\"}"
+expect_regex_match \
+  "quoted runtime key assignment" \
+  "$RUNTIME_KEY_ASSIGNMENT_PATTERN" \
+  "'OPENAI_API_KEY' = \"placeholder\""
+expect_regex_no_match \
+  "runtime key explanation" \
+  "$RUNTIME_KEY_ASSIGNMENT_PATTERN" \
+  "The default_subagent_model key is documented."
+expect_regex_no_match \
+  "runtime key in official URL" \
+  "$RUNTIME_KEY_ASSIGNMENT_PATTERN" \
+  "See https://example.test/default_subagent_model."
+
+CANONICAL_HARNESS_PATHS=(
   "AGENTS.md"
   "CLAUDE.md"
-  "docs/agent-harness.md"
-  "docs/agent-principles.md"
   "apps/frontend/AGENTS.md"
   "apps/backend/AGENTS.md"
   "docs/operations/AGENTS.md"
+  "docs/agent-harness.md"
+  "docs/agent-principles.md"
+  "docs/ai-governance/13-maintenance-policy.md"
+  "docs/ai-governance/15-agent-harness-compatibility.md"
   "requirements-agent-harness.txt"
   "scripts/validate_agent_frontmatter.py"
-)
-
-CANONICAL_SKILLS=(
+  "scripts/verify-agent-harness.sh"
+  "scripts/verify-ai-governance.sh"
   ".agents/skills/ui-ux-review/SKILL.md"
   ".agents/skills/github-delivery/SKILL.md"
   ".agents/skills/production-investigation/SKILL.md"
   ".agents/skills/security-publication/SKILL.md"
-)
-
-CLAUDE_RULES=(
+  ".claude/rules/agent-governance.md"
+  ".claude/rules/agent-harness.md"
   ".claude/rules/frontend.md"
   ".claude/rules/backend.md"
   ".claude/rules/operations.md"
-  ".claude/rules/agent-harness.md"
-)
-
-CLAUDE_SKILLS=(
   ".claude/skills/ui-ux-review/SKILL.md"
   ".claude/skills/github-delivery/SKILL.md"
   ".claude/skills/production-investigation/SKILL.md"
   ".claude/skills/security-publication/SKILL.md"
-)
-
-CURSOR_RULES=(
+  ".cursor/rules/agent-governance.mdc"
+  ".cursor/rules/agent-harness.mdc"
   ".cursor/rules/frontend.mdc"
   ".cursor/rules/backend.mdc"
   ".cursor/rules/operations.mdc"
-  ".cursor/rules/agent-harness.mdc"
 )
 
-for file in "${COMMON_FILES[@]}" "${CANONICAL_SKILLS[@]}" "${CLAUDE_RULES[@]}" "${CLAUDE_SKILLS[@]}" "${CURSOR_RULES[@]}"; do
+FRONTMATTER_PATHS=()
+CLAUDE_RULE_PATHS=()
+CLAUDE_SKILL_PATHS=()
+CURSOR_RULE_PATHS=()
+MODEL_NEUTRAL_PATHS=()
+
+for file in "${CANONICAL_HARNESS_PATHS[@]}"; do
   require_file "$file"
+  case "$file" in
+    .agents/skills/*/SKILL.md)
+      FRONTMATTER_PATHS+=("$file")
+      MODEL_NEUTRAL_PATHS+=("$file")
+      ;;
+    .claude/rules/*)
+      FRONTMATTER_PATHS+=("$file")
+      CLAUDE_RULE_PATHS+=("$file")
+      MODEL_NEUTRAL_PATHS+=("$file")
+      ;;
+    .claude/skills/*/SKILL.md)
+      FRONTMATTER_PATHS+=("$file")
+      CLAUDE_SKILL_PATHS+=("$file")
+      MODEL_NEUTRAL_PATHS+=("$file")
+      ;;
+    .cursor/rules/*)
+      FRONTMATTER_PATHS+=("$file")
+      CURSOR_RULE_PATHS+=("$file")
+      MODEL_NEUTRAL_PATHS+=("$file")
+      ;;
+    AGENTS.md|CLAUDE.md|apps/frontend/AGENTS.md|apps/backend/AGENTS.md|docs/operations/AGENTS.md|docs/agent-harness.md|docs/agent-principles.md|docs/ai-governance/13-maintenance-policy.md|docs/ai-governance/15-agent-harness-compatibility.md|scripts/verify-ai-governance.sh)
+      MODEL_NEUTRAL_PATHS+=("$file")
+      ;;
+  esac
 done
 
-max_size "AGENTS.md" 180 16384
-for file in "apps/frontend/AGENTS.md" "apps/backend/AGENTS.md" "docs/operations/AGENTS.md"; do
-  max_size "$file" 100 8192
-  combined_bytes="$(( $(wc -c < AGENTS.md) + $(wc -c < "$file") ))"
-  (( combined_bytes <= 24576 )) || fail "AGENTS.md + $file exceeds 24576 bytes: $combined_bytes"
-done
-
-for file in "${CANONICAL_SKILLS[@]}"; do
-  max_size "$file" 180 16384
-done
-for file in "${CLAUDE_RULES[@]}" "${CLAUDE_SKILLS[@]}" "${CURSOR_RULES[@]}"; do
-  max_size "$file" 30 4096
+for file in "${CANONICAL_HARNESS_PATHS[@]}"; do
+  case "$file" in
+    AGENTS.md)
+      max_size "$file" 180 16384
+      ;;
+    apps/frontend/AGENTS.md|apps/backend/AGENTS.md|docs/operations/AGENTS.md)
+      max_size "$file" 100 8192
+      combined_bytes="$(( $(wc -c < AGENTS.md) + $(wc -c < "$file") ))"
+      (( combined_bytes <= 24576 )) || fail "AGENTS.md + $file exceeds 24576 bytes: $combined_bytes"
+      ;;
+    .agents/skills/*/SKILL.md)
+      max_size "$file" 180 16384
+      ;;
+    .claude/rules/*|.claude/skills/*/SKILL.md|.cursor/rules/*)
+      max_size "$file" 30 4096
+      ;;
+  esac
 done
 
 python3 scripts/validate_agent_frontmatter.py --self-test
-python3 scripts/validate_agent_frontmatter.py \
-  "${CANONICAL_SKILLS[@]}" \
-  "${CLAUDE_RULES[@]}" \
-  "${CLAUDE_SKILLS[@]}" \
-  "${CURSOR_RULES[@]}"
+python3 scripts/validate_agent_frontmatter.py "${FRONTMATTER_PATHS[@]}"
 
 CLAUDE_CONTENT="$(tr -d '\r' < CLAUDE.md | sed '/^[[:space:]]*$/d')"
 [[ "$CLAUDE_CONTENT" == "@AGENTS.md" ]] || fail "CLAUDE.md must contain only @AGENTS.md"
 
-for file in "${CLAUDE_RULES[@]}"; do
+for file in "${CLAUDE_RULE_PATHS[@]}"; do
   require_text "$file" "AGENTS.md"
 done
-for file in "${CLAUDE_SKILLS[@]}"; do
+for file in "${CURSOR_RULE_PATHS[@]}"; do
+  require_text "$file" "AGENTS.md"
+done
+for file in "${CLAUDE_SKILL_PATHS[@]}"; do
   require_text "$file" ".agents/skills/"
   require_text "$file" "唯一の手順正本"
+done
+
+for file in "${CLAUDE_RULE_PATHS[@]}" "${CURSOR_RULE_PATHS[@]}"; do
+  case "$file" in
+    *agent-governance*)
+      require_text "$file" "13-maintenance-policy.md"
+      require_text "$file" "15-agent-harness-compatibility.md"
+      ;;
+    *agent-harness*)
+      require_text "$file" "agent-harness.md"
+      require_text "$file" "13-maintenance-policy.md"
+      ;;
+  esac
 done
 
 for product in "Codex" "Claude Code" "Cursor"; do
@@ -312,6 +713,21 @@ for product in "Codex" "Claude Code" "Cursor"; do
   require_text "docs/agent-harness.md" "$product"
   require_text "docs/ai-governance/13-maintenance-policy.md" "$product"
 done
+
+for anchor in \
+  "## 1. 目的" \
+  "## 2. 用語" \
+  "## 3. 3エージェントの適用構造" \
+  "## 4. 配置判断" \
+  "## 5. instruction budget" \
+  "## 6. tool中立性" \
+  "## 7. hard gateとheuristic" \
+  "## 8. ハーネス変更時の互換性レビュー" \
+  "## 9. 検証" \
+  "## 10. 保守時の停止条件"; do
+  require_text "docs/ai-governance/15-agent-harness-compatibility.md" "$anchor"
+done
+require_text "docs/ai-governance/15-agent-harness-compatibility.md" "scripts/verify-ai-governance.sh"
 
 for path in \
   ".agents/skills/ui-ux-review/SKILL.md" \
@@ -343,6 +759,8 @@ require_text "docs/agent-harness.md" "Hard gateとheuristic"
 require_text "docs/agent-harness.md" "Instruction budget"
 require_text "docs/agent-harness.md" "clean review"
 require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "サブエージェントは独立したrisk laneへ積極的に使います"
+require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "primary agentは要件・計画・割当・進捗・競合・ガバナンス・受入・配送判断を担います"
+require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "分離可能な実務はbounded work laneとしてsubagentへ委任"
 require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "docs/agent-harness.md"
 require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "配送対象の最終HEADではfull gateを原則1回実行します"
 require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "包括レビューは同一PR・同一HEAD系列で原則2周まで"
@@ -370,12 +788,25 @@ require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "監査結果が矛盾した場合は追加agentの多数決を取りません"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "full-history forkを既定にしません"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "必要なHEAD、path、acceptance、既知の指摘だけを短く渡します"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "primary agentは、要件・適用ルール、完了条件・非対象、lane設計、担当割当、依存関係、進捗、lane間の競合、ガバナンス、成果受入、Issue・commit・PR・CI・review・mergeabilityの確認、配送判断を担います"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "subagentは、コードベース・履歴・仕様の探索、実装、focused verification、コード・セキュリティ・公開安全性review、review fix、docs、配送、CI監視など、分離できる実務を担当できます"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "subagentを監査専用には限定しません"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "実行環境のモデル、ベンダー、製品固有tool、固有command、config keyを指定せず"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "owner、write ownership、completion、verification、invalidation condition"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "開発中は変更によって影響を受けるfocused test"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "配送対象の最終HEADが確定した時点でfrontend / backend / operationsなど必要なfull gateを原則1回実行する"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "成功済み検証を再実行する時は、対象変更、生成物変更、実行条件変更、証拠期限切れなど、証拠が失効した理由を記録する"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "HEADだけを監査済みsnapshotとして扱いません"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "target HEAD"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "target path"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "completion"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "verification"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "evidence package"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "changed paths"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| verified snapshot |"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| invalidation condition |"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "primary agentの受入はevidence packageからscope、acceptance、evidence、unrelated diff、commit responsibility、lane conflict、completion gatesを確認し"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| evidence package | scope、acceptance、changed paths、conclusion、verification results、unperformed checks、remaining risks、unrelated diff、commit responsibility、lane conflict、completion gates、snapshotまたはdiff identifier |"
 require_block_text "docs/ai-governance/13-maintenance-policy.md" "## サブエージェント運用" "subagent-maintenance" "docs/agent-harness.md"
 require_block_text "docs/ai-governance/13-maintenance-policy.md" "## サブエージェント運用" "subagent-maintenance" "同一HEADの重複監査"
 require_block_text "docs/ai-governance/13-maintenance-policy.md" "## Review収束" "review-maintenance" "docs/agent-harness.md"
@@ -402,5 +833,16 @@ require_text "docs/ai-governance/03-evidence-and-completion-gates.md" "自己レ
 require_text ".github/pull_request_template.md" "push CI"
 require_text ".github/pull_request_template.md" "pull_request CI"
 require_text ".github/pull_request_template.md" "GitHub mergeability"
+
+# Keep the shared contract and task/adapters model-neutral without rejecting
+# legitimate environment names, official URLs, or product-specific docs. The
+# verifier itself is excluded because its fixtures and patterns intentionally
+# contain the examples being checked.
+for file in "${MODEL_NEUTRAL_PATHS[@]}"; do
+  reject_model_ids "$file"
+  reject_regex "$file" "$RUNTIME_KEY_ASSIGNMENT_PATTERN"
+  reject_tool_syntax "$file"
+  reject_vendor_mandates "$file"
+done
 
 echo "Agent harness verification: PASS"

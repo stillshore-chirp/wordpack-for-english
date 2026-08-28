@@ -89,6 +89,8 @@ jobs:
             scripts/verify_plugin_eval_outputs.py \
             scripts/validate_plugin_eval_benchmark.py \
             scripts/verify_data_analysis_pilot.py
+          python scripts/verify_task_skills.py --self-test
+          python scripts/validate_plugin_eval_benchmark.py --self-test
 
       - name: Install shellcheck
         run: |

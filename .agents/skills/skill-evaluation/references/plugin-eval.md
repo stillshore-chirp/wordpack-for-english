@@ -19,6 +19,8 @@ installは上記commitのlocal checkoutから行い、plugin本体、`node_modul
 - live: `benchmark`が実際の`codex exec`を隔離workspaceで実行
 - comparison: `compare`でbefore / after reportを比較
 
+upstreamのstarter configは`workspace-write`を生成しますが、このrepositoryのversion管理configでは、3 scenarioをread-only reviewとして固定します。`runner.sandbox`は`read-only`、`approvalPolicy`は`never`、`extraArgs`は空配列とし、検証scriptの上書きやsandboxの後付け変更をpreflightで拒否します。verifierはbenchmark workspace内でモデル実行が終わった後に起動します。
+
 このcommitのCLI実装はsimulated dry-runを提供せず、`--dry-run`を拒否します。一方、同commitの`evaluate-skill`文書には`benchmark --dry-run`の例が残っています。repositoryでは [`validate_plugin_eval_benchmark.py`](../../../../scripts/validate_plugin_eval_benchmark.py) をconfig-only preflightとして使い、upstream benchmark実行と混同しません。
 
 ## Live preflight

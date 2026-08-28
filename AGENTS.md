@@ -31,6 +31,7 @@
 限定されたタスクは、調査だけ、実装だけ、PR作成だけで恣意的に分断しません。権限、秘密情報、外部サービス障害などの真の blocker がある場合だけ、安全な整合点で止め、確認済み事実、未完了範囲、次の最短アクションを示します。
 
 サブエージェントは独立したrisk laneへ積極的に使います。委任前にrisk lane、対象HEAD、対象path、具体的な問い、既存証拠だけでは不足する理由を定め、メインエージェントが台帳と結果を統合します。同一HEAD・同一risk laneの重複監査や複数の包括監査は避け、修正中はfocused test、配送対象の最終HEADではfull gateを原則1回実行します。包括レビューは同一PR・同一HEAD系列で原則2周までとし、3周目以降は重大または新規のrisk laneと変更pathだけを限定再確認します。P2以下だけなら影響とnon-blocking判断を記録して収束し、再監査・再実行は証拠が失効した理由を示します。詳細は [`docs/agent-harness.md`](docs/agent-harness.md) のGitHub reviewの収束とSubagent orchestrationに従います。
+primary agentは要件・計画・割当・進捗・競合・ガバナンス・受入・配送判断を担います。探索・実装・focused verification・review / review fix・docs・配送・CI監視など分離可能な実務はbounded work laneとしてsubagentへ委任し、直接実務は競合解消、証拠矛盾の限定確認、分離不能な統合に限ります。lane項目とevidence packageは [`docs/agent-harness.md`](docs/agent-harness.md) を正本とします。
 <!-- agent-harness:workflow:end -->
 
 ## ソースコード変更の配送契約

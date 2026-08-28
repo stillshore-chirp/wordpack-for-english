@@ -7,7 +7,7 @@
   "runner": {
     "type": "codex-cli",
     "model": "gpt-5.4-mini",
-    "sandbox": "workspace-write",
+    "sandbox": "read-only",
     "approvalPolicy": "never",
     "extraArgs": []
   },
@@ -26,6 +26,7 @@
   },
   "notes": [
     "Reviewed config only. Running benchmark performs real Codex executions.",
+    "All scenarios are read-only; the host-side verifier runs after each model execution.",
     "Maximum executions are bounded by the three scenarios below."
   ],
   "setupQuestions": [],
