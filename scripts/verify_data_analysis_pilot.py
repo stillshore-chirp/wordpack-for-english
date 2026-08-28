@@ -6,7 +6,7 @@ from __future__ import annotations
 import argparse
 import csv
 from collections import defaultdict
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from pathlib import Path
 
@@ -20,10 +20,92 @@ REQUIRED_COLUMNS = (
 ALLOWED_CHANNELS = {"organic", "ads"}
 CHANNEL_ORDER = ("organic", "ads")
 SNAPSHOT_DATE = date(2026, 8, 24)
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+FIXTURE_ROOT = REPOSITORY_ROOT / "tests" / "fixtures" / "data-analysis"
+REPORT_HEADINGS = (
+    "## Source and quality gate",
+    "## Observations",
+    "## Calculations",
+    "## Inferences",
+    "## Recommendations",
+    "## Unknowns",
+    "## Publication boundary",
+)
+REPORT_TABLES = (
+    ("| Period | Sessions | Paid conversions | Paid conversion rate |", 4),
+    ("| Channel | Prior rate | Current rate | Change |", 4),
+)
+UNSAFE_LOCAL_PATH_MARKERS = ("/Users/", "/home/", "C:\\Users\\")
 
 
 def fail(message: str) -> None:
     raise SystemExit(f"ERROR: {message}")
+
+
+def public_source_label(source: Path) -> str:
+    """Return a repository-relative source label without exposing local paths."""
+
+    resolved = source.resolve()
+    try:
+        relative = resolved.relative_to(REPOSITORY_ROOT)
+    except ValueError:
+        return "<external source>"
+    label = relative.as_posix()
+    if any(character in label for character in ("`", "\r", "\n")):
+        return "<source label withheld>"
+    return label
+
+
+def _table_column_count(row: str) -> int:
+    if not row.startswith("|") or not row.endswith("|"):
+        return 0
+    return len(row.split("|")[1:-1])
+
+
+def validate_report_layout(report: str) -> None:
+    """Check the stable Markdown structure used by the reviewed pilot report."""
+
+    lines = report.splitlines()
+    if not report.endswith("\n"):
+        fail("generated report must end with a newline")
+    headings = tuple(line for line in lines if line.startswith("## "))
+    if headings != REPORT_HEADINGS:
+        fail(f"unexpected report heading order: {headings}")
+
+    heading_positions = [lines.index(heading) for heading in REPORT_HEADINGS]
+    for index, heading in enumerate(REPORT_HEADINGS):
+        section_start = heading_positions[index] + 1
+        section_end = (
+            heading_positions[index + 1] if index + 1 < len(heading_positions) else len(lines)
+        )
+        if not any(line.strip() for line in lines[section_start:section_end]):
+            fail(f"report section is empty: {heading}")
+
+    for table_header, expected_columns in REPORT_TABLES:
+        try:
+            header_index = lines.index(table_header)
+        except ValueError:
+            fail(f"report table header is missing: {table_header}")
+        separator_index = header_index + 1
+        if separator_index >= len(lines) or not lines[separator_index].startswith("|---"):
+            fail(f"report table separator is missing: {table_header}")
+        if _table_column_count(table_header) != expected_columns:
+            fail(f"report table header has the wrong column count: {table_header}")
+        if _table_column_count(lines[separator_index]) != expected_columns:
+            fail(f"report table separator has the wrong column count: {table_header}")
+        data_rows = []
+        for line in lines[separator_index + 1 :]:
+            if not line.strip() or line.startswith("## "):
+                break
+            if line.startswith("|"):
+                data_rows.append(line)
+        if len(data_rows) < 2 or any(
+            _table_column_count(row) != expected_columns for row in data_rows
+        ):
+            fail(f"report table has insufficient or malformed data rows: {table_header}")
+
+    if any(marker in report for marker in UNSAFE_LOCAL_PATH_MARKERS):
+        fail("report contains a machine-local absolute path")
 
 
 def load_rows(path: Path) -> list[dict[str, object]]:
@@ -42,6 +124,9 @@ def load_rows(path: Path) -> list[dict[str, object]]:
     seen_grain: set[tuple[date, str]] = set()
     channels_by_week: dict[date, set[str]] = defaultdict(set)
     for index, raw in enumerate(raw_rows, start=2):
+        extra_fields = raw.get(None)
+        if extra_fields:
+            fail(f"unexpected extra field at CSV row {index}")
         if any(raw.get(column, "").strip() == "" for column in REQUIRED_COLUMNS):
             fail(f"null or blank value at CSV row {index}")
         try:
@@ -78,6 +163,14 @@ def load_rows(path: Path) -> list[dict[str, object]]:
     ]
     if incomplete_weeks:
         fail(f"incomplete channel coverage: {incomplete_weeks}")
+    weeks = sorted(channels_by_week)
+    missing_periods = [
+        (prior, current)
+        for prior, current in zip(weeks, weeks[1:])
+        if current - prior != timedelta(days=7)
+    ]
+    if missing_periods:
+        fail(f"weekly periods are not consecutive: {missing_periods}")
     freshness_days = (SNAPSHOT_DATE - max(channels_by_week)).days
     if not 0 <= freshness_days <= 7:
         fail(f"sample freshness is outside the declared weekly window: {freshness_days} days")
@@ -297,7 +390,7 @@ def build_report(source: Path, rows: list[dict[str, object]]) -> str:
         "",
         "## Source and quality gate",
         "",
-        f"- Source: `{source.as_posix()}`",
+        f"- Source: `{public_source_label(source)}`",
         f"- Snapshot date: `{SNAPSHOT_DATE.isoformat()}`",
         "- Intended grain: one row per `week_start × channel`",
         f"- Rows / periods / channels: `{len(rows)} / {len(weeks)} / {len(ALLOWED_CHANNELS)}`",
@@ -359,7 +452,9 @@ def build_report(source: Path, rows: list[dict[str, object]]) -> str:
             "",
         ]
     )
-    return "\n".join(lines)
+    report = "\n".join(lines)
+    validate_report_layout(report)
+    return report
 
 
 def run_self_test() -> None:
@@ -402,6 +497,34 @@ def run_self_test() -> None:
     if "offsets the aggregate increase" not in attribution or "offsetting" not in calculation:
         fail("self-test failed: offsetting effect lost its sign")
 
+    def expect_rejection(path: Path, expected_message: str) -> None:
+        try:
+            load_rows(path)
+        except SystemExit as exc:
+            if expected_message not in str(exc):
+                fail(f"self-test failed: unexpected rejection for {path.name}: {exc}")
+        else:
+            fail(f"self-test failed: invalid fixture was accepted: {path.name}")
+
+    expect_rejection(FIXTURE_ROOT / "missing-week.csv", "weekly periods are not consecutive")
+    expect_rejection(FIXTURE_ROOT / "surplus-column.csv", "unexpected extra field")
+
+    fixture_source = Path("tests/fixtures/data-analysis/weekly-metrics.csv")
+    fixture_rows = load_rows(REPOSITORY_ROOT / fixture_source)
+    fixture_report = build_report(fixture_source, fixture_rows)
+    if "tests/fixtures/data-analysis/weekly-metrics.csv" not in fixture_report:
+        fail("self-test failed: repository-relative source label was not preserved")
+    try:
+        validate_report_layout(fixture_report.replace("## Recommendations", "## Broken", 1))
+    except SystemExit:
+        pass
+    else:
+        fail("self-test failed: malformed report heading was accepted")
+    external_source = REPOSITORY_ROOT.parent / "private-input.csv"
+    external_report = build_report(external_source, fixture_rows)
+    if "<external source>" not in external_report:
+        fail("self-test failed: external source label was not sanitized")
+
     print("Data analysis narrative self-test: PASS")
 
 
@@ -419,6 +542,7 @@ def main() -> int:
     if args.source is None or args.output is None:
         parser.error("--source and --output are required unless --self-test is used")
 
+    run_self_test()
     report = build_report(args.source, load_rows(args.source))
     if args.expected_report:
         try:
