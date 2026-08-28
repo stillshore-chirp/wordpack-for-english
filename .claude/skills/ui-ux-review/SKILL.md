@@ -1,6 +1,6 @@
 ---
 name: ui-ux-review
-description: "UI/UX変更・レビューの共有SkillをClaude Codeから呼び出す。"
+description: "UI/UX変更レビュー・既存フロー監査の共有SkillをClaude Codeから呼び出す。"
 ---
 
 # ui-ux-review adapter

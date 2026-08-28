@@ -25,6 +25,14 @@ require_line() {
   grep -Fxq -- "$line" "$file" || fail "$file must contain the exact line: $line"
 }
 
+reject_text() {
+  local file="$1"
+  local pattern="$2"
+  if grep -Fq -- "$pattern" "$file"; then
+    fail "$file contains out-of-scope instruction: $pattern"
+  fi
+}
+
 bash scripts/verify-agent-harness.sh
 
 REQUIRED_FILES=(
@@ -86,8 +94,33 @@ require_text ".agents/skills/ui-ux-review/SKILL.md" "name: ui-ux-review"
 require_text ".agents/skills/ui-ux-review/SKILL.md" "アプリ本体UI"
 require_text ".agents/skills/ui-ux-review/SKILL.md" "GitHub共同作業面"
 require_text ".agents/skills/ui-ux-review/SKILL.md" "state matrix"
+require_text ".agents/skills/ui-ux-review/SKILL.md" "現在の監査実行"
+require_text ".agents/skills/ui-ux-review/SKILL.md" "取得手段、開始状態、完了状態、重要な分岐"
+require_text ".agents/skills/ui-ux-review/SKILL.md" "各ステップの安定後に画面を取得"
+require_text ".agents/skills/ui-ux-review/SKILL.md" "保存した画像そのものを検査"
+require_text ".agents/skills/ui-ux-review/SKILL.md" "完全なフロー監査と扱わない"
+require_text ".agents/skills/ui-ux-review/SKILL.md" "GitHubが所有する未変更の操作フロー"
+require_text ".claude/skills/ui-ux-review/SKILL.md" "フロー監査"
+require_text ".claude/skills/ui-ux-review/SKILL.md" "../../../.agents/skills/ui-ux-review/SKILL.md"
+require_file ".claude/skills/ui-ux-review/../../../.agents/skills/ui-ux-review/SKILL.md"
+reject_text ".agents/skills/ui-ux-review/SKILL.md" "Browser Choice"
+reject_text ".agents/skills/ui-ux-review/SKILL.md" "user-context"
+reject_text ".agents/skills/ui-ux-review/SKILL.md" "Figma監査ボード"
 require_text "docs/ai-governance/02-uiux-review-framework.md" "P0"
+require_text "docs/ai-governance/02-uiux-review-framework.md" "観測事実、ユーザー影響、推奨対応、証跡上の限界"
+require_text "docs/ai-governance/02-uiux-review-framework.md" "P0 / P1 / P2だけ"
+require_text "docs/ai-governance/02-uiux-review-framework.md" "間接資料だけで実際のフローを監査済みと扱いません"
 require_text "docs/ai-governance/03-evidence-and-completion-gates.md" "前後screenshot"
+require_text "docs/ai-governance/03-evidence-and-completion-gates.md" "重要な各ステップ"
+require_text "docs/ai-governance/03-evidence-and-completion-gates.md" "取得不能の具体的なblocker"
+require_text "docs/ai-governance/03-evidence-and-completion-gates.md" "navigation、focus、loading、validation、error recovery、empty state、motion"
+require_text "docs/ai-governance/03-evidence-and-completion-gates.md" "誤画面、誤状態、blank、loading中、文脈を隠すcrop、別window、half-rendered状態"
+require_text "docs/ai-governance/03-evidence-and-completion-gates.md" "screenshotだけではsemantic structure"
+require_text "docs/ai-governance/templates/uiux-review-report.md" "フロー監査（発動時）"
+require_text "docs/ai-governance/templates/uiux-review-report.md" "screenshot参照またはblocker"
+require_text "docs/ai-governance/templates/uiux-review-report.md" "証跡上の限界"
+require_text "docs/ai-governance/templates/completion-gate-report.md" "フロー監査（発動時）"
+require_text "docs/ai-governance/templates/completion-gate-report.md" "重要ステップの順序付き証跡またはblocker"
 require_text "docs/ai-governance/03-evidence-and-completion-gates.md" "latest meaningful change"
 require_text "docs/ai-governance/03-evidence-and-completion-gates.md" "GitHubのmergeabilityがclean"
 require_text "docs/ai-governance/14-issue-quality-gate.md" "体験が直接変わらない Issue"
