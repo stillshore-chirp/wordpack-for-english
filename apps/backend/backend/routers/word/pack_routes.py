@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
@@ -15,15 +16,44 @@ from ...authorization.policies import (
 from ...authorization.principal import Principal
 from ...config import settings
 from ...application.wordpack.create_empty_wordpack import build_empty_wordpack
+from ...application.wordpack.list_query import query_word_pack_rows
 from ...models.word import (
     WordPack,
     WordPackCreateRequest,
     WordPackListItem,
+    WordPackListFacetCounts,
     WordPackListResponse,
 )
 from .dependencies import get_store, get_word_pack_visibility, next_word_pack_id
 
 router = APIRouter()
+
+
+def _to_word_pack_list_item(row: tuple) -> WordPackListItem:
+    (
+        wp_id,
+        lemma,
+        sense_title,
+        created_at,
+        updated_at,
+        is_empty,
+        examples_count,
+        checked_only,
+        learned,
+        guest_public,
+    ) = row
+    return WordPackListItem(
+        id=wp_id,
+        lemma=lemma,
+        sense_title=sense_title,
+        created_at=created_at,
+        updated_at=updated_at,
+        is_empty=bool(is_empty),
+        examples_count=examples_count,
+        checked_only_count=checked_only,
+        learned_count=learned,
+        guest_public=guest_public,
+    )
 
 
 @router.post(
@@ -64,59 +94,63 @@ async def list_word_packs(
     request: Request,
     limit: int = Query(default=50, ge=1, le=200, description="取得件数上限"),
     offset: int = Query(default=0, ge=0, description="オフセット"),
+    search: str = Query(default="", max_length=128, description="見出し語の検索文字列"),
+    search_mode: Literal["prefix", "suffix", "contains"] = Query(
+        default="contains",
+        description="検索方式",
+    ),
+    visibility: Literal["all", "public", "private"] = Query(
+        default="all",
+        description="公開状態",
+    ),
+    generation: Literal["all", "generated", "not_generated"] = Query(
+        default="all",
+        description="例文生成状態",
+    ),
+    sort_key: Literal[
+        "created_at", "updated_at", "lemma", "total_examples"
+    ] = Query(default="created_at", description="並び順の基準"),
+    sort_order: Literal["asc", "desc"] = Query(
+        default="desc",
+        description="昇順または降順",
+    ),
 ) -> WordPackListResponse:
-    """保存済みWordPackの一覧を取得する。"""
+    """認可範囲全体へ条件を適用してから保存済みWordPackをページ分割する。"""
 
     repository = get_store()
     principal = principal_from_request(request)
     if principal.is_guest:
-        items_with_flags = repository.list_public_word_packs_with_flags(
-            limit=limit, offset=offset
-        )
-        total = repository.count_public_word_packs()
+        scoped_rows = repository.list_all_public_word_packs_with_flags()
     elif principal.is_user and getattr(settings, "enforce_owner_scoping", False):
-        items_with_flags = repository.list_owned_word_packs_with_flags(
-            principal.user_id or "",
-            limit=limit,
-            offset=offset,
+        scoped_rows = repository.list_all_owned_word_packs_with_flags(
+            principal.user_id or ""
         )
-        total = repository.count_owned_word_packs(principal.user_id or "")
     else:
-        items_with_flags = repository.list_word_packs_with_flags(
-            limit=limit, offset=offset
-        )
-        total = repository.count_word_packs()
-    items: list[WordPackListItem] = []
-    for (
-        wp_id,
-        lemma,
-        sense_title,
-        created_at,
-        updated_at,
-        is_empty,
-        examples_count,
-        checked_only,
-        learned,
-        guest_public,
-    ) in items_with_flags:
-        items.append(
-            WordPackListItem(
-                id=wp_id,
-                lemma=lemma,
-                sense_title=sense_title,
-                created_at=created_at,
-                updated_at=updated_at,
-                is_empty=bool(is_empty),
-                examples_count=examples_count,
-                checked_only_count=checked_only,
-                learned_count=learned,
-                guest_public=guest_public,
-            )
-        )
-
+        scoped_rows = repository.list_all_word_packs_with_flags()
+    query_result = query_word_pack_rows(
+        scoped_rows,
+        limit=limit,
+        offset=offset,
+        search=search,
+        search_mode=search_mode,
+        visibility=visibility,
+        generation=generation,
+        sort_key=sort_key,
+        sort_order=sort_order,
+    )
     return WordPackListResponse(
-        items=items,
-        total=total,
+        items=[_to_word_pack_list_item(row) for row in query_result.rows],
+        recent_items=[
+            _to_word_pack_list_item(row) for row in query_result.recent_rows
+        ],
+        total=query_result.total,
+        filtered_total=query_result.filtered_total,
+        facet_counts=WordPackListFacetCounts(
+            public=query_result.facet_counts.public,
+            private=query_result.facet_counts.private,
+            generated=query_result.facet_counts.generated,
+            not_generated=query_result.facet_counts.not_generated,
+        ),
         limit=limit,
         offset=offset,
     )

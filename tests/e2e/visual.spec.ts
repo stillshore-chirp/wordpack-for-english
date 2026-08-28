@@ -3,6 +3,11 @@ import { json, mockConfig, runA11yCheck, seedAuthenticatedSession } from './help
 
 const STATIC_MASK_SELECTOR = '[aria-live="polite"]';
 
+const withRecentItems = <T extends { items: unknown[] }>(payload: T) => ({
+  ...payload,
+  recent_items: payload.items,
+});
+
 const disableAnimations = async (page: Page): Promise<void> => {
   /**
    * 視覚スナップショットの差分を安定化するため、全要素のアニメーション/トランジションを無効化する。
@@ -70,7 +75,7 @@ const mockWordPackList = async (page: Page): Promise<void> => {
    */
   await page.route('**/api/word/packs?**', (route) =>
     route.fulfill(
-      json({
+      json(withRecentItems({
         items: [
           {
             id: 'wp:e2e:alpha',
@@ -130,7 +135,7 @@ const mockWordPackList = async (page: Page): Promise<void> => {
         total: 3,
         limit: 200,
         offset: 0,
-      }),
+      })),
     ),
   );
 };
@@ -142,7 +147,7 @@ const mockWordPackListContentStress = async (page: Page): Promise<void> => {
    */
   await page.route('**/api/word/packs?**', (route) =>
     route.fulfill(
-      json({
+      json(withRecentItems({
         items: [
           {
             id: 'wp:e2e:layout-long',
@@ -184,7 +189,7 @@ const mockWordPackListContentStress = async (page: Page): Promise<void> => {
         total: 3,
         limit: 200,
         offset: 0,
-      }),
+      })),
     ),
   );
 };

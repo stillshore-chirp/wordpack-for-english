@@ -74,6 +74,7 @@ jobs:
         run: |
           bash -n scripts/verify-agent-harness.sh scripts/verify-ai-governance.sh
           python -m py_compile scripts/validate_agent_frontmatter.py scripts/verify_task_skills.py
+          python scripts/verify_task_skills.py --self-test
 
       - name: Install shellcheck
         run: |

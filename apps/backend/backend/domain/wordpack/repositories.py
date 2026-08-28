@@ -47,16 +47,37 @@ class WordPackRepository(Protocol):
     ) -> list[WordPackListFlagsTuple]:
         ...
 
+    def list_all_word_packs_with_flags(self) -> list[WordPackListFlagsTuple]:
+        pass
+
     def list_public_word_packs_with_flags(
         self, limit: int = 50, offset: int = 0
     ) -> list[WordPackListFlagsTuple]:
         ...
+
+    def list_all_public_word_packs_with_flags(
+        self,
+    ) -> list[WordPackListFlagsTuple]:
+        pass
 
     def count_word_packs(self) -> int:
         ...
 
     def count_public_word_packs(self) -> int:
         ...
+
+    def list_owned_word_packs_with_flags(
+        self, owner_user_id: str, limit: int = 50, offset: int = 0
+    ) -> list[WordPackListFlagsTuple]:
+        pass
+
+    def list_all_owned_word_packs_with_flags(
+        self, owner_user_id: str
+    ) -> list[WordPackListFlagsTuple]:
+        pass
+
+    def count_owned_word_packs(self, owner_user_id: str) -> int:
+        pass
 
     def is_word_pack_guest_public(self, word_pack_id: str) -> bool:
         ...

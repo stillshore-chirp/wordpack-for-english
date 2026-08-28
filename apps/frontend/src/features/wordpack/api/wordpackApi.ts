@@ -7,6 +7,19 @@ import {
 } from '../../../lib/wordpack';
 import type { WordPack, WordPackListResponse } from '../types';
 
+export interface WordPackListQueryOptions {
+  limit?: number;
+  offset?: number;
+  search?: string;
+  searchMode?: 'prefix' | 'suffix' | 'contains';
+  visibility?: 'all' | 'public' | 'private';
+  generation?: 'all' | 'generated' | 'not_generated';
+  sortKey?: 'created_at' | 'updated_at' | 'lemma' | 'total_examples';
+  sortOrder?: 'asc' | 'desc';
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}
+
 export { composeModelRequestFields, regenerateWordPackRequest, updateGuestPublicFlag };
 
 export const fetchWordPack = (
@@ -19,11 +32,21 @@ export const fetchWordPack = (
 
 export const fetchWordPackList = (
   apiBase: string,
-  options?: { limit?: number; offset?: number; signal?: AbortSignal; timeoutMs?: number },
+  options?: WordPackListQueryOptions,
 ): Promise<WordPackListResponse> => {
   const limit = options?.limit ?? 200;
   const offset = options?.offset ?? 0;
-  return fetchJson<WordPackListResponse>(`${apiBase}/word/packs?limit=${limit}&offset=${offset}`, {
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
+  if (options?.search) params.set('search', options.search);
+  if (options?.searchMode) params.set('search_mode', options.searchMode);
+  if (options?.visibility) params.set('visibility', options.visibility);
+  if (options?.generation) params.set('generation', options.generation);
+  if (options?.sortKey) params.set('sort_key', options.sortKey);
+  if (options?.sortOrder) params.set('sort_order', options.sortOrder);
+  return fetchJson<WordPackListResponse>(`${apiBase}/word/packs?${params.toString()}`, {
     signal: options?.signal,
     timeoutMs: options?.timeoutMs,
   });
