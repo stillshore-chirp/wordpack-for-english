@@ -56,6 +56,13 @@ def public_source_label(source: Path) -> str:
     return label
 
 
+def ensure_output_path_is_distinct(source: Path, output: Path) -> None:
+    """Reject output paths that resolve to the input source."""
+
+    if source.resolve() == output.resolve():
+        fail("output path must differ from source path")
+
+
 def _table_column_count(row: str) -> int:
     if not row.startswith("|") or not row.endswith("|"):
         return 0
@@ -172,8 +179,11 @@ def load_rows(path: Path) -> list[dict[str, object]]:
     if missing_periods:
         fail(f"weekly periods are not consecutive: {missing_periods}")
     freshness_days = (SNAPSHOT_DATE - max(channels_by_week)).days
-    if not 0 <= freshness_days <= 7:
-        fail(f"sample freshness is outside the declared weekly window: {freshness_days} days")
+    if freshness_days != 7:
+        fail(
+            "latest weekly period must be exactly one complete week before snapshot: "
+            f"{freshness_days} days"
+        )
     return rows
 
 
@@ -457,6 +467,14 @@ def build_report(source: Path, rows: list[dict[str, object]]) -> str:
     return report
 
 
+def write_report(source: Path, output: Path, report: str) -> None:
+    """Write a report only after proving it cannot overwrite the source."""
+
+    ensure_output_path_is_distinct(source, output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(report, encoding="utf-8")
+
+
 def run_self_test() -> None:
     zero_delta = {
         "organic": (Decimal("0.08"), Decimal("0.07"), Decimal("-0.01")),
@@ -508,9 +526,15 @@ def run_self_test() -> None:
 
     expect_rejection(FIXTURE_ROOT / "missing-week.csv", "weekly periods are not consecutive")
     expect_rejection(FIXTURE_ROOT / "surplus-column.csv", "unexpected extra field")
+    expect_rejection(
+        FIXTURE_ROOT / "in-progress-week.csv",
+        "exactly one complete week before snapshot",
+    )
 
     fixture_source = Path("tests/fixtures/data-analysis/weekly-metrics.csv")
-    fixture_rows = load_rows(REPOSITORY_ROOT / fixture_source)
+    fixture_source_path = REPOSITORY_ROOT / fixture_source
+    fixture_source_before = fixture_source_path.read_bytes()
+    fixture_rows = load_rows(fixture_source_path)
     fixture_report = build_report(fixture_source, fixture_rows)
     if "tests/fixtures/data-analysis/weekly-metrics.csv" not in fixture_report:
         fail("self-test failed: repository-relative source label was not preserved")
@@ -520,6 +544,19 @@ def run_self_test() -> None:
         pass
     else:
         fail("self-test failed: malformed report heading was accepted")
+    try:
+        write_report(
+            fixture_source_path,
+            fixture_source_path.parent / "." / fixture_source_path.name,
+            fixture_report,
+        )
+    except SystemExit as exc:
+        if "output path must differ from source path" not in str(exc):
+            fail(f"self-test failed: unexpected source/output collision rejection: {exc}")
+    else:
+        fail("self-test failed: source/output collision was accepted")
+    if fixture_source_path.read_bytes() != fixture_source_before:
+        fail("self-test failed: source changed during output collision rejection")
     external_source = REPOSITORY_ROOT.parent / "private-input.csv"
     external_report = build_report(external_source, fixture_rows)
     if "<external source>" not in external_report:
@@ -542,6 +579,7 @@ def main() -> int:
     if args.source is None or args.output is None:
         parser.error("--source and --output are required unless --self-test is used")
 
+    ensure_output_path_is_distinct(args.source, args.output)
     run_self_test()
     report = build_report(args.source, load_rows(args.source))
     if args.expected_report:
@@ -551,8 +589,7 @@ def main() -> int:
             fail(f"cannot read expected report: {exc}")
         if report != expected:
             fail("generated report differs from the reviewed pilot report")
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(report, encoding="utf-8")
+    write_report(args.source, args.output, report)
     print("Data analysis sample pilot: PASS")
     return 0
 

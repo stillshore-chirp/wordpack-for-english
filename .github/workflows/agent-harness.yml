@@ -91,6 +91,7 @@ jobs:
             scripts/verify_data_analysis_pilot.py
           python scripts/verify_task_skills.py --self-test
           python scripts/validate_plugin_eval_benchmark.py --self-test
+          python scripts/verify_data_analysis_pilot.py --self-test
 
       - name: Install shellcheck
         run: |
