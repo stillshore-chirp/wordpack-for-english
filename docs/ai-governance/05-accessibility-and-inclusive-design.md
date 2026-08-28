@@ -113,7 +113,8 @@ P0例（`02-uiux-review-framework.md`に照らし、主要taskへの影響が確
 
 ## 12. Zoom、reflow、text resize
 
-- 対応要件にWCAG 2.2を採用する場合、200%までのtext resizeと、縦スクロール主体では320 CSS px、横スクロール主体では256 CSS px相当のreflowを確認し、情報・機能の損失、不要な二方向scroll、clip、overlap、到達不能を残さない。二次元の意味が本質のtable等は、例外と代替到達手段を確認する。
+- Text resize（WCAG 2.2 1.4.4を採用する場合）は、captionとimage of textを除き、textを200%まで拡大しても情報・機能を失わないことを確認する。これはreflowの400% zoom相当の確認とは別に記録する。
+- Reflow（WCAG 2.2 1.4.10を採用する場合）は、縦スクロール主体のcontentを幅320 CSS px、横スクロール主体のcontentを高さ256 CSS pxで、不要な二方向scroll、clip、overlap、到達不能なしに提示できることを確認する。320 CSS px widthは1280 CSS px幅のviewportを400% zoomした相当、256 CSS px heightは1024 CSS px高さのviewportを400% zoomした相当であり、1280x1024 viewportの対応する辺として記録する。二次元の意味が本質のtable等は、例外と代替到達手段を確認する。
 - text containerへ固定heightを置かず、文字拡大、text spacing、長文、翻訳相当の伸長でcontentやcontrolが欠落しないこと。
 - viewport設定でuser zoomを制限しない。sticky / fixed要素、safe area、virtual keyboard、scroll位置がcontentやfocusを隠さないこと。
 - 省略や折り返しで判断に必要な情報を隠さず、全文表示、展開、詳細画面などへ到達できること。長いID・URL等を壊さずに扱う方針も定める。
@@ -139,7 +140,9 @@ P0例（`02-uiux-review-framework.md`に照らし、主要taskへの影響が確
 - 通常textのcontrast 4.5:1、大きいtextや必要な非text UI部品の3:1は、該当するWCAG達成基準と例外を確認して測る。
 - 操作対象24×24 CSS pxは、WCAG 2.2のTarget Size (Minimum)を適用する場合の確認点とし、同等の間隔、例外、touch中心の文脈を含めて判断する。
 - 本文16px、長文のline-height 1.5、touch中心でより大きいtargetは、読みやすさを確認する目安として使う。既存tokenや実際のtypeface・画面密度がある場合は、それとの整合を優先する。
-- 200% text resize、320 CSS pxまたは256 CSS px相当のreflow、forced colors、reduced motionは、対応要件に該当する環境で検証する。未対応環境の推測でPassにしない。
+- 200% text resizeはreflowとは別の確認値として、対応要件に該当する環境で検証する。
+- Reflowの320 CSS px width（縦スクロール主体）と256 CSS px height（横スクロール主体）は、1280x1024 viewportを400% zoomした相当値として、対応要件に該当する環境で検証する。未対応環境の推測でPassにしない。
+- forced colorsとreduced motionも、それぞれの対応要件に該当する環境で検証する。
 - ARIA patternのkey mappingは、patternの名前だけで合格とせず、entryからexitまでの操作、state、focus、nested controlを一つのtaskで確認する。
 
 ## 16. 重大な影響の例
@@ -162,7 +165,9 @@ P0例（`02-uiux-review-framework.md`に照らし、主要taskへの影響が確
 - browser accessibility treeとaccessible name / role / state / value、必要に応じたscreen readerとbrowserの読み上げ・操作。
 - axe-core等の自動検査。ただし自動検査だけで合格としない。
 - 実際のforeground / background pairのcontrast測定、dark mode、forced colors、focus indicator。
-- 200% zoom、320 CSS pxまたは256 CSS px相当、text spacing、長文・長いlabel・翻訳相当の伸長、truncationからの全文到達。
+- 「200% zoom、320 CSS pxまたは256 CSS px相当」という確認表記は、text resizeとreflowを別々に記録するための要約であり、同じ条件として扱わない。
+- 200% text resizeは、reflowとは別に情報・機能の損失がないことを確認する。reflowは400% zoom相当の320 CSS px width / 256 CSS px heightで確認する。
+- text spacing、長文・長いlabel・翻訳相当の伸長、truncationからの全文到達も確認する。
 - reduced motion、notificationの保持時間、autoplay、pause / dismiss / 再確認。
 - screenshotは見えている構造・stateの補助証跡とし、accessible name、focus順序、支援技術通知、時間変化、回復挙動を静止画だけで確認済みとしない。証跡の採否と完了判定は`03-evidence-and-completion-gates.md`に従う。
 <!-- agent-harness:uiux-a11y-quality:end -->

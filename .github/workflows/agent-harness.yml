@@ -103,6 +103,7 @@ jobs:
 
       - name: Verify agent harness and AI governance
         run: |
+          bash scripts/verify-agent-harness.sh
           bash scripts/verify-ai-governance.sh
           python scripts/verify_task_skills.py
 

@@ -12,7 +12,7 @@ AIエージェントに「良さそう」と判断させるのではなく、観
 
 ### 2.1 Scope評価者
 
-UI変更レビューで差分を扱う場合は、target snapshot / ref、base / head ref / SHA、追加・削除差分、Issue / PR / commit messageの変更意図、直接consumerと代表surfaceのcoverageを確定します。shared primitive、global token、common componentの変更は代表surfaceへ展開し、findingをIntroduced / Regression / Pre-existingへ分類します。Pre-existingは今回の完了判定と分けて記録します。
+UI変更レビューで差分を扱う場合は、target snapshot / ref、base / head ref / SHA、追加・削除差分、Issue / PR / commit messageの変更意図、直接consumerと代表surfaceのcoverageを確定します。shared primitive、global token、common componentの変更は代表surfaceへ展開し、findingをIntroduced / Regression / Pre-existingへ分類します。Pre-existingは通常の変更起因件数・責任から分離して記録しますが、変更目的または安全性を阻害するP0/P1等のblocking findingは完了可否と判定理由へ残し、scopeと完了判断を見直します。
 
 ### 2.2 実装者
 
@@ -106,7 +106,7 @@ state matrix
 - ユーザーに不安や責任転嫁を与えていないか疑う。
 - 証跡が実際の確認を示しているか疑う。
 - base側でも同じ問題が再現する場合、今回のRegressionと誤分類していないか確認する。
-- Pre-existingを今回の変更findingや完了判定へ混ぜていないか確認する。
+- Pre-existingを通常の変更起因findingや件数・責任へ混ぜていないか確認する。ただし、変更目的または安全性を阻害するP0/P1等のblocking findingを完了可否・判定理由から落としていないか、scopeと完了判断を見直したか確認する。
 
 ## 5. 出力の制約
 
@@ -125,7 +125,7 @@ state matrix
 - Pass/Failを明示する。
 - 変更差分reviewではtarget snapshot / ref、base / head、追加・削除、変更意図、影響surface、coverageを明示する。
 - P0/P1/P2を分ける。
-- Introduced / RegressionとPre-existingを分け、Pre-existingを今回の完了判定から分離する。
+- Introduced / RegressionとPre-existingを分け、Pre-existingの通常の変更起因件数・責任を分離する。変更目的または安全性を阻害するP0/P1等のblocking findingは完了可否・判定理由へ残し、scopeと完了判断を明示する。
 - 証跡を示す。
 - 未実行検証を示す。
 - 残リスクを示す。

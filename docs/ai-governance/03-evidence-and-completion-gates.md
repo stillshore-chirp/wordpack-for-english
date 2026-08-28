@@ -25,11 +25,14 @@
 | Target snapshot / ref | working tree、commit range、branch、PR等のレビュー対象と識別子 |
 | Base ref / SHA、Head ref / SHA | 比較に使ったbaseとhead |
 | Commit / diff | 対象commit数、staged / unstaged、追加側・削除側 |
+| Diff identifier | `staged=<patch hash|empty>; unstaged=<patch hash|empty>; paths=<sorted changed path set>`。使用したhash方式と取得時点も記録 |
 | Intent | Issue、PR本文、commit message、受け入れ条件から確認した変更意図 |
 | Expanded surfaces | changed fileの直接consumer、parent、route、state、代表surface |
 | Coverage / unknowns | 確認したsurface、未確認consumer、除外とその理由 |
 
 変更fileは証拠の入口であり、レビュー対象を直接変更箇所だけに限定しません。shared primitive、global style / token、common component、theme等の変更は、代表的なconsumer surfaceへ展開し、確認できない範囲を未確認として残します。
+
+commit rangeやPRは、Target snapshot / refに記録した既存のHead ref / SHA等の一意識別子を使います。working treeでは同じbase / head / branchでも別patchになり得るため、staged / unstagedのpatch hashとchanged path setをDiff identifierとして記録します。stagedまたはunstagedが空の場合も`empty`を記録し、後から同じbase / head / branchの別patchと区別できるようにします。
 
 追加側と削除側を同じ重さで確認します。削除されたlabel、semantic element、focus、state、error recovery、responsive rule、copy、token等に等価な代替があるかを確認し、削除行の存在だけでfindingを断定しません。
 <!-- agent-harness:uiux-change-scope-evidence:end -->
