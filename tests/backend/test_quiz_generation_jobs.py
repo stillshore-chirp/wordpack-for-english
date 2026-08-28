@@ -165,6 +165,44 @@ class ProgressQuizGenerator(FakeQuizGenerator):
         return await super().generate(req, store, on_progress=on_progress)
 
 
+class DirectProgressQuizGenerator(FakeQuizGenerator):
+    async def generate(
+        self,
+        req: QuizGenerateRequest,
+        store: object,
+        *,
+        on_progress=None,
+    ) -> Quiz:
+        assert on_progress is not None
+        on_progress(
+            QuizGenerationProgress(
+                attempt_count=3,
+                attempt_limit=5,
+                retry_phase="translation_alignment",
+            )
+        )
+        return await super().generate(req, store, on_progress=on_progress)
+
+
+class DirectFailedProgressQuizGenerator(FakeQuizGenerator):
+    async def generate(
+        self,
+        req: QuizGenerateRequest,
+        store: object,
+        *,
+        on_progress=None,
+    ) -> Quiz:
+        assert on_progress is not None
+        on_progress(
+            QuizGenerationProgress(
+                attempt_count=5,
+                attempt_limit=5,
+                retry_phase="translation_alignment",
+            )
+        )
+        raise RuntimeError("QUIZ_TRANSLATION_ALIGNMENT_FAILED")
+
+
 class FailedAlignmentQuizGenerator:
     async def generate(
         self,
@@ -277,6 +315,61 @@ def test_quiz_generation_job_persists_retry_progress_after_completion() -> None:
         stored = store.records[status.job_id]
         assert stored["attempt_count"] == 3
         assert stored["retry_phase"] == "translation_alignment"
+
+    asyncio.run(scenario())
+
+
+def test_direct_progress_callback_cannot_overwrite_terminal_status() -> None:
+    async def scenario() -> None:
+        store = PersistentJobStore()
+        req = QuizGenerateRequest.model_validate({"lemmas": ["latency"]})
+
+        enqueued = await generation_jobs.enqueue_quiz_generation_job(
+            req,
+            store,
+            generator=DirectProgressQuizGenerator(),
+            scheduler=None,
+            id_generator=FakeIdGenerator(),
+            clock=FakeClock(),
+        )
+        await asyncio.sleep(0)
+
+        status = await generation_jobs.get_quiz_generation_job(
+            enqueued.job_id,
+            store,
+            clock=FakeClock(),
+        )
+        assert status is not None
+        assert status.status == "succeeded"
+        assert status.attempt_count == 3
+
+    asyncio.run(scenario())
+
+
+def test_direct_progress_callback_cannot_overwrite_failed_status() -> None:
+    async def scenario() -> None:
+        store = PersistentJobStore()
+        req = QuizGenerateRequest.model_validate({"lemmas": ["latency"]})
+
+        enqueued = await generation_jobs.enqueue_quiz_generation_job(
+            req,
+            store,
+            generator=DirectFailedProgressQuizGenerator(),
+            scheduler=None,
+            id_generator=FakeIdGenerator(),
+            clock=FakeClock(),
+        )
+        await asyncio.sleep(0)
+
+        status = await generation_jobs.get_quiz_generation_job(
+            enqueued.job_id,
+            store,
+            clock=FakeClock(),
+        )
+        assert status is not None
+        assert status.status == "failed"
+        assert status.attempt_count == 5
+        assert status.error_code == "QUIZ_TRANSLATION_ALIGNMENT_FAILED"
 
     asyncio.run(scenario())
 

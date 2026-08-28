@@ -40,6 +40,14 @@
     "valid": true
   },
   {
+    "name": "terminal_contextual_abbreviation_before_new_sentence",
+    "body_en": "The list includes maps, etc. Then begin the review.",
+    "body_ja": "一覧には地図などが含まれる。それから確認を始める。",
+    "english_sentence_counts": [2],
+    "japanese_sentence_counts": [2],
+    "valid": true
+  },
+  {
     "name": "paragraph_count_mismatch",
     "body_en": "The first paragraph ends.\n\nThe second paragraph ends.",
     "body_ja": "第一段落が終わる。第二段落が終わる。",

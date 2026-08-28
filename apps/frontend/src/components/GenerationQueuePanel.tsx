@@ -112,14 +112,8 @@ const QueueItem: React.FC<{
   const elapsedMs = item.status === 'progress' ? nowMs - item.createdAt : item.updatedAt - item.createdAt;
   const lemma = resolvePreviewLemma(item) || extractLemma(item.title);
   const statusLabel = notificationStatusLabel(item.status);
-  const hasQuizAttemptProgress = item.jobType === 'quiz-generation'
-    && Number.isInteger(item.attemptCount)
-    && Number.isInteger(item.attemptLimit)
-    && (item.attemptCount ?? 0) >= 1
-    && (item.attemptLimit ?? 0) >= (item.attemptCount ?? 0);
-  const progressValue = hasQuizAttemptProgress
-    ? Math.round(((item.attemptCount ?? 0) / (item.attemptLimit ?? 1)) * 100)
-    : 68;
+  const hasQuizAttemptProgress = item.jobType === 'quiz-generation';
+  const progressValue = 68;
   const canOpenPreview = canOpenWordPackPreview(item);
   const className = [
     'generation-queue-item',
@@ -152,9 +146,12 @@ const QueueItem: React.FC<{
             aria-label={hasQuizAttemptProgress ? `${lemma} の生成試行状況` : `${lemma} の生成進行状況`}
             aria-valuemin={0}
             aria-valuemax={100}
-            aria-valuenow={progressValue}
+            aria-valuenow={hasQuizAttemptProgress ? undefined : progressValue}
           >
-            <span style={{ width: `${progressValue}%` }} />
+            <span
+              className={hasQuizAttemptProgress ? 'is-indeterminate' : undefined}
+              style={hasQuizAttemptProgress ? undefined : { width: `${progressValue}%` }}
+            />
           </div>
         ) : null}
         {item.status === 'progress' ? (

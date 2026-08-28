@@ -53,7 +53,16 @@ const protectEnglishDots = (text: string): string => {
     },
   );
   protectedText = protectedText.replace(
-    /\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc|No|e\.g|i\.e)\./gi,
+    /\b(?:etc|vs)\./gi,
+    (match, offset: number, source: string) => {
+      const nextText = source.slice(offset + match.length);
+      return sentenceStartAfterInitialismPattern.test(nextText)
+        ? match
+        : match.replace(/\./g, protectedDot);
+    },
+  );
+  protectedText = protectedText.replace(
+    /\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|No|e\.g|i\.e)\./gi,
     (match) => match.replace(/\./g, protectedDot),
   );
   protectedText = protectedText.replace(

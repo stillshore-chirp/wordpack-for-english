@@ -7,6 +7,7 @@ from dataclasses import dataclass
 _PROTECTED_DOT = "\u0000"
 _PARAGRAPH_BREAK = re.compile(r"\n\s*\n")
 _INITIALISM_PATTERN = re.compile(r"\b(?:[A-Za-z]\.){2,}", re.IGNORECASE)
+_CONTEXTUAL_ABBREVIATION_PATTERN = re.compile(r"\b(?:etc|vs)\.", re.IGNORECASE)
 _SENTENCE_START_AFTER_INITIALISM = re.compile(
     r"^[\"')\]}”’]*\s+(?:A|An|The|I|We|You|He|She|It|They|This|That|These|Those|"
     r"However|Therefore|Meanwhile|Instead|Finally|Next|Then)\b"
@@ -14,7 +15,7 @@ _SENTENCE_START_AFTER_INITIALISM = re.compile(
 _ENGLISH_DOT_PATTERNS = (
     re.compile(r"(?<=\d)\.(?=\d)"),
     re.compile(
-        r"\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc|No|e\.g|i\.e)\.",
+        r"\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|No|e\.g|i\.e)\.",
         re.IGNORECASE,
     ),
     re.compile(r"(?<=[A-Za-z])\.(?=[A-Za-z])"),
@@ -38,7 +39,7 @@ def split_paragraphs(text: str) -> list[str]:
 
 
 def _protect_english_dots(text: str) -> str:
-    def protect_initialism(match: re.Match[str]) -> str:
+    def protect_abbreviation(match: re.Match[str]) -> str:
         value = match.group(0)
         always_internal = value.lower() in {"e.g.", "i.e."}
         next_text = text[match.end() :]
@@ -46,7 +47,8 @@ def _protect_english_dots(text: str) -> str:
             return value.replace(".", _PROTECTED_DOT)
         return value[:-1].replace(".", _PROTECTED_DOT) + "."
 
-    protected = _INITIALISM_PATTERN.sub(protect_initialism, text)
+    protected = _INITIALISM_PATTERN.sub(protect_abbreviation, text)
+    protected = _CONTEXTUAL_ABBREVIATION_PATTERN.sub(protect_abbreviation, protected)
     for pattern in _ENGLISH_DOT_PATTERNS:
         protected = pattern.sub(
             lambda match: match.group(0).replace(".", _PROTECTED_DOT),

@@ -260,6 +260,7 @@ async def _run_quiz_generation_job(
             return
     loop = asyncio.get_running_loop()
     loop_thread_id = threading.get_ident()
+    progress_tasks: list[asyncio.Task[None]] = []
 
     async def persist_progress(progress: QuizGenerationProgress) -> None:
         async with _quiz_generation_lock:
@@ -273,12 +274,28 @@ async def _run_quiz_generation_job(
                 retry_phase=progress.retry_phase,
             )
 
+    async def persist_progress_safely(progress: QuizGenerationProgress) -> None:
+        try:
+            await persist_progress(progress)
+        except Exception as exc:  # pragma: no cover - persistence failure is non-fatal
+            logger.warning(
+                "quiz_generation_progress_update_failed",
+                job_id=job_id,
+                attempt_count=progress.attempt_count,
+                attempt_limit=progress.attempt_limit,
+                retry_phase=progress.retry_phase,
+                error_type=type(exc).__name__,
+            )
+
     def report_progress(progress: QuizGenerationProgress) -> None:
         try:
             if threading.get_ident() == loop_thread_id:
-                loop.create_task(persist_progress(progress))
+                progress_tasks.append(loop.create_task(persist_progress_safely(progress)))
                 return
-            future = asyncio.run_coroutine_threadsafe(persist_progress(progress), loop)
+            future = asyncio.run_coroutine_threadsafe(
+                persist_progress_safely(progress),
+                loop,
+            )
             future.result(timeout=15)
         except Exception as exc:  # pragma: no cover - persistence failure is non-fatal
             logger.warning(
@@ -290,6 +307,10 @@ async def _run_quiz_generation_job(
                 error_type=type(exc).__name__,
             )
 
+    async def drain_progress_tasks() -> None:
+        if progress_tasks:
+            await asyncio.gather(*progress_tasks)
+
     try:
         with generation_workflow_context(job_id):
             quiz = await generator.generate(
@@ -298,6 +319,7 @@ async def _run_quiz_generation_job(
                 on_progress=report_progress,
             )
     except Exception as exc:
+        await drain_progress_tasks()
         raw_error = str(exc)[:500]
         error_code = raw_error if raw_error in {
             "QUIZ_TRANSLATION_ALIGNMENT_FAILED",
@@ -346,5 +368,6 @@ async def _run_quiz_generation_job(
                 clock=clock,
             )
         return
+    await drain_progress_tasks()
     async with _quiz_generation_lock:
         _update_job_record(store, job_id, status="succeeded", quiz=quiz, clock=clock)

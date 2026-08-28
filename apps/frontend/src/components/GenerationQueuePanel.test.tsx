@@ -477,6 +477,8 @@ describe('GenerationQueuePanel', () => {
     renderQueue();
 
     expect(await screen.findByText('文対応を再確認しています（3/5）')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: /生成試行状況/ }))
+      .not.toHaveAttribute('aria-valuenow');
     await waitFor(() => {
       const persisted = JSON.parse(localStorage.getItem('wpfe.notifications.v1') || '[]');
       expect(persisted[0]).toMatchObject({
