@@ -100,16 +100,32 @@ def validate_claude_rule(data: dict[str, Any], path: Path) -> None:
 
 def validate_cursor_rule(data: dict[str, Any], path: Path) -> None:
     _require_string(data, "description", path)
-    _require_string(data, "globs", path)
+    globs = data.get("globs")
+    if isinstance(globs, str):
+        if not globs.strip():
+            raise _fail(path, "globs must be a non-empty string or list")
+    elif isinstance(globs, list):
+        if not globs or any(
+            not isinstance(item, str) or not item.strip() for item in globs
+        ):
+            raise _fail(path, "globs must be a non-empty string or list of strings")
+    else:
+        raise _fail(path, "globs must be a non-empty string or list of strings")
     if data.get("alwaysApply") is not False:
         raise _fail(path, "alwaysApply must be the YAML boolean false")
 
 
 def infer_kind(path: Path) -> str:
-    posix = path.as_posix()
-    if posix.startswith(".claude/rules/"):
+    parts = path.parts
+    if any(
+        parts[index : index + 2] == (".claude", "rules")
+        for index in range(len(parts) - 1)
+    ):
         return "claude-rule"
-    if posix.startswith(".cursor/rules/"):
+    if any(
+        parts[index : index + 2] == (".cursor", "rules")
+        for index in range(len(parts) - 1)
+    ):
         return "cursor-rule"
     if path.name == "SKILL.md":
         return "skill"
@@ -143,6 +159,26 @@ def run_self_test() -> None:
         ),
         "bad-type/SKILL.md": (
             "---\nname: invalid\ndescription: [not, a, string]\n---\n",
+            False,
+        ),
+        ".cursor/rules/valid-string.mdc": (
+            "---\ndescription: valid description\nglobs: apps/**\nalwaysApply: false\n---\n",
+            True,
+        ),
+        ".cursor/rules/valid-list.mdc": (
+            "---\ndescription: valid description\nglobs:\n  - apps/**\n  - tests/**\nalwaysApply: false\n---\n",
+            True,
+        ),
+        ".cursor/rules/bad-empty-list.mdc": (
+            "---\ndescription: valid description\nglobs: []\nalwaysApply: false\n---\n",
+            False,
+        ),
+        ".cursor/rules/bad-list-item.mdc": (
+            "---\ndescription: valid description\nglobs:\n  - apps/**\n  - 7\nalwaysApply: false\n---\n",
+            False,
+        ),
+        ".cursor/rules/bad-number.mdc": (
+            "---\ndescription: valid description\nglobs: 7\nalwaysApply: false\n---\n",
             False,
         ),
     }

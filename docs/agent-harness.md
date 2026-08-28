@@ -164,11 +164,17 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 
 サブエージェントは専門riskを独立して並列化するために使い、同じ証拠を読む担当を増やすために使いません。メインエージェントは委任前に、次を満たす重複しないlaneを定義します。
 
+- primary agentは、要件・適用ルール、完了条件・非対象、lane設計、担当割当、依存関係、進捗、lane間の競合、ガバナンス、成果受入、Issue・commit・PR・CI・review・mergeabilityの確認、配送判断を担います。
+- subagentは、コードベース・履歴・仕様の探索、実装、focused verification、コード・セキュリティ・公開安全性review、review fix、docs、配送、CI監視など、分離できる実務を担当できます。subagentを監査専用には限定しません。
+- primary agentの直接実務は、lane間の競合解消、証拠矛盾の限定確認、分離不能な統合に限ります。P0/P1や権限境界は受入・配送判断へ反映しますが、通常の探索、実装、検証、ログ解析を同じ根拠として重ねません。
+- この契約は実行環境のモデル、ベンダー、製品固有tool、固有command、config keyを指定せず、実行環境固有の設定はリポジトリ外で管理します。
+
 - そのagentだけが担当するrisk lane。
 - 対象HEAD、対象path、確認する具体的な問い。
 - 既存報告やメインエージェント自身の一次証拠確認では不足する理由。
+- owner、write ownership、completion、verification、invalidation conditionをlaneごとに明示します。
 
-この3点を定義できない委任は行いません。包括監査を複数agentへ同時委任せず、同一HEAD・同一risk laneの独立監査は原則1回とします。再監査を認めるのは、対象コードが変わった、新しい実行証拠が得られた、前回監査に明確な不足がある、または未解決の証拠矛盾がある場合です。修正後に変更pathを対象再検証することと、未変更HEADへ同じ監査を繰り返すことを区別します。
+この4項目を定義できない委任は行いません。包括監査を複数agentへ同時委任せず、同一HEAD・同一risk laneの独立監査は原則1回とします。再監査を認めるのは、対象コードが変わった、新しい実行証拠が得られた、前回監査に明確な不足がある、または未解決の証拠矛盾がある場合です。修正後に変更pathを対象再検証することと、未変更HEADへ同じ監査を繰り返すことを区別します。
 
 監査結果が矛盾した場合は追加agentの多数決を取りません。メインエージェントがsource code、test設定、実際のcommand結果、commit hashなどの一次証拠を確認して解決します。
 
@@ -180,15 +186,23 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 2. 配送対象の最終HEADが確定した時点でfrontend / backend / operationsなど必要なfull gateを原則1回実行する。
 3. 成功済み検証を再実行する時は、対象変更、生成物変更、実行条件変更、証拠期限切れなど、証拠が失効した理由を記録する。
 
-メインエージェントは次のrisk lane台帳を保ち、担当scopeと結果を統合して重複を止めます。clean commitを確認した場合はcommit SHAを記録します。未commitの共有worktreeを確認した場合は、base HEADに加えて、確認したpathとdiffを一意に識別できる値を記録し、HEADだけを監査済みsnapshotとして扱いません。
+メインエージェントは次のrisk lane台帳を保ち、担当scopeと結果を統合して重複を止めます。clean commitを確認した場合はcommit SHAを記録します。未commitの共有worktreeを確認した場合は、base HEADに加えて、確認したpathとdiffを一意に識別できる値を記録し、HEADだけを監査済みsnapshotとして扱いません。primary agentの受入はevidence packageからscope、acceptance、evidence、unrelated diff、commit responsibility、lane conflict、completion gatesを確認し、laneの完了と配送判断を行います。
+
+各laneは、owner、target HEAD、target path、write ownership、completion、verification、invalidation conditionを持ちます。完了報告は、scope、changed paths、conclusion、verification results、unperformed checks、remaining risks、snapshotまたはdiff identifierをevidence packageとして返します。
 
 | Field | Meaning |
 |---|---|
 | risk lane | 重複しない確認責務 |
 | owner | agentまたはメインエージェント |
+| target HEAD | 委任時点で確認対象とするcommitまたはbase HEAD |
+| target path | 調査・変更・検証の対象path |
+| write ownership | laneが編集・生成・公開できるpathと操作の境界 |
+| completion | laneを完了と判定する観測可能な条件 |
+| verification | 実行する検証と、その結果の証跡 |
 | verified snapshot | clean commit、またはbase HEADと確認済みdiffの識別子 |
 | status | pending / active / passed / finding / blocked |
 | invalidation condition | 再検証が必要になる対象変更または新証拠 |
+| evidence package | scope、acceptance、changed paths、conclusion、verification results、unperformed checks、remaining risks、unrelated diff、commit responsibility、lane conflict、completion gates、snapshotまたはdiff identifier |
 <!-- agent-harness:subagent-orchestration:end -->
 
 ## ルール変更時の確認
