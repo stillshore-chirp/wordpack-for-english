@@ -18,7 +18,9 @@ on:
       - 'scripts/verify_task_skills.py'
       - 'scripts/verify_plugin_eval_outputs.py'
       - 'scripts/validate_plugin_eval_benchmark.py'
+      - 'scripts/verify_data_analysis_pilot.py'
       - 'tests/fixtures/plugin-eval/**'
+      - 'tests/fixtures/data-analysis/**'
       - 'scripts/validate_agent_frontmatter.py'
       - 'requirements-agent-harness.txt'
       - 'scripts/verify-ai-governance.sh'
@@ -42,7 +44,9 @@ on:
       - 'scripts/verify_task_skills.py'
       - 'scripts/verify_plugin_eval_outputs.py'
       - 'scripts/validate_plugin_eval_benchmark.py'
+      - 'scripts/verify_data_analysis_pilot.py'
       - 'tests/fixtures/plugin-eval/**'
+      - 'tests/fixtures/data-analysis/**'
       - 'scripts/validate_agent_frontmatter.py'
       - 'requirements-agent-harness.txt'
       - 'scripts/verify-ai-governance.sh'
@@ -83,9 +87,11 @@ jobs:
             scripts/validate_agent_frontmatter.py \
             scripts/verify_task_skills.py \
             scripts/verify_plugin_eval_outputs.py \
-            scripts/validate_plugin_eval_benchmark.py
+            scripts/validate_plugin_eval_benchmark.py \
+            scripts/verify_data_analysis_pilot.py
           python scripts/verify_task_skills.py --self-test
           python scripts/validate_plugin_eval_benchmark.py --self-test
+          python scripts/verify_data_analysis_pilot.py --self-test
 
       - name: Install shellcheck
         run: |
@@ -99,6 +105,24 @@ jobs:
         run: |
           bash scripts/verify-ai-governance.sh
           python scripts/verify_task_skills.py
+
+      - name: Run data-analysis sample pilot
+        run: |
+          set -euo pipefail
+          python scripts/verify_data_analysis_pilot.py \
+            --source tests/fixtures/data-analysis/weekly-metrics.csv \
+            --expected-report .agents/skills/data-analysis/references/pilot-report.md \
+            --output "$RUNNER_TEMP/data-analysis-pilot.md"
+          python scripts/verify_data_analysis_pilot.py \
+            --source tests/fixtures/data-analysis/unchanged-rate.csv \
+            --output "$RUNNER_TEMP/data-analysis-unchanged.md"
+          grep -F 'not applicable (aggregate rate unchanged)' \
+            "$RUNNER_TEMP/data-analysis-unchanged.md"
+          python scripts/verify_data_analysis_pilot.py \
+            --source tests/fixtures/data-analysis/organic-decline.csv \
+            --output "$RUNNER_TEMP/data-analysis-organic-decline.md"
+          grep -F 'deterioration is concentrated in the organic segment' \
+            "$RUNNER_TEMP/data-analysis-organic-decline.md"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

@@ -33,6 +33,7 @@ TOOL_COMMAND_PATTERNS = (
     "get_codex_security_",
     "complete_codex_security_",
     "plugin-eval ",
+    "dataAnalyticsWidgets",
 )
 TEXT_SUFFIXES = {".md", ".json", ".py", ".sh", ".txt", ".csv", ".yml", ".yaml"}
 EXCLUDED_ROUTER_PARTS = {".git", ".external", ".venv", "node_modules"}
