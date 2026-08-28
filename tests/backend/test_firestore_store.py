@@ -218,10 +218,21 @@ def test_firestore_quiz_generation_job_roundtrip(firestore_store: AppFirestoreSt
     assert created["status"] == "queued"
     assert created["quiz_id"] is None
     assert created["error"] is None
+    assert created["attempt_count"] == 0
+    assert created["attempt_limit"] == 5
+    assert created["retry_phase"] is None
 
-    running = firestore_store.update_quiz_generation_job("quiz-job:demo", status="running")
+    running = firestore_store.update_quiz_generation_job(
+        "quiz-job:demo",
+        status="running",
+        attempt_count=3,
+        attempt_limit=5,
+        retry_phase="translation_alignment",
+    )
     assert running is not None
     assert running["status"] == "running"
+    assert running["attempt_count"] == 3
+    assert running["retry_phase"] == "translation_alignment"
 
     succeeded = firestore_store.update_quiz_generation_job(
         "quiz-job:demo",
@@ -238,10 +249,12 @@ def test_firestore_quiz_generation_job_roundtrip(firestore_store: AppFirestoreSt
         "quiz-job:demo",
         status="failed",
         error="timeout",
+        error_code="QUIZ_TIMEOUT",
     )
     assert failed is not None
     assert failed["status"] == "failed"
     assert failed["error"] == "timeout"
+    assert failed["error_code"] == "QUIZ_TIMEOUT"
 
     found = firestore_store.get_quiz_generation_job("quiz-job:demo")
     assert found is not None
@@ -318,6 +331,7 @@ def test_firestore_quiz_roundtrip_and_attempt_cleanup(firestore_store: AppFirest
         "avoid_topics": [],
         "llm_model": "gpt-5.4-mini",
         "llm_params": "reasoning.effort=minimal;text.verbosity=medium",
+        "translation_alignment_version": "deterministic_v1",
         "guest_public": True,
         "created_at": "2024-01-01T00:00:00+00:00",
         "updated_at": "2024-01-02T00:00:00+00:00",
@@ -334,6 +348,7 @@ def test_firestore_quiz_roundtrip_and_attempt_cleanup(firestore_store: AppFirest
     assert stored["title_en"] == "Reliable API Deployments"
     assert stored["passages"][0]["body_en"].startswith("Teams mitigate")
     assert stored["related_word_packs"][0]["lemma"] == "mitigate"
+    assert stored["translation_alignment_version"] == "deterministic_v1"
     assert firestore_store.count_quizzes(public_only=True) == 1
     assert firestore_store.list_quizzes(public_only=True)[0]["id"] == "quiz:test"
 

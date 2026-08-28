@@ -110,6 +110,7 @@ export interface Quiz {
   avoid_topics?: string[];
   llm_model?: string | null;
   llm_params?: string | null;
+  translation_alignment_version?: 'deterministic_v1' | null;
   created_at: string;
   updated_at: string;
   guest_public?: boolean;
@@ -160,6 +161,10 @@ export interface QuizGenerationJobResponse {
   quiz_id?: string | null;
   result?: Quiz | null;
   error?: string | null;
+  error_code?: string | null;
+  attempt_count?: number;
+  attempt_limit?: number;
+  retry_phase?: 'generation' | 'json_repair' | 'translation_alignment' | null;
 }
 
 export interface QuizAnswerInput {

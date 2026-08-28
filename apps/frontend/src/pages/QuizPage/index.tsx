@@ -46,6 +46,7 @@ import type {
   QuizDomainIntensity,
   QuizFormatProfile,
   QuizGenerateRequest,
+  QuizGenerationJobResponse,
   QuizGenerationDomain,
   QuizListItem,
   QuizPassage,
@@ -54,6 +55,8 @@ import type {
   QuizSection,
   QuizWordPackLink,
 } from '../../features/quiz/types';
+import { formatQuizGenerationProgress } from '../../features/quiz/progress';
+import { formatDateJst } from '../../lib/date';
 import { ApiError } from '../../shared/api/ApiError';
 import {
   buildSentenceAlignment,
@@ -120,18 +123,6 @@ const getAllQuestions = (quiz: Quiz | null): QuizQuestion[] => (
 const getAttemptResultMap = (attempt: QuizAttemptResponse | null): Record<string, QuizQuestionResult> => (
   Object.fromEntries((attempt?.results ?? []).map((result) => [result.question_id, result]))
 );
-
-const formatDate = (value: string | null | undefined) => {
-  if (!value) return '日時なし';
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return new Intl.DateTimeFormat('ja-JP', {
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(date);
-};
 
 const buildLocalAttempt = (quiz: Quiz, answers: Answers): QuizAttemptResponse => {
   const results = getAllQuestions(quiz).map((question) => {
@@ -355,15 +346,28 @@ const QuizTranslationText: React.FC<{
 const QuizPassageArticle: React.FC<{
   passage: QuizPassage;
   links: QuizWordPackLink[];
+  useDeterministicAlignment: boolean;
   isGuest: boolean;
   onOpenWordPack: (wordPackId: string) => void;
   onCreateEmpty: (lemma: string) => void;
   onGenerate: (lemma: string) => void;
-}> = ({ passage, links, isGuest, onOpenWordPack, onCreateEmpty, onGenerate }) => {
+}> = ({
+  passage,
+  links,
+  useDeterministicAlignment,
+  isGuest,
+  onOpenWordPack,
+  onCreateEmpty,
+  onGenerate,
+}) => {
   const [translationOpen, setTranslationOpen] = useState(false);
   const alignment = useMemo(
-    () => buildSentenceAlignment(passage.body_en, passage.body_ja),
-    [passage.body_en, passage.body_ja],
+    () => buildSentenceAlignment(
+      passage.body_en,
+      passage.body_ja,
+      useDeterministicAlignment ? 'deterministic' : 'legacy',
+    ),
+    [passage.body_en, passage.body_ja, useDeterministicAlignment],
   );
   const sentenceHighlight = useSentencePairHighlight(
     translationOpen && countSentencePairs(alignment) > 1,
@@ -707,11 +711,24 @@ export const QuizPage: React.FC = () => {
         timeoutMs: settings.requestTimeoutMs,
       });
       acceptedJobId = job.job_id;
+      const syncProgress = (current: QuizGenerationJobResponse) => {
+        const progressText = formatQuizGenerationProgress(current);
+        notifications.update(notifId, {
+          message: progressText,
+          attemptCount: current.attempt_count ?? null,
+          attemptLimit: current.attempt_limit ?? null,
+          retryPhase: current.retry_phase ?? null,
+        });
+        if (current.status === 'queued' || current.status === 'running') {
+          setMessage({ kind: 'status', text: progressText });
+        }
+      };
       notifications.update(notifId, {
         jobId: job.job_id,
         jobType: 'quiz-generation',
         pollingOwner: 'foreground',
       });
+      syncProgress(job);
       let current = job;
       const pollingDeadline = Date.now() + Math.max(
         1000,
@@ -724,6 +741,7 @@ export const QuizPage: React.FC = () => {
         current = await fetchQuizGenerationJob(apiBase, current.job_id, {
           timeoutMs: settings.requestTimeoutMs,
         });
+        syncProgress(current);
       }
       if (current.status !== 'succeeded' && current.status !== 'failed') {
         notifications.update(notifId, {
@@ -733,6 +751,9 @@ export const QuizPage: React.FC = () => {
           jobId: current.job_id,
           jobType: 'quiz-generation',
           pollingOwner: null,
+          attemptCount: current.attempt_count ?? null,
+          attemptLimit: current.attempt_limit ?? null,
+          retryPhase: current.retry_phase ?? null,
         });
         setMessage({ kind: 'status', text: 'Quiz生成は継続中です。生成キューで状態を確認できます。' });
         return;
@@ -746,6 +767,9 @@ export const QuizPage: React.FC = () => {
           jobId: current.job_id,
           jobType: 'quiz-generation',
           pollingOwner: null,
+          attemptCount: current.attempt_count ?? null,
+          attemptLimit: current.attempt_limit ?? null,
+          retryPhase: current.retry_phase ?? null,
         });
         setMessage({ kind: 'alert', text: failureText });
         return;
@@ -757,6 +781,9 @@ export const QuizPage: React.FC = () => {
         jobId: current.job_id,
         jobType: 'quiz-generation',
         pollingOwner: null,
+        attemptCount: current.attempt_count ?? null,
+        attemptLimit: current.attempt_limit ?? null,
+        retryPhase: current.retry_phase ?? null,
       });
       setMessage({ kind: 'status', text: 'Quizを生成しました。生成結果を開いています。' });
       await loadList();
@@ -1160,7 +1187,10 @@ export const QuizPage: React.FC = () => {
                   <button type="button" onClick={() => setSelectedQuizId(item.id)}>
                     <strong>{item.title_en}</strong>
                     <span>{FORMAT_PROFILE_LABELS[item.format_profile]} / {GENERATION_DOMAIN_LABELS[item.generation_domain]} / {DOMAIN_INTENSITY_LABELS[item.domain_intensity]}</span>
-                    <small>{item.question_count}問・{item.passage_count}本文・{formatDate(item.updated_at)}</small>
+                    <small>
+                      {item.question_count}問・{item.passage_count}本文・生成日時:{' '}
+                      <time dateTime={item.created_at}>{formatDateJst(item.created_at)}</time>
+                    </small>
                   </button>
                   <div className="quiz-public-row">
                     <span className={`quiz-public-pill ${item.guest_public ? 'is-public' : 'is-private'}`}>
@@ -1201,6 +1231,9 @@ export const QuizPage: React.FC = () => {
                     {FORMAT_PROFILE_LABELS[selectedQuiz.format_profile]} / {GENERATION_DOMAIN_LABELS[selectedQuiz.generation_domain]} / {DIFFICULTY_LABELS[selectedQuiz.difficulty]}
                   </p>
                   <h3>{selectedQuiz.title_en}</h3>
+                  <p className="quiz-generation-date">
+                    生成日時: <time dateTime={selectedQuiz.created_at}>{formatDateJst(selectedQuiz.created_at)}</time>
+                  </p>
                   <p>{selectedQuiz.notes_ja || '本文を読み、設問に答えてから根拠を確認します。'}</p>
                 </div>
                 <div className="quiz-detail-actions">
@@ -1246,6 +1279,7 @@ export const QuizPage: React.FC = () => {
                       key={`${selectedQuiz.id}:${passage.id}`}
                       passage={passage}
                       links={relatedLinks}
+                      useDeterministicAlignment={selectedQuiz.translation_alignment_version === 'deterministic_v1'}
                       isGuest={isGuest}
                       onOpenWordPack={setPreviewWordPackId}
                       onCreateEmpty={createEmpty}

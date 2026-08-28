@@ -432,17 +432,20 @@ describe('QuizPage', () => {
   });
 
   it('switches the selected quiz detail into a full-width reading layout', async () => {
-    renderQuizPage();
+    const { container } = renderQuizPage();
     expect(await screen.findByRole('heading', { name: 'Reliable API Deployments' })).toBeInTheDocument();
 
     const generator = screen.getByRole('form', { name: 'Quiz生成フォーム' });
     const savedList = screen.getByRole('region', { name: '保存済みQuiz' });
+    const generatedAt = container.querySelector('.quiz-detail-header time');
     const user = userEvent.setup();
 
     const focusButton = screen.getByRole('button', { name: '本文/問題を広げる' });
     expect(focusButton).toHaveAttribute('aria-pressed', 'false');
     expect(generator).toBeVisible();
     expect(savedList).toBeVisible();
+    expect(generatedAt).toHaveAttribute('datetime', quiz.created_at);
+    expect(generatedAt).toHaveTextContent('2024/01/01 09:00');
 
     await act(async () => {
       await user.click(focusButton);
@@ -451,6 +454,7 @@ describe('QuizPage', () => {
     expect(screen.getByRole('button', { name: '3カラムに戻す' })).toHaveAttribute('aria-pressed', 'true');
     expect(generator).not.toBeVisible();
     expect(savedList).not.toBeVisible();
+    expect(generatedAt).toBeVisible();
 
     await act(async () => {
       await user.click(screen.getByRole('button', { name: '3カラムに戻す' }));

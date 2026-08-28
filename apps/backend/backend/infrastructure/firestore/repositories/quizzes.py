@@ -65,6 +65,9 @@ class FirestoreQuizRepository(FirestoreBaseRepository):
             "generation_started_at": payload.get("generation_started_at"),
             "generation_completed_at": payload.get("generation_completed_at"),
             "generation_duration_ms": payload.get("generation_duration_ms"),
+            "translation_alignment_version": payload.get(
+                "translation_alignment_version"
+            ),
             "guest_public": bool(payload.get("guest_public", False)),
             "owner_user_id": payload.get("owner_user_id", stored.get("owner_user_id")),
             "created_at": payload.get("created_at") or stored.get("created_at") or now,
@@ -127,6 +130,9 @@ class FirestoreQuizRepository(FirestoreBaseRepository):
             "generation_started_at": data.get("generation_started_at"),
             "generation_completed_at": data.get("generation_completed_at"),
             "generation_duration_ms": data.get("generation_duration_ms"),
+            "translation_alignment_version": data.get(
+                "translation_alignment_version"
+            ),
             "guest_public": bool(data.get("guest_public", False)),
             "owner_user_id": data.get("owner_user_id"),
             "created_at": str(data.get("created_at") or ""),
@@ -286,6 +292,10 @@ class FirestoreQuizRepository(FirestoreBaseRepository):
             "quiz_id": None,
             "result_json": None,
             "error": None,
+            "error_code": None,
+            "attempt_count": 0,
+            "attempt_limit": 5,
+            "retry_phase": None,
             "created_at": now,
             "updated_at": now,
         }
@@ -300,6 +310,10 @@ class FirestoreQuizRepository(FirestoreBaseRepository):
         quiz_id: str | None = None,
         result_json: str | None = None,
         error: str | None = None,
+        error_code: str | None = None,
+        attempt_count: int | None = None,
+        attempt_limit: int | None = None,
+        retry_phase: str | None = None,
     ) -> Mapping[str, Any] | None:
         doc_ref = self._quiz_generation_jobs.document(job_id)
         snapshot = doc_ref.get()
@@ -313,6 +327,14 @@ class FirestoreQuizRepository(FirestoreBaseRepository):
             updates["quiz_id"] = quiz_id
         if result_json is not None:
             updates["result_json"] = result_json
+        if attempt_count is not None:
+            updates["attempt_count"] = attempt_count
+        if attempt_limit is not None:
+            updates["attempt_limit"] = attempt_limit
+        if retry_phase is not None:
+            updates["retry_phase"] = retry_phase
+        if error_code is not None:
+            updates["error_code"] = error_code
         if status == "failed":
             updates["error"] = error or "Quiz generation job failed"
         elif error is not None:

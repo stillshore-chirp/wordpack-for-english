@@ -14,6 +14,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "apps" / "backend"))
 
 from backend.flows import quiz_generate as quiz_module
 from backend.flows.quiz_generate import QuizGenerateFlow, QuizGenerationProgress
+from backend.llmops.completion import generation_workflow_context
 from backend.models.quiz import QuizGenerateRequest
 
 
@@ -297,6 +298,7 @@ def test_quiz_alignment_retry_regenerates_the_whole_quiz_and_then_succeeds() -> 
     quiz = QuizGenerateFlow(store=store, llm=llm).run(req, progress.append)
 
     assert quiz.title_en == "Latency Review"
+    assert quiz.translation_alignment_version == "deterministic_v1"
     assert llm.calls == 2
     assert [(item.attempt_count, item.retry_phase) for item in progress] == [
         (1, "generation"),
@@ -423,10 +425,11 @@ def test_quiz_alignment_observability_contains_counts_without_generated_text(
 
     monkeypatch.setattr(quiz_module, "span", capture_span)
 
-    QuizGenerateFlow(
-        store=FakeQuizStore(),
-        llm=MisalignedThenValidQuizLlm(),
-    ).run(_single_question_request())
+    with generation_workflow_context("quiz-job:test-correlation"):
+        QuizGenerateFlow(
+            store=FakeQuizStore(),
+            llm=MisalignedThenValidQuizLlm(),
+        ).run(_single_question_request())
 
     serialized = json.dumps(span_metadata, ensure_ascii=False)
     assert sensitive_text not in serialized
@@ -437,6 +440,7 @@ def test_quiz_alignment_observability_contains_counts_without_generated_text(
     assert alignment["paragraph_index"] == 1
     assert alignment["english_sentence_count"] == 2
     assert alignment["japanese_sentence_count"] == 1
+    assert alignment["workflow_id"] == "quiz-job:test-correlation"
     assert any(item.get("final_success") is True for item in span_metadata)
 
 

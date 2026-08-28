@@ -5,11 +5,16 @@ import json
 import re
 import time
 from collections.abc import Mapping
-from dataclasses import dataclass
-from typing import Any, Callable, Literal
+from typing import Any
 
 from ..application.wordpack.generate_wordpack import build_llm_info, get_override_value
 from ..domain.quiz.prompt_policy import build_quiz_generation_prompt
+from ..domain.quiz.generation_progress import (
+    QUIZ_GENERATION_ATTEMPT_LIMIT,
+    QuizGenerationPhase,
+    QuizGenerationProgress,
+    QuizGenerationProgressCallback,
+)
 from ..domain.quiz.sentence_alignment import (
     TranslationAlignmentIssue,
     translation_alignment_issue,
@@ -19,26 +24,17 @@ from ..id_factory import generate_word_pack_id
 from ..infrastructure.llm.generated_contracts import GeneratedQuizPayload
 from ..infrastructure.llm.json_response_parser import parse_json_response
 from ..logging import logger
-from ..llmops.completion import complete_typed, safe_provenance, with_validation
+from ..llmops.completion import (
+    complete_typed,
+    runtime_correlation,
+    safe_provenance,
+    with_validation,
+)
 from ..llmops.identity import PromptIdentity, prompt_identity_from_builder
 from ..llmops.types import CompletionResult
 from ..models.quiz import Quiz, QuizGenerateRequest, QuizWordPackLink, QuizWordPackOccurrence
 from ..observability.tracing import span
 from ..providers import get_llm_provider
-
-
-QUIZ_GENERATION_ATTEMPT_LIMIT = 5
-QuizGenerationPhase = Literal["generation", "json_repair", "translation_alignment"]
-
-
-@dataclass(frozen=True)
-class QuizGenerationProgress:
-    attempt_count: int
-    attempt_limit: int
-    retry_phase: QuizGenerationPhase
-
-
-QuizGenerationProgressCallback = Callable[[QuizGenerationProgress], None]
 
 
 def _validation_error_summary(exc: Exception) -> dict[str, object]:
@@ -417,6 +413,7 @@ class QuizGenerateFlow:
         attempt_count = 0
         phase: QuizGenerationPhase = "generation"
         retry_metadata: dict[str, object] = {}
+        correlation_metadata = runtime_correlation()
         while True:
             attempt_count += 1
             _report_generation_progress(
@@ -425,6 +422,7 @@ class QuizGenerateFlow:
                 phase=phase,
             )
             attempt_metadata = {
+                **correlation_metadata,
                 "attempt_count": attempt_count,
                 "attempt_limit": QUIZ_GENERATION_ATTEMPT_LIMIT,
                 "retry_phase": phase,
@@ -464,6 +462,7 @@ class QuizGenerateFlow:
                     phase=phase,
                 )
                 repair_metadata = {
+                    **correlation_metadata,
                     "attempt_count": attempt_count,
                     "attempt_limit": QUIZ_GENERATION_ATTEMPT_LIMIT,
                     "retry_phase": phase,
@@ -551,6 +550,7 @@ class QuizGenerateFlow:
                 trace=None,
                 name="quiz.translation_alignment.validate",
                 metadata={
+                    **correlation_metadata,
                     "attempt_count": attempt_count,
                     "attempt_limit": QUIZ_GENERATION_ATTEMPT_LIMIT,
                     "retry_phase": "translation_alignment",
@@ -568,6 +568,7 @@ class QuizGenerateFlow:
             trace=None,
             name="quiz.generate.validated",
             metadata={
+                **correlation_metadata,
                 "attempt_count": attempt_count,
                 "attempt_limit": QUIZ_GENERATION_ATTEMPT_LIMIT,
                 "retry_phase": phase,
@@ -601,6 +602,7 @@ class QuizGenerateFlow:
             "generation_started_at": generation_started_at,
             "generation_completed_at": generation_completed_at,
             "generation_duration_ms": duration_ms,
+            "translation_alignment_version": "deterministic_v1",
             "guest_public": False,
             "owner_user_id": self._owner_user_id,
             "created_at": generation_completed_at,

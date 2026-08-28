@@ -9,6 +9,7 @@ import { ApiError, fetchJson } from '../lib/fetcher';
 import { DEFAULT_LLM_MODEL } from '../lib/wordpack';
 import { fetchArticleImportJob } from '../features/article-import/api/articleApi';
 import { fetchQuizGenerationJob } from '../features/quiz/api';
+import { formatQuizGenerationProgress } from '../features/quiz/progress';
 import {
   fetchCategoryGenerateImportJob,
   fetchExampleGenerationJob,
@@ -111,7 +112,14 @@ const QueueItem: React.FC<{
   const elapsedMs = item.status === 'progress' ? nowMs - item.createdAt : item.updatedAt - item.createdAt;
   const lemma = resolvePreviewLemma(item) || extractLemma(item.title);
   const statusLabel = notificationStatusLabel(item.status);
-  const progressValue = item.status === 'progress' ? 68 : item.status === 'success' ? 100 : 100;
+  const hasQuizAttemptProgress = item.jobType === 'quiz-generation'
+    && Number.isInteger(item.attemptCount)
+    && Number.isInteger(item.attemptLimit)
+    && (item.attemptCount ?? 0) >= 1
+    && (item.attemptLimit ?? 0) >= (item.attemptCount ?? 0);
+  const progressValue = hasQuizAttemptProgress
+    ? Math.round(((item.attemptCount ?? 0) / (item.attemptLimit ?? 1)) * 100)
+    : 68;
   const canOpenPreview = canOpenWordPackPreview(item);
   const className = [
     'generation-queue-item',
@@ -141,7 +149,7 @@ const QueueItem: React.FC<{
           <div
             className="generation-queue-progress"
             role="progressbar"
-            aria-label={`${lemma} の生成進行状況`}
+            aria-label={hasQuizAttemptProgress ? `${lemma} の生成試行状況` : `${lemma} の生成進行状況`}
             aria-valuemin={0}
             aria-valuemax={100}
             aria-valuenow={progressValue}
@@ -445,19 +453,37 @@ export const GenerationQueuePanel: React.FC = () => {
                 message: '保存済みQuizを確認しました',
                 jobId: item.jobId,
                 jobType: 'quiz-generation',
+                attemptCount: job.attempt_count ?? null,
+                attemptLimit: job.attempt_limit ?? null,
+                retryPhase: job.retry_phase ?? null,
               });
               return;
             }
-            if (job.status !== 'failed' && !isStale) return;
+            if (job.status !== 'failed' && !isStale) {
+              update(item.id, {
+                title: 'Quiz生成中',
+                status: 'progress',
+                message: formatQuizGenerationProgress(job),
+                jobId: item.jobId,
+                jobType: 'quiz-generation',
+                attemptCount: job.attempt_count ?? null,
+                attemptLimit: job.attempt_limit ?? null,
+                retryPhase: job.retry_phase ?? null,
+              });
+              return;
+            }
             const message = job.status === 'failed'
               ? (job.error || 'Quiz生成ジョブが失敗しました。必要ならもう一度実行してください。')
               : 'Quiz生成が長時間完了していません。Quiz一覧を確認するか、時間をおいて再試行してください。';
             update(item.id, {
-              title: 'Quiz生成の状態を確認できません',
+              title: job.status === 'failed' ? 'Quiz生成失敗' : 'Quiz生成の状態を確認できません',
               status: 'error',
               message,
               jobId: item.jobId,
               jobType: 'quiz-generation',
+              attemptCount: job.attempt_count ?? null,
+              attemptLimit: job.attempt_limit ?? null,
+              retryPhase: job.retry_phase ?? null,
             });
           } catch {
             if (!isStale) return;

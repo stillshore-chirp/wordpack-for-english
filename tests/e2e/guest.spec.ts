@@ -80,7 +80,7 @@ test.describe('ゲストモード', () => {
     expect(metrics.paddingBottom).toBeGreaterThanOrEqual(metrics.navHeight + 20);
   });
 
-  test('Quiz本文と問題を全幅表示へ切り替えられる', async ({ page }) => {
+  test('Quiz本文と問題を全幅表示へ切り替えられる', async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 1440, height: 900 });
     await mockConfig(page, { requestTimeoutMs: 20000, sessionAuthDisabled: false });
 
@@ -99,7 +99,7 @@ test.describe('ゲストモード', () => {
           title: 'Dashboard review',
           body_en:
             'A product team noticed that a dashboard could distort decisions when it overlooked late records. They added a buffer and audited the query.\n\nThe reports became reliable again.',
-          body_ja: 'プロダクトチームは、遅延レコードを見落とすとダッシュボードが判断を歪める可能性に気づきました。チームはバッファを追加し、クエリを監査しました。レポートは再び信頼できるものになりました。',
+          body_ja: 'プロダクトチームは、遅延レコードを見落とすとダッシュボードが判断を歪める可能性に気づきました。チームはバッファを追加し、クエリを監査しました。\n\nレポートは再び信頼できるものになりました。',
           speaker_labels: [],
         },
       ],
@@ -144,8 +144,9 @@ test.describe('ゲストモード', () => {
       avoid_topics: [],
       llm_model: 'gpt-5.4-mini',
       llm_params: 'reasoning.effort=minimal;text.verbosity=medium',
-      created_at: '2026-06-21T00:00:00Z',
-      updated_at: '2026-06-21T00:00:00Z',
+      translation_alignment_version: 'deterministic_v1',
+      created_at: '2026-01-02T03:04:00Z',
+      updated_at: '2026-01-03T04:05:00Z',
       guest_public: true,
     };
 
@@ -192,6 +193,10 @@ test.describe('ゲストモード', () => {
     await englishSecondSentence.hover();
     await expect(englishSecondSentence).toHaveClass(/is-active/);
     await expect(japaneseSecondSentence).toHaveClass(/is-active/);
+    await page.getByRole('heading', { name: 'Reliable Reading Focus' }).hover();
+    await japaneseSecondSentence.hover();
+    await expect(englishSecondSentence).toHaveClass(/is-active/);
+    await expect(japaneseSecondSentence).toHaveClass(/is-active/);
     await japaneseSecondSentence.click();
     await expect(englishSecondSentence).toHaveClass(/is-pinned/);
     await expect(japaneseSecondSentence).toHaveClass(/is-pinned/);
@@ -200,20 +205,28 @@ test.describe('ゲストモード', () => {
     const generator = page.getByRole('form', { name: 'Quiz生成フォーム' });
     const savedList = page.getByRole('region', { name: '保存済みQuiz' });
     const detailPanel = page.getByRole('region', { name: '選択中Quiz詳細' });
+    const generatedAt = page.locator('.quiz-detail-header time[datetime="2026-01-02T03:04:00Z"]');
     await expect(generator).toBeVisible();
     await expect(savedList).toBeVisible();
+    await expect(savedList.locator('time[datetime="2026-01-02T03:04:00Z"]')).toBeVisible();
+    await expect(generatedAt).toBeVisible();
+    await page.screenshot({ path: testInfo.outputPath('quiz-detail-three-columns.png'), fullPage: true });
 
     const widthBefore = await detailPanel.evaluate((element) => element.getBoundingClientRect().width);
     const focusButton = page.getByRole('button', { name: '本文/問題を広げる' });
     await expect(focusButton).toHaveAttribute('aria-pressed', 'false');
-    await focusButton.click();
+    await focusButton.focus();
+    await expect(focusButton).toBeFocused();
+    await page.keyboard.press('Enter');
 
     await expect(page.getByRole('button', { name: '3カラムに戻す' })).toHaveAttribute('aria-pressed', 'true');
     await expect(generator).toBeHidden();
     await expect(savedList).toBeHidden();
+    await expect(generatedAt).toBeVisible();
     const widthAfter = await detailPanel.evaluate((element) => element.getBoundingClientRect().width);
     expect(widthAfter).toBeGreaterThan(widthBefore + 280);
     await runA11yCheck(page);
+    await page.screenshot({ path: testInfo.outputPath('quiz-detail-focus.png'), fullPage: true });
 
     await page.getByRole('button', { name: '3カラムに戻す' }).click();
     await expect(page.getByRole('button', { name: '本文/問題を広げる' })).toHaveAttribute('aria-pressed', 'false');
@@ -237,7 +250,7 @@ test.describe('ゲストモード', () => {
     expect(mobileOverflow.rootScrollWidth).toBeLessThanOrEqual(mobileOverflow.viewportWidth + 1);
 
     await page.evaluate(() => {
-      document.documentElement.style.fontSize = '20px';
+      document.documentElement.style.fontSize = '32px';
     });
     const scaledOverflow = await page.evaluate(() => {
       const root = document.querySelector<HTMLElement>('#root');
@@ -246,10 +259,17 @@ test.describe('ゲストモード', () => {
       }
       return {
         rootScrollWidth: root.scrollWidth,
+        bodyScrollWidth: document.body.scrollWidth,
+        documentScrollWidth: document.documentElement.scrollWidth,
         viewportWidth: window.innerWidth,
       };
     });
     expect(scaledOverflow.rootScrollWidth).toBeLessThanOrEqual(scaledOverflow.viewportWidth + 1);
+    expect(scaledOverflow.bodyScrollWidth).toBeLessThanOrEqual(scaledOverflow.viewportWidth + 1);
+    expect(scaledOverflow.documentScrollWidth).toBeLessThanOrEqual(scaledOverflow.viewportWidth + 1);
+    await expect(generatedAt).toBeVisible();
+    await runA11yCheck(page);
+    await page.screenshot({ path: testInfo.outputPath('quiz-detail-mobile-200-percent.png'), fullPage: true });
   });
 
   test('デスクトップでページ全体をスクロールしてもサイドバー下部のユーザー操作が追従する', async ({ page }) => {
