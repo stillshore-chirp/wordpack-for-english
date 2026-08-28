@@ -739,6 +739,10 @@ export const WordPackListPanel: React.FC = () => {
 
   const isQueryTransition = loadedQueryKey !== null && loadedQueryKey !== listQueryKey;
   const isQueryError = queryError?.key === listQueryKey;
+  const showConditionNoResults = wordPacks.length === 0 && total > 0 && (
+    (!isQueryTransition && !isQueryError && sortedWordPacks.length === 0)
+    || (isQueryError && serverFilteredTotal === 0)
+  );
   const paginationTotal = serverFilteredTotal ?? total;
   const hasNext = !isQueryTransition && offset + PAGE_LIMIT < paginationTotal;
   const hasPrev = offset > 0;
@@ -1182,10 +1186,14 @@ export const WordPackListPanel: React.FC = () => {
 
         {wordPacks.length === 0 && !loading ? (
           <div className="wp-empty">
-            <p>{!isQueryTransition && !isQueryError && total > 0 && sortedWordPacks.length === 0
+            <p>{showConditionNoResults
               ? '検索・絞り込み条件に一致するWordPackがありません。'
               : '保存済みのWordPackがありません。'}</p>
-            <p>新しいWordPackを作成してください。</p>
+            <p>{showConditionNoResults
+              ? isQueryError
+                ? '前回成功した条件では0件でした。条件を変更するか、上の再試行を実行してください。'
+                : '検索条件または絞り込み条件を変更してください。'
+              : '新しいWordPackを作成してください。'}</p>
           </div>
         ) : (
           <>

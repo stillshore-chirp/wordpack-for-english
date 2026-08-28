@@ -265,4 +265,52 @@ describe('WordPackListPanel server-side query', () => {
     expect(screen.getByText('条件一致（全ページ） —')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '再試行' })).toBeInTheDocument();
   });
+
+  it('前回の条件一致が0件でも、新条件の取得失敗を保存済み0件と誤表示しない', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : (input as URL).toString();
+      const method = init?.method ?? 'GET';
+      if (url.endsWith('/api/config') && method === 'GET') {
+        return new Response(JSON.stringify({ request_timeout_ms: 60000 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.startsWith('/api/word/packs?') && method === 'GET') {
+        const parsed = new URL(url, 'http://localhost');
+        if (parsed.searchParams.get('visibility') === 'public') {
+          return new Response(JSON.stringify({ detail: '条件取得に失敗しました' }), {
+            status: 500,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        return makeResponse(
+          [],
+          3,
+          0,
+          0,
+          { public: 1, private: 2, generated: 1, not_generated: 2 },
+        );
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+
+    renderWithAuth();
+    const user = userEvent.setup();
+    await waitFor(() => expect(
+      screen.getByText('検索・絞り込み条件に一致するWordPackがありません。'),
+    ).toBeInTheDocument());
+
+    await user.click(screen.getByRole('button', { name: '公開中 1' }));
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(
+      '検索・絞り込み条件を適用できませんでした',
+    ));
+    expect(screen.getByText('検索・絞り込み条件に一致するWordPackがありません。')).toBeInTheDocument();
+    expect(screen.queryByText('保存済みのWordPackがありません。')).not.toBeInTheDocument();
+    expect(screen.getByText(
+      '前回成功した条件では0件でした。条件を変更するか、上の再試行を実行してください。',
+    )).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '再試行' })).toBeInTheDocument();
+  });
 });
