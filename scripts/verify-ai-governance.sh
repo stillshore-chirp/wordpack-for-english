@@ -36,6 +36,7 @@ reject_text() {
 bash scripts/verify-agent-harness.sh
 
 REQUIRED_FILES=(
+  ".agents/skills/ui-ux-review/SKILL.md"
   "docs/ai-governance/00-index.md"
   "docs/ai-governance/glossary.md"
   "docs/ai-governance/01-agent-operating-contract.md"
@@ -76,7 +77,7 @@ for file in "${REQUIRED_FILES[@]}"; do
 done
 
 # #615で既存正本へ統合した内容を、旧番号の正本・専用checklist・専用verifierへ
-# 戻さない。対象をcanonicalなUIガバナンス文書とchecklistへ限定し、過去reportは走査しない。
+# 戻さない。走査対象はcanonical REQUIRED_FILESから導出し、過去reportは走査しない。
 RETIRED_PARALLEL_PATHS=(
   "docs/ai-governance/15-interface-engineering-quality.md"
   "docs/ai-governance/16-change-scoped-interface-review.md"
@@ -177,25 +178,7 @@ for retired_path in "${RETIRED_PARALLEL_PATHS[@]}"; do
   fi
 done
 
-RETIRED_REFERENCE_PATHS=(
-  ".agents/skills/ui-ux-review/SKILL.md"
-  "docs/ai-governance/00-index.md"
-  "docs/ai-governance/02-uiux-review-framework.md"
-  "docs/ai-governance/03-evidence-and-completion-gates.md"
-  "docs/ai-governance/05-accessibility-and-inclusive-design.md"
-  "docs/ai-governance/06-visual-hierarchy-and-information-architecture.md"
-  "docs/ai-governance/09-ai-agent-review-protocol.md"
-  "docs/ai-governance/templates/uiux-review-report.md"
-  "docs/ai-governance/templates/completion-gate-report.md"
-  "docs/ai-governance/checklists/p0-p1-p2.md"
-  "docs/ai-governance/checklists/accessibility.md"
-  "docs/ai-governance/checklists/cognitive-walkthrough.md"
-  "docs/ai-governance/checklists/visual-hierarchy.md"
-  "docs/ai-governance/checklists/content-stress.md"
-  "docs/ai-governance/checklists/utility-user-goal.md"
-  "docs/ai-governance/checklists/efficiency.md"
-  "docs/ai-governance/checklists/satisfaction-trust.md"
-)
+RETIRED_REFERENCE_PATHS=("${REQUIRED_FILES[@]}")
 
 for file in "${RETIRED_REFERENCE_PATHS[@]}"; do
   for retired_path in "${RETIRED_PARALLEL_PATHS[@]}"; do

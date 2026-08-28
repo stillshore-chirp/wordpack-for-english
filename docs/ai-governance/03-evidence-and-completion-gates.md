@@ -96,7 +96,7 @@ UI変更レビューとフロー監査を併用する場合は、変更scopeの�
 | Regression | base側で成立していた品質が、今回の変更で弱くなった。 |
 | Pre-existing | base側でも同じ問題があり、今回の変更が作成・弱体化していない。 |
 
-IntroducedとRegressionは今回の変更のfindingとしてP0 / P1 / P2、修正状態、証跡を記録します。Pre-existingは影響に応じた優先度を記録した上で、今回の変更責任、変更起因findingの件数・P0 / P1 / P2集計、完了可否から分離し、必要なら別Issueまたはscope変更として追跡します。今回の目的達成や安全性を妨げる場合は、別Issue化だけで完了扱いにせず、scopeと完了判断を明示的に見直します。
+IntroducedとRegressionは今回の変更のfindingとしてP0 / P1 / P2、修正状態、証跡を記録します。Pre-existingは影響に応じた優先度を記録した上で、今回の変更責任、変更起因findingの件数・P0 / P1 / P2集計から分離し、必要なら別Issueまたはscope変更として追跡します。変更目的または安全性を阻害するP0/P1等のblocking findingは完了可否と判定理由へ残し、別Issue化だけで完了扱いにせず、scopeと完了判断を明示的に見直します。
 
 同じroot causeは一件へ統合し、影響するsurfaceを列挙します。未確認consumerをreview済み、またはPre-existingを今回の修正済みとして表現しません。
 <!-- agent-harness:uiux-finding-provenance:end -->
@@ -140,7 +140,7 @@ GitHubが所有し、リポジトリが変更していないlayout、keyboard、
 - changed fileから直接consumerへ展開し、shared primitive、global token、common component等は代表surfaceを追加確認している。
 - coverage、未確認consumer、除外理由を示している。
 - IntroducedとRegressionを今回の判定対象としている。
-- Pre-existingを今回の変更責任と完了判定から分離している。
+- Pre-existingの通常の変更起因件数・責任を分離している。ただし、変更目的または安全性を阻害するP0/P1等のblocking findingは完了可否・判定理由に残し、scopeと完了判断を明示的に見直している。
 
 ### フロー監査
 

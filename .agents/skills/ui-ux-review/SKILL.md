@@ -78,7 +78,7 @@ indexや全詳細文書を機械的に読み直さず、変更範囲から必要
 7. 反復操作の手数、入力保持、再選択、shortcut、一括操作、毎回の説明を確認する。
 8. 待機、成功、失敗、危険操作、保存、送信、削除、権限の信頼感を確認する。
 9. 実装を落とす立場で反証レビューし、P0/P1/P2と証跡不足を探す。
-10. 差分を伴う場合は、findingをIntroduced / Regression / Pre-existingへ分類し、Pre-existingを今回の完了判定から分離する。
+10. 差分を伴う場合は、findingをIntroduced / Regression / Pre-existingへ分類し、通常のPre-existingの変更起因件数・責任を分離する。ただし、変更目的または安全性を阻害するP0/P1等のblocking findingは完了可否と判定理由へ残し、scopeと完了判断を見直す。
 11. 実行した検証、未実行検証、残るリスクを記録する。
 
 ### 4.3 フロー監査
@@ -114,7 +114,7 @@ GitHub共同作業面だけの場合は、差分、Markdown / form構造、リ�
 - P1は原則として同じ変更内で修正し、分離する場合は理由と追跡先を示す。
 - P2は完了を止めないが、対応しない理由または後続先を記録する。
 - 変更差分reviewでは、target、base / head、変更意図、追加・削除、影響surface、coverageを記録する。
-- Pre-existingは今回の変更責任と完了判定から分離し、必要なら別Issueまたはscope変更として扱う。
+- Pre-existingは通常の変更起因件数・責任から分離し、必要なら別Issueまたはscope変更として扱う。ただし、変更目的または安全性を阻害するP0/P1等のblocking findingは完了可否・判定理由へ残し、scopeと完了判断を見直す。
 - フロー監査で必須証跡または具体的なblockerがなく、findingを対応する証跡へ追跡できない場合は完了不可。
 - screenshotだけからaccessibilityや未観測の挙動を断定しない。
 - screenshot、test、ユーザーフィードバック、アクセシビリティ結果を捏造しない。
