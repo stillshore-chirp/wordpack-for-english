@@ -434,6 +434,83 @@ def test_guest_public_pack_is_visible_in_guest_list(
     assert "exposed" in lemmas
 
 
+def test_owner_scoped_wordpack_list_applies_filters_after_authorization(
+    test_client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """所有者スコープ外の WordPack を件数・検索・facet へ混入させない。"""
+
+    monkeypatch.setattr(settings, "enforce_owner_scoping", True)
+    owner_id = "sub-owner-list"
+    _stub_verifier(
+        monkeypatch,
+        lambda: {
+            "sub": owner_id,
+            "email": "user@example.com",
+            "name": "Owner List User",
+            "hd": "example.com",
+            "email_verified": True,
+        },
+    )
+
+    login_response = test_client.post("/api/auth/google", json={"id_token": "valid"})
+    assert login_response.status_code == 200
+
+    from backend.store import store as backend_store
+
+    for word_pack_id, lemma, metadata in [
+        (
+            "wp-owner-list-private",
+            "owner-private",
+            {"owner_user_id": owner_id},
+        ),
+        (
+            "wp-owner-list-public",
+            "owner-public",
+            {"owner_user_id": owner_id, "guest_public": True},
+        ),
+        (
+            "wp-owner-list-foreign",
+            "foreign-secret",
+            {"owner_user_id": "sub-foreign"},
+        ),
+    ]:
+        backend_store.save_word_pack(
+            word_pack_id,
+            lemma,
+            json.dumps({"lemma": lemma, "examples": {}}, ensure_ascii=False),
+            metadata=metadata,
+        )
+
+    listing = test_client.get(
+        "/api/word/packs",
+        params={"limit": 50, "offset": 0, "sort_key": "lemma", "sort_order": "asc"},
+    )
+    assert listing.status_code == 200
+    payload = listing.json()
+    assert payload["total"] == 2
+    assert payload["filtered_total"] == 2
+    assert [item["lemma"] for item in payload["items"]] == [
+        "owner-private",
+        "owner-public",
+    ]
+    assert payload["facet_counts"] == {
+        "public": 1,
+        "private": 1,
+        "generated": 0,
+        "not_generated": 2,
+    }
+
+    foreign_search = test_client.get(
+        "/api/word/packs",
+        params={"search": "foreign", "search_mode": "contains"},
+    )
+    assert foreign_search.status_code == 200
+    foreign_payload = foreign_search.json()
+    assert foreign_payload["total"] == 2
+    assert foreign_payload["filtered_total"] == 0
+    assert foreign_payload["items"] == []
+
+
 def test_google_auth_passes_clock_skew_to_verifier(
     test_client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
