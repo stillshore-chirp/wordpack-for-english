@@ -135,7 +135,7 @@ def build_quiz_generation_prompt(
     avoid = ", ".join(f'"{topic}"' for topic in avoid_topics) or "(none)"
     topic = topic_seed or "(none)"
     translation_rule = (
-        "Include Japanese body_ja translations for passages. Keep the same paragraph breaks as body_en: if body_en uses a blank line between paragraphs, body_ja must use a blank line at the corresponding boundary and keep the same sentence order."
+        "Include Japanese body_ja translations for passages. Preserve the exact paragraph structure of body_en. In each corresponding paragraph, translate every English sentence into exactly one Japanese sentence in the same order. Do not split, combine, omit, or reorder sentences. End each Japanese sentence with 。, ？, or ！; when using a closing quotation mark, place it after that punctuation."
         if include_translation
         else "Set body_ja to null unless translation is essential for review."
     )

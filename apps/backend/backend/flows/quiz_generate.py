@@ -5,10 +5,15 @@ import json
 import re
 import time
 from collections.abc import Mapping
-from typing import Any
+from dataclasses import dataclass
+from typing import Any, Callable, Literal
 
 from ..application.wordpack.generate_wordpack import build_llm_info, get_override_value
 from ..domain.quiz.prompt_policy import build_quiz_generation_prompt
+from ..domain.quiz.sentence_alignment import (
+    TranslationAlignmentIssue,
+    translation_alignment_issue,
+)
 from ..domain.wordpack.lemma import validate_lemma
 from ..id_factory import generate_word_pack_id
 from ..infrastructure.llm.generated_contracts import GeneratedQuizPayload
@@ -18,7 +23,22 @@ from ..llmops.completion import complete_typed, safe_provenance, with_validation
 from ..llmops.identity import PromptIdentity, prompt_identity_from_builder
 from ..llmops.types import CompletionResult
 from ..models.quiz import Quiz, QuizGenerateRequest, QuizWordPackLink, QuizWordPackOccurrence
+from ..observability.tracing import span
 from ..providers import get_llm_provider
+
+
+QUIZ_GENERATION_ATTEMPT_LIMIT = 5
+QuizGenerationPhase = Literal["generation", "json_repair", "translation_alignment"]
+
+
+@dataclass(frozen=True)
+class QuizGenerationProgress:
+    attempt_count: int
+    attempt_limit: int
+    retry_phase: QuizGenerationPhase
+
+
+QuizGenerationProgressCallback = Callable[[QuizGenerationProgress], None]
 
 
 def _validation_error_summary(exc: Exception) -> dict[str, object]:
@@ -162,6 +182,56 @@ Invalid content:
     return _complete_json(llm, repair_prompt, identity=identity)
 
 
+def _alignment_metadata(
+    *,
+    passage_index: int,
+    issue: TranslationAlignmentIssue,
+) -> dict[str, object]:
+    return {
+        "retry_reason": issue.reason,
+        "passage_index": passage_index,
+        "paragraph_index": issue.paragraph_index,
+        "english_paragraph_count": issue.english_paragraph_count,
+        "japanese_paragraph_count": issue.japanese_paragraph_count,
+        "english_sentence_count": issue.english_sentence_count,
+        "japanese_sentence_count": issue.japanese_sentence_count,
+    }
+
+
+def _first_translation_alignment_issue(
+    generated: GeneratedQuizPayload,
+    req: QuizGenerateRequest,
+) -> tuple[int, TranslationAlignmentIssue] | None:
+    if not req.include_translation:
+        return None
+    for passage_index, passage in enumerate(generated.passages, start=1):
+        issue = translation_alignment_issue(passage.body_en, passage.body_ja or "")
+        if issue is not None:
+            return passage_index, issue
+    return None
+
+
+def _report_generation_progress(
+    callback: QuizGenerationProgressCallback | None,
+    *,
+    attempt_count: int,
+    phase: QuizGenerationPhase,
+) -> None:
+    progress = QuizGenerationProgress(
+        attempt_count=attempt_count,
+        attempt_limit=QUIZ_GENERATION_ATTEMPT_LIMIT,
+        retry_phase=phase,
+    )
+    if callback is not None:
+        callback(progress)
+    logger.info(
+        "quiz_generation_attempt_started",
+        attempt_count=progress.attempt_count,
+        attempt_limit=progress.attempt_limit,
+        retry_phase=progress.retry_phase,
+    )
+
+
 def _source_word_pack_lemmas(store: object, word_pack_ids: list[str]) -> tuple[list[str], list[QuizWordPackLink]]:
     lemmas: list[str] = []
     links: list[QuizWordPackLink] = []
@@ -297,7 +367,11 @@ class QuizGenerateFlow:
         self._llm = llm
         self._owner_user_id = owner_user_id
 
-    def run(self, req: QuizGenerateRequest) -> Quiz:
+    def run(
+        self,
+        req: QuizGenerateRequest,
+        on_progress: QuizGenerationProgressCallback | None = None,
+    ) -> Quiz:
         generation_started_at = _now_iso()
         started = time.perf_counter()
         logger.info(
@@ -330,6 +404,7 @@ class QuizGenerateFlow:
             model_override=get_override_value(req, "model"),
             reasoning_override=get_override_value(req, "reasoning"),
             text_override=get_override_value(req, "text"),
+            single_attempt=True,
         )
         llm_info = build_llm_info(req)
         prompt_identity = prompt_identity_from_builder(
@@ -339,92 +414,167 @@ class QuizGenerateFlow:
             schema=GeneratedQuizPayload.model_json_schema(),
             major_settings=llm_info,
         )
-        completion = _complete_json(llm, prompt, identity=prompt_identity)
-        raw = completion.content
-        provenance: list[dict[str, Any]] = []
-        if not raw.strip():
-            failed = safe_provenance(
-                with_validation(
-                    completion,
-                    parse=False,
-                    schema=False,
-                    application=False,
-                )
+        attempt_count = 0
+        phase: QuizGenerationPhase = "generation"
+        retry_metadata: dict[str, object] = {}
+        while True:
+            attempt_count += 1
+            _report_generation_progress(
+                on_progress,
+                attempt_count=attempt_count,
+                phase=phase,
             )
-            if failed is not None:
-                provenance.append(failed)
-            logger.warning("quiz_generation_failed", reason_code="QUIZ_LLM_EMPTY")
-            raise RuntimeError("QUIZ_LLM_EMPTY")
-        try:
-            data = parse_json_response(raw, prefer_json_object=True)
-        except Exception as exc:
-            failed = safe_provenance(
-                with_validation(
-                    completion,
-                    parse=False,
-                    schema=False,
-                    application=False,
+            attempt_metadata = {
+                "attempt_count": attempt_count,
+                "attempt_limit": QUIZ_GENERATION_ATTEMPT_LIMIT,
+                "retry_phase": phase,
+                **retry_metadata,
+            }
+            with span(
+                trace=None,
+                name="quiz.generate.attempt",
+                metadata=attempt_metadata,
+            ):
+                completion = _complete_json(llm, prompt, identity=prompt_identity)
+            raw = completion.content
+            if not raw.strip():
+                logger.warning(
+                    "quiz_generation_failed",
+                    reason_code="QUIZ_LLM_EMPTY",
+                    terminal=True,
+                    **attempt_metadata,
                 )
-            )
-            if failed is not None:
-                provenance.append(failed)
-            completion = _repair_json(llm, raw, exc, llm_info=llm_info)
+                raise RuntimeError("QUIZ_LLM_EMPTY")
             try:
-                data = parse_json_response(completion.content, prefer_json_object=True)
-            except Exception as repair_exc:
-                failed = safe_provenance(
-                    with_validation(
-                        completion,
-                        parse=False,
-                        schema=False,
-                        application=False,
+                data = parse_json_response(raw, prefer_json_object=True)
+            except Exception as exc:
+                logger.warning(
+                    "quiz_generation_json_invalid",
+                    reason_code="QUIZ_JSON_PARSE_FAILED",
+                    terminal=attempt_count >= QUIZ_GENERATION_ATTEMPT_LIMIT,
+                    **attempt_metadata,
+                )
+                if attempt_count >= QUIZ_GENERATION_ATTEMPT_LIMIT:
+                    raise RuntimeError("QUIZ_JSON_PARSE_FAILED") from exc
+                attempt_count += 1
+                phase = "json_repair"
+                _report_generation_progress(
+                    on_progress,
+                    attempt_count=attempt_count,
+                    phase=phase,
+                )
+                repair_metadata = {
+                    "attempt_count": attempt_count,
+                    "attempt_limit": QUIZ_GENERATION_ATTEMPT_LIMIT,
+                    "retry_phase": phase,
+                    "retry_reason": "json_parse_failed",
+                }
+                with span(
+                    trace=None,
+                    name="quiz.generate.attempt",
+                    metadata=repair_metadata,
+                ):
+                    completion = _repair_json(llm, raw, exc, llm_info=llm_info)
+                try:
+                    data = parse_json_response(
+                        completion.content,
+                        prefer_json_object=True,
                     )
+                except Exception as repair_exc:
+                    logger.warning(
+                        "quiz_generation_failed",
+                        reason_code="QUIZ_JSON_PARSE_FAILED",
+                        terminal=True,
+                        **repair_metadata,
+                    )
+                    raise RuntimeError("QUIZ_JSON_PARSE_FAILED") from repair_exc
+            if not isinstance(data, dict):
+                logger.warning(
+                    "quiz_generation_failed",
+                    reason_code="QUIZ_SCHEMA_INVALID",
+                    terminal=True,
+                    attempt_count=attempt_count,
+                    attempt_limit=QUIZ_GENERATION_ATTEMPT_LIMIT,
+                    retry_phase=phase,
                 )
-                if failed is not None:
-                    provenance.append(failed)
-                logger.warning("quiz_generation_failed", reason_code="QUIZ_JSON_PARSE_FAILED")
-                raise RuntimeError("QUIZ_JSON_PARSE_FAILED") from repair_exc
-        if not isinstance(data, dict):
-            logger.warning("quiz_generation_failed", reason_code="QUIZ_SCHEMA_INVALID")
-            raise RuntimeError("QUIZ_SCHEMA_INVALID")
-        try:
-            generated = GeneratedQuizPayload.model_validate(data)
-            data = generated.model_dump(mode="json")
-        except Exception as exc:
-            failed = safe_provenance(
-                with_validation(completion, parse=True, schema=False, application=False)
-            )
-            if failed is not None:
-                provenance.append(failed)
-            logger.warning(
-                "quiz_generated_schema_invalid",
-                reason_code="QUIZ_SCHEMA_INVALID",
-                **_validation_error_summary(exc),
-            )
-            raise RuntimeError("QUIZ_SCHEMA_INVALID") from exc
-        if not _quiz_matches_request(generated, req):
-            failed = safe_provenance(
-                with_validation(
-                    completion,
-                    parse=True,
-                    schema=True,
-                    application=False,
+                raise RuntimeError("QUIZ_SCHEMA_INVALID")
+            try:
+                generated = GeneratedQuizPayload.model_validate(data)
+                data = generated.model_dump(mode="json")
+            except Exception as exc:
+                logger.warning(
+                    "quiz_generated_schema_invalid",
+                    reason_code="QUIZ_SCHEMA_INVALID",
+                    terminal=True,
+                    attempt_count=attempt_count,
+                    attempt_limit=QUIZ_GENERATION_ATTEMPT_LIMIT,
+                    retry_phase=phase,
+                    **_validation_error_summary(exc),
                 )
+                raise RuntimeError("QUIZ_SCHEMA_INVALID") from exc
+            if not _quiz_matches_request(generated, req):
+                logger.warning(
+                    "quiz_generated_application_invalid",
+                    reason_code="QUIZ_APPLICATION_INVALID",
+                    terminal=True,
+                    attempt_count=attempt_count,
+                    attempt_limit=QUIZ_GENERATION_ATTEMPT_LIMIT,
+                    retry_phase=phase,
+                    expected_sections=req.section_count,
+                    actual_sections=len(generated.sections),
+                    expected_questions_per_section=req.questions_per_section,
+                    actual_question_counts=[
+                        len(section.questions) for section in generated.sections
+                    ],
+                )
+                raise RuntimeError("QUIZ_APPLICATION_INVALID")
+            alignment_failure = _first_translation_alignment_issue(generated, req)
+            if alignment_failure is None:
+                break
+            passage_index, issue = alignment_failure
+            retry_metadata = _alignment_metadata(
+                passage_index=passage_index,
+                issue=issue,
             )
-            if failed is not None:
-                provenance.append(failed)
+            terminal = attempt_count >= QUIZ_GENERATION_ATTEMPT_LIMIT
             logger.warning(
-                "quiz_generated_application_invalid",
-                reason_code="QUIZ_APPLICATION_INVALID",
-                expected_sections=req.section_count,
-                actual_sections=len(generated.sections),
-                expected_questions_per_section=req.questions_per_section,
-                actual_question_counts=[
-                    len(section.questions) for section in generated.sections
-                ],
+                "quiz_translation_alignment_invalid",
+                reason_code="QUIZ_TRANSLATION_ALIGNMENT_FAILED",
+                attempt_count=attempt_count,
+                attempt_limit=QUIZ_GENERATION_ATTEMPT_LIMIT,
+                retry_phase="translation_alignment",
+                retry=not terminal,
+                terminal=terminal,
+                **retry_metadata,
             )
-            raise RuntimeError("QUIZ_APPLICATION_INVALID")
+            with span(
+                trace=None,
+                name="quiz.translation_alignment.validate",
+                metadata={
+                    "attempt_count": attempt_count,
+                    "attempt_limit": QUIZ_GENERATION_ATTEMPT_LIMIT,
+                    "retry_phase": "translation_alignment",
+                    "retry": not terminal,
+                    "terminal": terminal,
+                    **retry_metadata,
+                },
+            ):
+                pass
+            if terminal:
+                raise RuntimeError("QUIZ_TRANSLATION_ALIGNMENT_FAILED")
+            phase = "translation_alignment"
 
+        with span(
+            trace=None,
+            name="quiz.generate.validated",
+            metadata={
+                "attempt_count": attempt_count,
+                "attempt_limit": QUIZ_GENERATION_ATTEMPT_LIMIT,
+                "retry_phase": phase,
+                "final_success": True,
+            },
+        ):
+            pass
         quiz_id = generate_quiz_id()
         generation_completed_at = _now_iso()
         duration_ms = int((time.perf_counter() - started) * 1000)
@@ -459,22 +609,20 @@ class QuizGenerateFlow:
         try:
             quiz = Quiz.model_validate(payload)
         except Exception as exc:
-            failed = safe_provenance(
-                with_validation(completion, parse=True, schema=False, application=False)
-            )
-            if failed is not None:
-                provenance.append(failed)
             logger.warning(
                 "quiz_schema_invalid",
                 reason_code="QUIZ_SCHEMA_INVALID",
+                terminal=True,
+                attempt_count=attempt_count,
+                attempt_limit=QUIZ_GENERATION_ATTEMPT_LIMIT,
+                retry_phase=phase,
                 **_validation_error_summary(exc),
             )
             raise RuntimeError("QUIZ_SCHEMA_INVALID") from exc
         succeeded = safe_provenance(
             with_validation(completion, parse=True, schema=True, application=True)
         )
-        if succeeded is not None:
-            provenance.append(succeeded)
+        provenance = [succeeded] if succeeded is not None else []
         quiz = quiz.model_copy(update={"generation_provenance": provenance})
         self._store.save_quiz(
             quiz.id,
@@ -490,8 +638,18 @@ class QuizGenerateFlow:
             quiz_id=hydrated.id,
             question_count=sum(len(section.questions) for section in hydrated.sections),
             passage_count=len(hydrated.passages),
+            attempt_count=attempt_count,
+            attempt_limit=QUIZ_GENERATION_ATTEMPT_LIMIT,
+            retry_phase=phase,
+            final_success=True,
         )
         return hydrated
 
 
-__all__ = ["QuizGenerateFlow", "generate_quiz_id", "_stable_missing_link_id"]
+__all__ = [
+    "QUIZ_GENERATION_ATTEMPT_LIMIT",
+    "QuizGenerateFlow",
+    "QuizGenerationProgress",
+    "generate_quiz_id",
+    "_stable_missing_link_id",
+]

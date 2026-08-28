@@ -30,7 +30,9 @@ def test_quiz_prompt_requests_aligned_translation_paragraphs_and_detailed_explan
         avoid_topics=[],
     )
 
-    assert "Keep the same paragraph breaks as body_en" in prompt
+    assert "Preserve the exact paragraph structure of body_en" in prompt
+    assert "translate every English sentence into exactly one Japanese sentence" in prompt
+    assert "Do not split, combine, omit, or reorder sentences" in prompt
     assert "about 2 to 4 clear Japanese sentences" in prompt
     assert "must include only incorrect choice ids" in prompt
     assert "must omit correct_choice_id" in prompt

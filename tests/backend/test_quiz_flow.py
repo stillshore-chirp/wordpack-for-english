@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 import json
 from pathlib import Path
 import sys
@@ -12,7 +13,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "apps" / "backend"))
 
 from backend.flows import quiz_generate as quiz_module
-from backend.flows.quiz_generate import QuizGenerateFlow
+from backend.flows.quiz_generate import QuizGenerateFlow, QuizGenerationProgress
 from backend.models.quiz import QuizGenerateRequest
 
 
@@ -255,9 +256,188 @@ def test_quiz_repair_records_complete_boolean_validation_outcomes() -> None:
     ).run(req)
 
     assert [entry["validation"] for entry in quiz.generation_provenance] == [
-        {"parse": False, "schema": False, "application": False},
         {"parse": True, "schema": True, "application": True},
     ]
+
+
+def _alignment_mismatch_payload() -> str:
+    payload = json.loads(FakeQuizLlm().complete(""))
+    payload["passages"][0]["body_en"] = "The first sentence ends. The second sentence ends."
+    payload["passages"][0]["body_ja"] = "二つの英文を一つの日本語文にまとめた。"
+    return json.dumps(payload, ensure_ascii=False)
+
+
+def _single_question_request() -> QuizGenerateRequest:
+    return QuizGenerateRequest.model_validate(
+        {
+            "lemmas": ["latency"],
+            "section_count": 1,
+            "questions_per_section": 1,
+        }
+    )
+
+
+def test_quiz_alignment_retry_regenerates_the_whole_quiz_and_then_succeeds() -> None:
+    valid_payload = FakeQuizLlm().complete("")
+
+    class RetryingQuizLlm:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, prompt: str) -> str:
+            self.calls += 1
+            assert "previous" not in prompt.lower()
+            return _alignment_mismatch_payload() if self.calls == 1 else valid_payload
+
+    progress: list[QuizGenerationProgress] = []
+    llm = RetryingQuizLlm()
+    store = FakeQuizStore()
+    req = _single_question_request()
+
+    quiz = QuizGenerateFlow(store=store, llm=llm).run(req, progress.append)
+
+    assert quiz.title_en == "Latency Review"
+    assert llm.calls == 2
+    assert [(item.attempt_count, item.retry_phase) for item in progress] == [
+        (1, "generation"),
+        (2, "translation_alignment"),
+    ]
+    assert store.saved is not None
+    assert len(quiz.generation_provenance) == 1
+
+
+def test_quiz_alignment_retry_stops_after_five_total_calls_without_saving() -> None:
+    class AlwaysMisalignedQuizLlm:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, _prompt: str) -> str:
+            self.calls += 1
+            return _alignment_mismatch_payload()
+
+    progress: list[QuizGenerationProgress] = []
+    llm = AlwaysMisalignedQuizLlm()
+    store = FakeQuizStore()
+    req = _single_question_request()
+
+    with pytest.raises(RuntimeError, match="QUIZ_TRANSLATION_ALIGNMENT_FAILED"):
+        QuizGenerateFlow(store=store, llm=llm).run(req, progress.append)
+
+    assert llm.calls == 5
+    assert [item.attempt_count for item in progress] == [1, 2, 3, 4, 5]
+    assert store.saved is None
+
+
+def test_quiz_json_repair_and_alignment_retry_share_the_five_call_budget() -> None:
+    valid_payload = FakeQuizLlm().complete("")
+
+    class RepairThenRetryQuizLlm:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, _prompt: str) -> str:
+            self.calls += 1
+            return {
+                1: "not-json",
+                2: _alignment_mismatch_payload(),
+                3: valid_payload,
+            }[self.calls]
+
+    progress: list[QuizGenerationProgress] = []
+    llm = RepairThenRetryQuizLlm()
+    req = _single_question_request()
+
+    QuizGenerateFlow(store=FakeQuizStore(), llm=llm).run(req, progress.append)
+
+    assert llm.calls == 3
+    assert [(item.attempt_count, item.retry_phase) for item in progress] == [
+        (1, "generation"),
+        (2, "json_repair"),
+        (3, "translation_alignment"),
+    ]
+
+
+def test_quiz_does_not_start_a_sixth_json_repair_call() -> None:
+    class InvalidOnFifthCallQuizLlm:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, _prompt: str) -> str:
+            self.calls += 1
+            return "not-json" if self.calls == 5 else _alignment_mismatch_payload()
+
+    llm = InvalidOnFifthCallQuizLlm()
+    store = FakeQuizStore()
+    req = _single_question_request()
+
+    with pytest.raises(RuntimeError, match="QUIZ_JSON_PARSE_FAILED"):
+        QuizGenerateFlow(store=store, llm=llm).run(req)
+
+    assert llm.calls == 5
+    assert store.saved is None
+
+
+def test_quiz_provider_disables_internal_retry_to_enforce_physical_call_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    llm = FakeQuizLlm()
+    provider_options: dict[str, object] = {}
+
+    def fake_get_llm_provider(**kwargs: object) -> FakeQuizLlm:
+        provider_options.update(kwargs)
+        return llm
+
+    monkeypatch.setattr(quiz_module, "get_llm_provider", fake_get_llm_provider)
+    req = _single_question_request()
+
+    QuizGenerateFlow(store=FakeQuizStore()).run(req)
+
+    assert provider_options["single_attempt"] is True
+
+
+def test_quiz_alignment_observability_contains_counts_without_generated_text(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sensitive_text = "private-generated-alignment-content"
+    payload = json.loads(_alignment_mismatch_payload())
+    payload["passages"][0]["body_en"] = f"{sensitive_text}. Another sentence."
+
+    class MisalignedThenValidQuizLlm:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, _prompt: str) -> str:
+            self.calls += 1
+            if self.calls == 1:
+                return json.dumps(payload, ensure_ascii=False)
+            return FakeQuizLlm().complete("")
+
+    span_metadata: list[dict[str, object]] = []
+
+    @contextmanager
+    def capture_span(**kwargs: object):
+        metadata = kwargs.get("metadata")
+        if isinstance(metadata, dict):
+            span_metadata.append(metadata)
+        yield None
+
+    monkeypatch.setattr(quiz_module, "span", capture_span)
+
+    QuizGenerateFlow(
+        store=FakeQuizStore(),
+        llm=MisalignedThenValidQuizLlm(),
+    ).run(_single_question_request())
+
+    serialized = json.dumps(span_metadata, ensure_ascii=False)
+    assert sensitive_text not in serialized
+    alignment = next(
+        item for item in span_metadata if item.get("retry_reason") == "sentence_count_mismatch"
+    )
+    assert alignment["passage_index"] == 1
+    assert alignment["paragraph_index"] == 1
+    assert alignment["english_sentence_count"] == 2
+    assert alignment["japanese_sentence_count"] == 1
+    assert any(item.get("final_success") is True for item in span_metadata)
 
 
 def test_quiz_schema_failure_log_excludes_generated_input(

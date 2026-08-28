@@ -1,0 +1,34 @@
+[
+  {
+    "name": "abbreviations_versions_decimals_and_crlf",
+    "body_en": "Dr. Sato reviewed API v2.0. The Node.js service responded in 3.14 seconds.\r\n\r\nWas it ready? Yes, it was.",
+    "body_ja": "佐藤博士はAPI v2.0を確認した。Node.jsサービスは3.14秒で応答した。\r\n\r\n準備はできた？ はい、できていた。",
+    "english_sentence_counts": [2, 2],
+    "japanese_sentence_counts": [2, 2],
+    "valid": true
+  },
+  {
+    "name": "same_total_but_different_per_paragraph",
+    "body_en": "The first paragraph is short.\n\nThe second starts here. It has another sentence.",
+    "body_ja": "最初の段落が始まる。ここにもう一文ある。\n\n二つ目の段落は短い。",
+    "english_sentence_counts": [1, 2],
+    "japanese_sentence_counts": [2, 1],
+    "valid": false
+  },
+  {
+    "name": "initialism_and_dotted_abbreviation",
+    "body_en": "The U.S. team reviewed examples, e.g. the cached summary. It approved the change.",
+    "body_ja": "米国チームは、例えばキャッシュ済み要約を確認した。チームは変更を承認した。",
+    "english_sentence_counts": [2],
+    "japanese_sentence_counts": [2],
+    "valid": true
+  },
+  {
+    "name": "paragraph_count_mismatch",
+    "body_en": "The first paragraph ends.\n\nThe second paragraph ends.",
+    "body_ja": "第一段落が終わる。第二段落が終わる。",
+    "english_sentence_counts": [1, 1],
+    "japanese_sentence_counts": [2],
+    "valid": false
+  }
+]
