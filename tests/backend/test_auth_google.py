@@ -493,6 +493,10 @@ def test_owner_scoped_wordpack_list_applies_filters_after_authorization(
         "owner-private",
         "owner-public",
     ]
+    assert {item["lemma"] for item in payload["recent_items"]} == {
+        "owner-private",
+        "owner-public",
+    }
     assert payload["facet_counts"] == {
         "public": 1,
         "private": 1,
@@ -509,6 +513,10 @@ def test_owner_scoped_wordpack_list_applies_filters_after_authorization(
     assert foreign_payload["total"] == 2
     assert foreign_payload["filtered_total"] == 0
     assert foreign_payload["items"] == []
+    assert all(
+        item["lemma"] != "foreign-secret"
+        for item in foreign_payload["recent_items"]
+    )
 
 
 def test_google_auth_passes_clock_skew_to_verifier(

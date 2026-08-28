@@ -7,6 +7,7 @@ import { AppProviders } from './main';
 
 type ListResponse = {
   items: Array<Record<string, unknown>>;
+  recent_items: Array<Record<string, unknown>>;
   total: number;
   filtered_total: number;
   facet_counts: {
@@ -38,10 +39,12 @@ const makeResponse = (
   filteredTotal: number,
   offset: number,
   facetCounts = { public: 1, private: 0, generated: 1, not_generated: 0 },
+  recentItems = items,
   status = 200,
 ) => new Response(
   JSON.stringify({
     items,
+    recent_items: recentItems,
     total,
     filtered_total: filteredTotal,
     facet_counts: facetCounts,
@@ -146,6 +149,7 @@ describe('WordPackListPanel server-side query', () => {
 
   it('ページ移動後の条件変更はoffset=0で再取得し、全体件数とfacet件数を表示する', async () => {
     const requests: URL[] = [];
+    const recentPrivate = makeItem('wp:recent-private', 'recent-private', false);
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : (input as URL).toString();
       const method = init?.method ?? 'GET';
@@ -166,6 +170,7 @@ describe('WordPackListPanel server-side query', () => {
             1,
             offset,
             { public: 1, private: 0, generated: 1, not_generated: 0 },
+            [recentPrivate],
           );
         }
         if (parsed.searchParams.get('visibility') === 'public') {
@@ -175,10 +180,11 @@ describe('WordPackListPanel server-side query', () => {
             1,
             offset,
             { public: 1, private: 0, generated: 1, not_generated: 0 },
+            [recentPrivate],
           );
         }
-        if (offset === 200) return makeResponse([makeItem('wp:beta', 'beta')], 401, 401, offset, { public: 1, private: 400, generated: 1, not_generated: 400 });
-        return makeResponse([makeItem('wp:alpha', 'alpha')], 401, 401, offset, { public: 1, private: 400, generated: 1, not_generated: 400 });
+        if (offset === 200) return makeResponse([makeItem('wp:beta', 'beta')], 401, 401, offset, { public: 1, private: 400, generated: 1, not_generated: 400 }, [recentPrivate]);
+        return makeResponse([makeItem('wp:alpha', 'alpha')], 401, 401, offset, { public: 1, private: 400, generated: 1, not_generated: 400 }, [recentPrivate]);
       }
       return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
     });
@@ -186,6 +192,7 @@ describe('WordPackListPanel server-side query', () => {
     renderWithAuth();
     const user = userEvent.setup();
     await waitFor(() => expect(screen.getByRole('button', { name: '次へ' })).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: /recent-private/ })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '次へ' }));
     await waitFor(() => expect(screen.getAllByTestId('wp-card')[0]).toHaveTextContent('beta'));
 
@@ -208,6 +215,7 @@ describe('WordPackListPanel server-side query', () => {
       )),
     ).toBe(true));
     await waitFor(() => expect(screen.getByText('条件一致（全ページ） 1件')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: /recent-private/ })).toBeInTheDocument();
     expect(screen.getByText('全体 401件')).toBeInTheDocument();
     expect(screen.getByText('このページ 1件')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '非公開 0' })).toBeInTheDocument();

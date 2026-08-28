@@ -25,6 +25,7 @@ class WordPackFacetCounts:
 @dataclass(frozen=True)
 class WordPackListQueryResult:
     rows: list[WordPackListFlagsTuple]
+    recent_rows: list[WordPackListFlagsTuple]
     total: int
     filtered_total: int
     facet_counts: WordPackFacetCounts
@@ -136,6 +137,11 @@ def query_word_pack_rows(
 
     return WordPackListQueryResult(
         rows=page_rows,
+        recent_rows=_sort_rows(
+            rows,
+            sort_key="updated_at",
+            sort_order="desc",
+        )[:3],
         total=len(rows),
         filtered_total=len(filtered_rows),
         facet_counts=WordPackFacetCounts(

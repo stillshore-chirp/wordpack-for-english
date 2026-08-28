@@ -77,6 +77,7 @@ export const WORDPACK_SEARCH_MAX_LENGTH_MESSAGE = `検索語は${WORDPACK_SEARCH
 
 export interface WordPackListResponse {
   items: WordPackListItem[];
+  recent_items?: WordPackListItem[];
   total: number;
   filtered_total?: number;
   facet_counts?: WordPackListFacetCounts;

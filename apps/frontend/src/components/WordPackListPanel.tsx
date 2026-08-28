@@ -137,6 +137,7 @@ export const WordPackListPanel: React.FC = () => {
   const confirmDialog = useConfirmDialog();
   const { add: addNotification, update: updateNotification } = useNotifications();
   const [wordPacks, setWordPacks] = useState<WordPackListItem[]>([]);
+  const [recentWordPacks, setRecentWordPacks] = useState<WordPackListItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [msg, setMsg] = useState<{ kind: 'status' | 'alert'; text: string } | null>(null);
   const [total, setTotal] = useState(0);
@@ -187,7 +188,8 @@ export const WordPackListPanel: React.FC = () => {
   ]);
   const previewMeta = useMemo<WordPackPreviewMeta | null>(() => {
     if (!previewWordPackId) return null;
-    const meta = wordPacks.find((w) => w.id === previewWordPackId);
+    const meta = wordPacks.find((w) => w.id === previewWordPackId)
+      ?? recentWordPacks.find((w) => w.id === previewWordPackId);
     if (!meta) return null;
     return {
       id: meta.id,
@@ -196,7 +198,7 @@ export const WordPackListPanel: React.FC = () => {
       created_at: meta.created_at,
       updated_at: meta.updated_at,
     };
-  }, [previewWordPackId, wordPacks]);
+  }, [previewWordPackId, recentWordPacks, wordPacks]);
   const clearSelection = useCallback(() => {
     setSelectedIds(new Set());
   }, []);
@@ -304,6 +306,9 @@ export const WordPackListPanel: React.FC = () => {
             guest_public: item.guest_public ?? false,
           })),
         );
+        if (Array.isArray(res.recent_items)) {
+          setRecentWordPacks(res.recent_items);
+        }
         setTotal(res.total);
         setServerFilteredTotal(typeof res.filtered_total === 'number' ? res.filtered_total : null);
         setServerFacetCounts(res.facet_counts ?? null);
@@ -342,6 +347,13 @@ export const WordPackListPanel: React.FC = () => {
     (payload: { wordPackId: string; checked_only_count: number; learned_count: number }) => {
       if (!payload?.wordPackId) return;
       setWordPacks((prev) =>
+        prev.map((wp) =>
+          wp.id === payload.wordPackId
+            ? { ...wp, checked_only_count: payload.checked_only_count, learned_count: payload.learned_count }
+            : wp,
+        ),
+      );
+      setRecentWordPacks((prev) =>
         prev.map((wp) =>
           wp.id === payload.wordPackId
             ? { ...wp, checked_only_count: payload.checked_only_count, learned_count: payload.learned_count }
@@ -794,13 +806,6 @@ export const WordPackListPanel: React.FC = () => {
   const conditionMatchCount = serverFilteredTotal ?? sortedWordPacks.length;
   const queryCountPlaceholder = isQueryError ? '—' : '…';
   const formatQueryCount = (count: number | null) => count === null ? queryCountPlaceholder : `${count}`;
-  const recentWordPacks = useMemo(
-    () =>
-      [...normalizedWordPacks]
-        .sort((a, b) => new Date(b.updated_at).getTime() - new Date(a.updated_at).getTime())
-        .slice(0, 3),
-    [normalizedWordPacks],
-  );
   const openPreview = useCallback((wordPackId: string) => {
     setActionMenuOpenId(null);
     setPreviewWordPackId(wordPackId);

@@ -470,6 +470,10 @@ class WordPackListResponse(BaseModel):
     """WordPack一覧レスポンス"""
 
     items: list[WordPackListItem]
+    recent_items: list[WordPackListItem] = Field(
+        default_factory=list,
+        description="検索・絞り込み条件に依存しない更新日時順の直近3件",
+    )
     total: int = Field(
         ge=0,
         description="現在の認可範囲にあるWordPackの総件数",

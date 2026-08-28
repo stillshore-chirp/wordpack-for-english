@@ -29,6 +29,33 @@ from .dependencies import get_store, get_word_pack_visibility, next_word_pack_id
 router = APIRouter()
 
 
+def _to_word_pack_list_item(row: tuple) -> WordPackListItem:
+    (
+        wp_id,
+        lemma,
+        sense_title,
+        created_at,
+        updated_at,
+        is_empty,
+        examples_count,
+        checked_only,
+        learned,
+        guest_public,
+    ) = row
+    return WordPackListItem(
+        id=wp_id,
+        lemma=lemma,
+        sense_title=sense_title,
+        created_at=created_at,
+        updated_at=updated_at,
+        is_empty=bool(is_empty),
+        examples_count=examples_count,
+        checked_only_count=checked_only,
+        learned_count=learned,
+        guest_public=guest_public,
+    )
+
+
 @router.post(
     "/packs",
     response_model=dict,
@@ -111,36 +138,11 @@ async def list_word_packs(
         sort_key=sort_key,
         sort_order=sort_order,
     )
-    items: list[WordPackListItem] = []
-    for (
-        wp_id,
-        lemma,
-        sense_title,
-        created_at,
-        updated_at,
-        is_empty,
-        examples_count,
-        checked_only,
-        learned,
-        guest_public,
-    ) in query_result.rows:
-        items.append(
-            WordPackListItem(
-                id=wp_id,
-                lemma=lemma,
-                sense_title=sense_title,
-                created_at=created_at,
-                updated_at=updated_at,
-                is_empty=bool(is_empty),
-                examples_count=examples_count,
-                checked_only_count=checked_only,
-                learned_count=learned,
-                guest_public=guest_public,
-            )
-        )
-
     return WordPackListResponse(
-        items=items,
+        items=[_to_word_pack_list_item(row) for row in query_result.rows],
+        recent_items=[
+            _to_word_pack_list_item(row) for row in query_result.recent_rows
+        ],
         total=query_result.total,
         filtered_total=query_result.filtered_total,
         facet_counts=WordPackListFacetCounts(

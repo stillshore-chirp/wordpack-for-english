@@ -121,6 +121,34 @@ def test_query_returns_zero_without_losing_overall_total() -> None:
     assert result.facet_counts.not_generated == 0
 
 
+def test_query_keeps_recent_rows_independent_from_list_filters() -> None:
+    public_older = _row(
+        1,
+        lemma="public-older",
+        public=True,
+        updated_at="2026-07-01T00:00:00+00:00",
+    )
+    private_newer = _row(
+        2,
+        lemma="private-newer",
+        public=False,
+        updated_at="2026-07-03T00:00:00+00:00",
+    )
+
+    result = query_word_pack_rows(
+        [public_older, private_newer],
+        limit=200,
+        offset=0,
+        visibility="public",
+    )
+
+    assert [row[1] for row in result.rows] == ["public-older"]
+    assert [row[1] for row in result.recent_rows] == [
+        "private-newer",
+        "public-older",
+    ]
+
+
 @pytest.mark.parametrize("search_mode", ["prefix", "suffix", "contains"])
 def test_query_search_modes_are_case_insensitive_and_trimmed(search_mode: str) -> None:
     rows = [_row(1, lemma="  AlphaBeta  ".strip())]

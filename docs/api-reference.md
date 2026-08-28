@@ -169,6 +169,20 @@ Response:
       "guest_public": true
     }
   ],
+  "recent_items": [
+    {
+      "id": "wp:recent",
+      "lemma": "recent",
+      "sense_title": "最近更新した語義",
+      "created_at": "2026-08-20T09:00:00+00:00",
+      "updated_at": "2026-08-28T09:00:00+00:00",
+      "is_empty": false,
+      "examples_count": {"Dev": 1, "CS": 0, "LLM": 0, "Business": 0, "Common": 0},
+      "checked_only_count": 0,
+      "learned_count": 0,
+      "guest_public": false
+    }
+  ],
   "total": 201,
   "filtered_total": 1,
   "facet_counts": {
@@ -183,6 +197,7 @@ Response:
 ```
 
 - `total` は認可範囲全体の件数です。
+- `recent_items` は同じ認可範囲から更新日時の新しい順に最大3件を返します。検索・絞り込み条件とページ位置には左右されません。
 - `filtered_total` は全検索・絞り込み条件に一致する全ページ件数です。
 - `facet_counts.public` / `private` は検索条件と生成状態を保ち、公開状態だけを各値へ切り替えた場合の件数です。
 - `facet_counts.generated` / `not_generated` は検索条件と公開状態を保ち、生成状態だけを各値へ切り替えた場合の件数です。

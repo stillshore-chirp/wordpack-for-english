@@ -373,6 +373,7 @@ def test_guest_list_filters_private_wordpacks(
     lemmas = [item["lemma"] for item in payload.get("items", [])]
     assert "public" in lemmas
     assert "private" not in lemmas
+    assert [item["lemma"] for item in payload["recent_items"]] == ["public"]
     assert payload["total"] == 1
     assert payload["filtered_total"] == 1
     assert payload["facet_counts"] == {
@@ -390,6 +391,9 @@ def test_guest_list_filters_private_wordpacks(
     assert private_payload["total"] == 1
     assert private_payload["filtered_total"] == 0
     assert private_payload["items"] == []
+    assert [item["lemma"] for item in private_payload["recent_items"]] == [
+        "public"
+    ]
 
 
 def test_guest_example_list_filters_private_wordpack_examples(
