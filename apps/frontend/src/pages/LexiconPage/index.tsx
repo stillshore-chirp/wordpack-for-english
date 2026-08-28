@@ -2,7 +2,10 @@ import React from 'react';
 import { WordPackPanel } from '../../components/WordPackPanel';
 import { WordPackListPanel } from '../../components/WordPackListPanel';
 import { AppRightRail } from '../../components/AppRightRail';
-import { WORDPACK_SEARCH_MAX_LENGTH } from '../../features/wordpack/types';
+import {
+  WORDPACK_SEARCH_MAX_LENGTH,
+  WORDPACK_SEARCH_MAX_LENGTH_MESSAGE,
+} from '../../features/wordpack/types';
 import { Button } from '../../shared/ui';
 import './lexicon.css';
 
@@ -28,7 +31,7 @@ export const LexiconPage: React.FC<LexiconPageProps> = ({
     event.preventDefault();
     const value = topSearch.trim();
     if (value.length > WORDPACK_SEARCH_MAX_LENGTH) {
-      setTopSearchError(`検索語は${WORDPACK_SEARCH_MAX_LENGTH}文字以内で入力してください。`);
+      setTopSearchError(WORDPACK_SEARCH_MAX_LENGTH_MESSAGE);
       topSearchRef.current?.focus();
       return;
     }
@@ -50,6 +53,11 @@ export const LexiconPage: React.FC<LexiconPageProps> = ({
       setTopSearch('');
       setTopSearchError(null);
     };
+    const handleSearchValidationError = (event: Event) => {
+      const detail = (event as CustomEvent<{ value?: string; message?: string }>).detail;
+      setTopSearch(detail?.value ?? '');
+      setTopSearchError(detail?.message ?? WORDPACK_SEARCH_MAX_LENGTH_MESSAGE);
+    };
     const handleKeyDown = (event: KeyboardEvent) => {
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
         event.preventDefault();
@@ -59,10 +67,12 @@ export const LexiconPage: React.FC<LexiconPageProps> = ({
     window.addEventListener('keydown', handleKeyDown);
     window.addEventListener('wordpack:list-search-synced', handleSearchSynced);
     window.addEventListener('wordpack:list-search-cleared', handleSearchCleared);
+    window.addEventListener('wordpack:list-search-validation-error', handleSearchValidationError);
     return () => {
       window.removeEventListener('keydown', handleKeyDown);
       window.removeEventListener('wordpack:list-search-synced', handleSearchSynced);
       window.removeEventListener('wordpack:list-search-cleared', handleSearchCleared);
+      window.removeEventListener('wordpack:list-search-validation-error', handleSearchValidationError);
     };
   }, []);
 

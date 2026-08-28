@@ -73,6 +73,7 @@ export interface WordPackListFacetCounts {
 }
 
 export const WORDPACK_SEARCH_MAX_LENGTH = 128;
+export const WORDPACK_SEARCH_MAX_LENGTH_MESSAGE = `検索語は${WORDPACK_SEARCH_MAX_LENGTH}文字以内で入力してください。`;
 
 export interface WordPackListResponse {
   items: WordPackListItem[];

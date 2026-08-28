@@ -271,6 +271,43 @@ describe('WordPackListPanel server-side query', () => {
     expect(screen.queryByText('検索語は128文字以内で入力してください。')).not.toBeInTheDocument();
   });
 
+  it('保存済みの長すぎる検索条件は初回APIへ送らず、検索欄へ検証エラーを復元する', async () => {
+    const requests: URL[] = [];
+    const restoredSearch = 'x'.repeat(129);
+    sessionStorage.setItem('wp.list.ui_state.v1', JSON.stringify({
+      searchMode: 'contains',
+      searchInput: restoredSearch,
+      appliedSearch: { mode: 'contains', value: restoredSearch },
+    }));
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : (input as URL).toString();
+      const method = init?.method ?? 'GET';
+      if (url.endsWith('/api/config') && method === 'GET') {
+        return new Response(JSON.stringify({ request_timeout_ms: 60000 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (url.startsWith('/api/word/packs?') && method === 'GET') {
+        const parsed = new URL(url, 'http://localhost');
+        requests.push(parsed);
+        return makeResponse([makeItem('wp:alpha', 'alpha')], 1, 1, 0);
+      }
+      return new Response('{}', { status: 200, headers: { 'Content-Type': 'application/json' } });
+    });
+
+    renderWithAuth();
+
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent(
+      '検索語は128文字以内で入力してください。',
+    ));
+    const topSearch = screen.getByRole('searchbox', { name: '保存済みWordPackを検索' });
+    expect(topSearch).toHaveValue(restoredSearch);
+    expect(topSearch).toHaveAttribute('aria-invalid', 'true');
+    expect(requests).toHaveLength(1);
+    expect(requests[0].searchParams.has('search')).toBe(false);
+  });
+
   it('条件取得に失敗したときは前回の一覧を保持し、条件一致数を未取得として示す', async () => {
     const requests: URL[] = [];
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: RequestInit) => {

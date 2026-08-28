@@ -22,6 +22,10 @@ import { formatDateJst } from '../lib/date';
 import { useAuth } from '../AuthContext';
 import { GuestLock } from './GuestLock';
 import { APP_EVENTS, dispatchAppEvent } from '../shared/events/appEvents';
+import {
+  WORDPACK_SEARCH_MAX_LENGTH,
+  WORDPACK_SEARCH_MAX_LENGTH_MESSAGE,
+} from '../features/wordpack/types';
 import type { WordPackListFacetCounts, WordPackListItem } from '../features/wordpack/types';
 
 type MiniIconName = 'book' | 'calendar' | 'check' | 'globe' | 'lock' | 'open' | 'speaker' | 'trash' | 'tag' | 'more';
@@ -141,6 +145,10 @@ export const WordPackListPanel: React.FC = () => {
   const [loadedQueryKey, setLoadedQueryKey] = useState<string | null>(null);
   const [queryError, setQueryError] = useState<{ key: string; message: string } | null>(null);
   const persistedState = useMemo(() => loadSessionState<PersistedState>(STORAGE_KEY, DEFAULT_PERSISTED_STATE), []);
+  const restoredSearchValue = typeof persistedState.appliedSearch?.value === 'string'
+    ? persistedState.appliedSearch.value.trim()
+    : (typeof persistedState.searchInput === 'string' ? persistedState.searchInput.trim() : '');
+  const restoredSearchIsInvalid = restoredSearchValue.length > WORDPACK_SEARCH_MAX_LENGTH;
   const [offset, setOffset] = useState(() => persistedState.offset);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewWordPackId, setPreviewWordPackId] = useState<string | null>(null);
@@ -151,8 +159,13 @@ export const WordPackListPanel: React.FC = () => {
   const [generationFilter, setGenerationFilter] = useState<GenerationFilter>(persistedState.generationFilter);
   const [visibilityFilter, setVisibilityFilter] = useState<VisibilityFilter>(persistedState.visibilityFilter ?? 'all');
   const [searchMode, setSearchMode] = useState<SearchMode>(persistedState.searchMode);
-  const [searchInput, setSearchInput] = useState(persistedState.searchInput);
-  const [appliedSearch, setAppliedSearch] = useState<{ mode: SearchMode; value: string } | null>(persistedState.appliedSearch);
+  const [searchInput, setSearchInput] = useState(restoredSearchIsInvalid ? restoredSearchValue : persistedState.searchInput);
+  const [appliedSearch, setAppliedSearch] = useState<{ mode: SearchMode; value: string } | null>(
+    restoredSearchIsInvalid ? null : persistedState.appliedSearch,
+  );
+  const [searchValidationError, setSearchValidationError] = useState<string | null>(
+    restoredSearchIsInvalid ? WORDPACK_SEARCH_MAX_LENGTH_MESSAGE : null,
+  );
   const [senseOpenIds, setSenseOpenIds] = useState<Set<string>>(() => new Set());
   const [showAllSense, setShowAllSense] = useState(persistedState.showAllSense);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
@@ -210,6 +223,11 @@ export const WordPackListPanel: React.FC = () => {
       const nextValue = (detail?.value ?? '').trim();
       setSearchMode(nextMode);
       setSearchInput(nextValue);
+      if (nextValue.length > WORDPACK_SEARCH_MAX_LENGTH) {
+        setSearchValidationError(WORDPACK_SEARCH_MAX_LENGTH_MESSAGE);
+        return;
+      }
+      setSearchValidationError(null);
       setAppliedSearch(nextValue ? { mode: nextMode, value: nextValue } : null);
     };
     try { window.addEventListener('wordpack:list-search', handler as EventListener); } catch {}
@@ -221,13 +239,19 @@ export const WordPackListPanel: React.FC = () => {
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
       try {
-        window.dispatchEvent(new CustomEvent('wordpack:list-search-synced', {
-          detail: { value: appliedSearchValue },
-        }));
+        if (searchValidationError) {
+          window.dispatchEvent(new CustomEvent('wordpack:list-search-validation-error', {
+            detail: { value: searchInput, message: searchValidationError },
+          }));
+        } else {
+          window.dispatchEvent(new CustomEvent('wordpack:list-search-synced', {
+            detail: { value: appliedSearchValue },
+          }));
+        }
       } catch {}
     }, 0);
     return () => window.clearTimeout(timeoutId);
-  }, [appliedSearchValue]);
+  }, [appliedSearchValue, searchInput, searchValidationError]);
 
   // 一覧の取得は他のフィルタ操作と競合するため、AbortController を共通化して最新の結果のみを反映させる。
   const loadWordPacks = useCallback(
@@ -655,6 +679,11 @@ export const WordPackListPanel: React.FC = () => {
 
   const handleApplySearch = useCallback(() => {
     const value = searchInput.trim();
+    if (value.length > WORDPACK_SEARCH_MAX_LENGTH) {
+      setSearchValidationError(WORDPACK_SEARCH_MAX_LENGTH_MESSAGE);
+      return;
+    }
+    setSearchValidationError(null);
     setAppliedSearch(value ? { mode: searchMode, value } : null);
   }, [searchMode, searchInput]);
 
