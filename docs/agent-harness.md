@@ -162,10 +162,10 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 ## Subagent orchestration
 <!-- agent-harness:subagent-orchestration:start -->
 
-サブエージェントは専門riskを独立して並列化するために使い、同じ証拠を読む担当を増やすために使いません。メインエージェントは委任前に、次を満たす重複しないlaneを定義します。
+サブエージェントは専門riskを独立して並列化するために使い、同じ証拠を読む担当を増やすために使いません。委任対象は、他の作業から独立して並列化できるbounded laneだけです。単一APIの呼び出し、CIの待機・監視だけを行う作業、短いthread返信、短い競合解消など、handoffの固定費が見合わない作業はprimary agentが担当します。メインエージェントは委任前に、次を満たす重複しないlaneを定義します。
 
 - primary agentは、要件・適用ルール、完了条件・非対象、lane設計、担当割当、依存関係、進捗、lane間の競合、ガバナンス、成果受入、Issue・commit・PR・CI・review・mergeabilityの確認、配送判断を担います。
-- subagentは、コードベース・履歴・仕様の探索、実装、focused verification、コード・セキュリティ・公開安全性review、review fix、docs、配送、CI監視など、分離できる実務を担当できます。subagentを監査専用には限定しません。
+- subagentは、コードベース・履歴・仕様の探索、実装、focused verification、コード・セキュリティ・公開安全性review、review fix、docs、配送など、分離できる実務を担当できます。subagentを監査専用には限定しません。
 - primary agentの直接実務は、lane間の競合解消、証拠矛盾の限定確認、分離不能な統合に限ります。P0/P1や権限境界は受入・配送判断へ反映しますが、通常の探索、実装、検証、ログ解析を同じ根拠として重ねません。
 - この契約は実行環境のモデル、ベンダー、製品固有tool、固有command、config keyを指定せず、実行環境固有の設定はリポジトリ外で管理します。
 
@@ -173,6 +173,7 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 - 対象HEAD、対象path、確認する具体的な問い。
 - 既存報告やメインエージェント自身の一次証拠確認では不足する理由。
 - owner、write ownership、completion、verification、invalidation conditionをlaneごとに明示します。
+- 同一PRの各laneは、一人のownerが開始からcompletionまで継続して担当します。lane単位の担当を複数agentで重ねません。
 
 この4項目を定義できない委任は行いません。包括監査を複数agentへ同時委任せず、同一HEAD・同一risk laneの独立監査は原則1回とします。再監査を認めるのは、対象コードが変わった、新しい実行証拠が得られた、前回監査に明確な不足がある、または未解決の証拠矛盾がある場合です。修正後に変更pathを対象再検証することと、未変更HEADへ同じ監査を繰り返すことを区別します。
 
@@ -183,10 +184,11 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 検証は次の段階を守ります。
 
 1. 開発中は変更によって影響を受けるfocused testを先に実行する。
-2. 配送対象の最終HEADが確定した時点でfrontend / backend / operationsなど必要なfull gateを原則1回実行する。
-3. 成功済み検証を再実行する時は、対象変更、生成物変更、実行条件変更、証拠期限切れなど、証拠が失効した理由を記録する。
+2. 同じworktreeとHEADで長い検証を始める前に、利用可能なprocess stateをoperatorが確認し、確認済みの実行中processを重複起動しません。これは運用者向けのoperator ruleであり、環境が自動的なlockを保証する仕組みではありません。
+3. 配送対象の最終HEADが確定した時点でfrontend / backend / operationsなど必要なfull gateを原則1回実行する。
+4. 成功済み検証を再実行する時は、対象変更、生成物変更、実行条件変更、証拠期限切れなど、証拠が失効した理由を記録する。
 
-メインエージェントは次のrisk lane台帳を保ち、担当scopeと結果を統合して重複を止めます。clean commitを確認した場合はcommit SHAを記録します。未commitの共有worktreeを確認した場合は、base HEADに加えて、確認したpathとdiffを一意に識別できる値を記録し、HEADだけを監査済みsnapshotとして扱いません。primary agentの受入はevidence packageからscope、acceptance、evidence、unrelated diff、commit responsibility、lane conflict、completion gatesを確認し、laneの完了と配送判断を行います。
+メインエージェントは次のrisk lane台帳を保ち、担当scopeと結果を統合して重複を止めます。clean commitを確認した場合はcommit SHAを記録します。未commitの共有worktreeを確認した場合は、base HEADに加えて、確認したpathとdiffを一意に識別できる値を記録し、HEADだけを監査済みsnapshotとして扱いません。各evidenceは対象HEADとbase HEAD、確認済みpath、diff identifierに束縛します。対象snapshotが変わらない限りevidenceを再取得せず、invalidation conditionで失効したevidenceだけを再取得し、その理由と範囲を台帳に記録します。primary agentの受入はevidence packageからscope、acceptance、evidence、unrelated diff、commit responsibility、lane conflict、completion gatesを確認し、laneの完了と配送判断を行います。
 
 各laneは、owner、target HEAD、target path、write ownership、completion、verification、invalidation conditionを持ちます。完了報告は、scope、changed paths、conclusion、verification results、unperformed checks、remaining risks、snapshotまたはdiff identifierをevidence packageとして返します。
 
