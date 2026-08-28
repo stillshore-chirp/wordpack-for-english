@@ -6,9 +6,13 @@ from dataclasses import dataclass
 
 _PROTECTED_DOT = "\u0000"
 _PARAGRAPH_BREAK = re.compile(r"\n\s*\n")
+_INITIALISM_PATTERN = re.compile(r"\b(?:[A-Za-z]\.){2,}", re.IGNORECASE)
+_SENTENCE_START_AFTER_INITIALISM = re.compile(
+    r"^[\"')\]}”’]*\s+(?:A|An|The|I|We|You|He|She|It|They|This|That|These|Those|"
+    r"However|Therefore|Meanwhile|Instead|Finally|Next|Then)\b"
+)
 _ENGLISH_DOT_PATTERNS = (
     re.compile(r"(?<=\d)\.(?=\d)"),
-    re.compile(r"\b(?:[A-Za-z]\.){2,}", re.IGNORECASE),
     re.compile(
         r"\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc|No|e\.g|i\.e)\.",
         re.IGNORECASE,
@@ -34,7 +38,15 @@ def split_paragraphs(text: str) -> list[str]:
 
 
 def _protect_english_dots(text: str) -> str:
-    protected = text
+    def protect_initialism(match: re.Match[str]) -> str:
+        value = match.group(0)
+        always_internal = value.lower() in {"e.g.", "i.e."}
+        next_text = text[match.end() :]
+        if always_internal or not _SENTENCE_START_AFTER_INITIALISM.match(next_text):
+            return value.replace(".", _PROTECTED_DOT)
+        return value[:-1].replace(".", _PROTECTED_DOT) + "."
+
+    protected = _INITIALISM_PATTERN.sub(protect_initialism, text)
     for pattern in _ENGLISH_DOT_PATTERNS:
         protected = pattern.sub(
             lambda match: match.group(0).replace(".", _PROTECTED_DOT),

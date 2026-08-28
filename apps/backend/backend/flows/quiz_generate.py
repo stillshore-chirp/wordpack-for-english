@@ -198,10 +198,11 @@ def _first_translation_alignment_issue(
     generated: GeneratedQuizPayload,
     req: QuizGenerateRequest,
 ) -> tuple[int, TranslationAlignmentIssue] | None:
-    if not req.include_translation:
-        return None
     for passage_index, passage in enumerate(generated.passages, start=1):
-        issue = translation_alignment_issue(passage.body_en, passage.body_ja or "")
+        body_ja = (passage.body_ja or "").strip()
+        if not body_ja:
+            continue
+        issue = translation_alignment_issue(passage.body_en, body_ja)
         if issue is not None:
             return passage_index, issue
     return None

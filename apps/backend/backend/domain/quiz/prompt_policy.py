@@ -134,10 +134,20 @@ def build_quiz_generation_prompt(
     source_lemmas = ", ".join(f'"{lemma}"' for lemma in lemmas) or "(none)"
     avoid = ", ".join(f'"{topic}"' for topic in avoid_topics) or "(none)"
     topic = topic_seed or "(none)"
+    alignment_rule = (
+        "Preserve the exact paragraph structure of body_en. "
+        "In each corresponding paragraph, translate every English sentence into "
+        "exactly one Japanese sentence in the same order. Do not split, combine, "
+        "omit, or reorder sentences. End each Japanese sentence with 。, ？, or ！; "
+        "when using a closing quotation mark, place it after that punctuation."
+    )
     translation_rule = (
-        "Include Japanese body_ja translations for passages. Preserve the exact paragraph structure of body_en. In each corresponding paragraph, translate every English sentence into exactly one Japanese sentence in the same order. Do not split, combine, omit, or reorder sentences. End each Japanese sentence with 。, ？, or ！; when using a closing quotation mark, place it after that punctuation."
+        f"Include Japanese body_ja translations for passages. {alignment_rule}"
         if include_translation
-        else "Set body_ja to null unless translation is essential for review."
+        else (
+            "Set body_ja to null unless translation is essential for review. "
+            f"If body_ja is included, {alignment_rule}"
+        )
     )
     return f"""You are generating original English learning material for a private vocabulary app.
 Do not reproduce copyrighted test questions, official sample passages, official directions, or brand-specific wording.

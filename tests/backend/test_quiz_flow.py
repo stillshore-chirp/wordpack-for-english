@@ -330,6 +330,48 @@ def test_quiz_alignment_retry_stops_after_five_total_calls_without_saving() -> N
     assert store.saved is None
 
 
+def test_quiz_validates_an_optional_translation_returned_for_no_translation_request() -> None:
+    class UnexpectedMisalignedTranslationLlm:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, _prompt: str) -> str:
+            self.calls += 1
+            return _alignment_mismatch_payload()
+
+    llm = UnexpectedMisalignedTranslationLlm()
+    store = FakeQuizStore()
+    req = _single_question_request().model_copy(update={"include_translation": False})
+
+    with pytest.raises(RuntimeError, match="QUIZ_TRANSLATION_ALIGNMENT_FAILED"):
+        QuizGenerateFlow(store=store, llm=llm).run(req)
+
+    assert llm.calls == 5
+    assert store.saved is None
+
+
+def test_quiz_accepts_missing_translation_for_no_translation_request() -> None:
+    payload = json.loads(FakeQuizLlm().complete(""))
+    payload["passages"][0]["body_ja"] = None
+
+    class NoTranslationQuizLlm:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        def complete(self, _prompt: str) -> str:
+            self.calls += 1
+            return json.dumps(payload, ensure_ascii=False)
+
+    llm = NoTranslationQuizLlm()
+    req = _single_question_request().model_copy(update={"include_translation": False})
+
+    quiz = QuizGenerateFlow(store=FakeQuizStore(), llm=llm).run(req)
+
+    assert quiz.passages[0].body_ja is None
+    assert quiz.translation_alignment_version == "deterministic_v1"
+    assert llm.calls == 1
+
+
 def test_quiz_json_repair_and_alignment_retry_share_the_five_call_budget() -> None:
     valid_payload = FakeQuizLlm().complete("")
 

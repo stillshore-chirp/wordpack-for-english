@@ -24,6 +24,22 @@
     "valid": true
   },
   {
+    "name": "terminal_initialism_before_new_sentence",
+    "body_en": "The service supports the U.S. It also supports Canada.",
+    "body_ja": "そのサービスは米国に対応している。カナダにも対応している。",
+    "english_sentence_counts": [2],
+    "japanese_sentence_counts": [2],
+    "valid": true
+  },
+  {
+    "name": "quoted_terminal_initialism_before_new_sentence",
+    "body_en": "The label read \"U.S.\" It was clear.",
+    "body_ja": "ラベルには「U.S.」とあった。それは明確だった。",
+    "english_sentence_counts": [2],
+    "japanese_sentence_counts": [2],
+    "valid": true
+  },
+  {
     "name": "paragraph_count_mismatch",
     "body_en": "The first paragraph ends.\n\nThe second paragraph ends.",
     "body_ja": "第一段落が終わる。第二段落が終わる。",

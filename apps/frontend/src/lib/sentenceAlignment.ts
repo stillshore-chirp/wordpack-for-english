@@ -24,6 +24,7 @@ const englishSentencePattern = /[^.!?]+[.!?]+["')\]]*|[^.!?]+$/g;
 const japaneseSentencePattern = /[^。！？!?]+[。！？!?]+["'）】」』]*|[^。！？!?]+$/gu;
 const protectedDot = '\u0000';
 const closingPunctuation = new Set(['"', "'", '”', '’', ')', ']', '}', '』', '」']);
+const sentenceStartAfterInitialismPattern = /^["')\]}”’]*\s+(?:A|An|The|I|We|You|He|She|It|They|This|That|These|Those|However|Therefore|Meanwhile|Instead|Finally|Next|Then)\b/u;
 
 type SentenceSplitMode = 'legacy' | 'deterministic';
 type SentenceSegmenter = {
@@ -40,9 +41,17 @@ const getEnglishSentenceSegmenter = (): SentenceSegmenter | null => {
 const protectEnglishDots = (text: string): string => {
   let protectedText = text
     .replace(/(\d)\.(?=\d)/g, `$1${protectedDot}`);
-  protectedText = protectedText.replace(/\b(?:[A-Za-z]\.){2,}/gi, (match) => (
-    match.replace(/\./g, protectedDot)
-  ));
+  protectedText = protectedText.replace(
+    /\b(?:[A-Za-z]\.){2,}/gi,
+    (match, offset: number, source: string) => {
+      const alwaysInternal = match.toLowerCase() === 'e.g.' || match.toLowerCase() === 'i.e.';
+      const nextText = source.slice(offset + match.length);
+      if (alwaysInternal || !sentenceStartAfterInitialismPattern.test(nextText)) {
+        return match.replace(/\./g, protectedDot);
+      }
+      return `${match.slice(0, -1).replace(/\./g, protectedDot)}.`;
+    },
+  );
   protectedText = protectedText.replace(
     /\b(?:Mr|Mrs|Ms|Dr|Prof|Sr|Jr|St|vs|etc|No|e\.g|i\.e)\./gi,
     (match) => match.replace(/\./g, protectedDot),
