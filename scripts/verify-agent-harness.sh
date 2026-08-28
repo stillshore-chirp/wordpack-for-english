@@ -242,7 +242,7 @@ reject_regex() {
 REGEX_END_OF_LINE=$'\x24'
 REGEX_BACKTICK=$'\x60'
 MODEL_ID_CORE='(gpt-[0-9]+[a-z]?([.][0-9]+)*([_-][[:alnum:]]+)*|o[0-9]+([.][0-9]+)*([_-][[:alnum:]]+)*|claude-(opus|sonnet|haiku|[0-9]+)([.][0-9]+)*([_-][[:alnum:]]+)*|gemini-(pro|flash|ultra|[0-9]+)([.][0-9]+)*([_-][[:alnum:]]+)*|llama-[0-9]+([.][0-9]+)*([_-][[:alnum:]]+)*)'
-MODEL_ID_TOKEN_PATTERN="(^|[[:space:]\"'${REGEX_BACKTICK}:(){}<])${MODEL_ID_CORE}([[:space:]\"'${REGEX_BACKTICK}.,;:!?(){}<>]|${REGEX_END_OF_LINE})"
+MODEL_ID_TOKEN_PATTERN="(^|[[:space:]\"'${REGEX_BACKTICK}:(){}<*_]|\\[)${MODEL_ID_CORE}([[:space:]\"'${REGEX_BACKTICK}.,;:!?(){}<>*_]|\\]|${REGEX_END_OF_LINE})"
 MODEL_ID_SAFE_CONTEXT_PATTERN='(do[[:space:]]+not|does[[:space:]]+not|must[[:space:]]+not|not[[:space:]]+(use|select|require|fixed|specified|mandatory|required|permitted|allowed)|never|without|avoid|forbid|forbidden|prohibit|prohibited|disallowed|optional|example|explanation|mentioned|mention|documentation|禁止|説明|例|しない|ではない|不要|任意|固定しない|指定しない|必須ではない|使わない|利用しない)'
 
 VENDOR_CORE='(OpenAI|Anthropic|Google|AWS|Azure)'
@@ -256,13 +256,14 @@ VENDOR_MANDATE_PATTERN="${VENDOR_AFTER_PATTERN}|${VENDOR_BEFORE_EN}|${VENDOR_BEF
 VENDOR_SAFE_CONTEXT_PATTERN='(do[[:space:]]+not|does[[:space:]]+not|must[[:space:]]+not|not[[:space:]]+(use|select|require|mandatory|required)|never|without|avoid|optional|example|explanation|mentioned|mention|official|documentation|禁止|説明|例|しない|ではない|不要|任意|固定しない|指定しない|必須ではない|使わない|利用しない)'
 
 TOOL_NAME_CORE='(gh|codex|claude|cursor)'
-TOOL_ARGUMENT="[[:alnum:]_.:/=-]+"
+TOOL_ARGUMENT="(\"[^\"\\\\]*(\\\\.[^\"\\\\]*)*\"|'[^'\\\\]*(\\\\.[^'\\\\]*)*'|[^[:space:]${REGEX_BACKTICK}]+)"
 TOOL_COMMAND_PATTERN="${REGEX_BACKTICK}${TOOL_NAME_CORE}([[:space:]]+${TOOL_ARGUMENT})+${REGEX_BACKTICK}|(^|[[:space:](){}<])@${TOOL_NAME_CORE}([[:space:]]+${TOOL_ARGUMENT})+"
 # An option keeps a sentence such as "Codex is supported" out of bare-command matches.
 TOOL_BARE_COMMAND_PATTERN="^[[:space:]]*([>${REGEX_END_OF_LINE}][[:space:]]*)?${TOOL_NAME_CORE}[[:space:]]+${TOOL_ARGUMENT}([[:space:]]+${TOOL_ARGUMENT})*[[:space:]]+--${TOOL_ARGUMENT}"
 MCP_TOOL_PATTERN="(^|[[:space:]${REGEX_BACKTICK}(){}<])mcp__[[:alnum:]_-]+([[:space:]${REGEX_BACKTICK}.,;:!?(){}<>]|${REGEX_END_OF_LINE})"
 TOOL_SYNTAX_PATTERN="${TOOL_COMMAND_PATTERN}|${TOOL_BARE_COMMAND_PATTERN}|${MCP_TOOL_PATTERN}"
 TOOL_SAFE_CONTEXT_PATTERN='(do[[:space:]]+not|does[[:space:]]+not|must[[:space:]]+not|not|never|without|avoid|optional|example|explanation|mentioned|mention|official|documentation|禁止|説明|例|しない|ではない|不要|任意|固定しない|指定しない|使わない|利用しない)'
+ACTION_PREFIX_PATTERN='(^|[[:space:][:punct:]])(use|select|require|choose|run|execute|call|set|inspect|verify|ensure)[[:space:]]+'
 
 RUNTIME_KEY_CORE='(default_subagent_model|default_subagent_reasoning_effort|max_concurrent_threads_per_session|OPENAI_API_KEY)'
 RUNTIME_KEY_ASSIGNMENT_PATTERN="(^|[[:space:]\"'${REGEX_BACKTICK}{])${RUNTIME_KEY_CORE}[\"']?[[:space:]]*[:=]"
@@ -284,8 +285,10 @@ expect_regex_no_match() {
   fi
 }
 
-# Split before a new command/required marker. Safe enumerations keep their
-# context across commas and connectors; decimal model versions stay intact.
+# Split before a clause boundary or a new command/required marker. The scanner
+# ignores punctuation inside quoted/backticked arguments. Safe enumerations
+# keep their context across commas and connectors; decimal model versions stay
+# intact.
 split_segments() {
   printf '%s\n' "$1" | awk -v safe_scope_marker="$SAFE_SCOPE_MARKER" '
     BEGIN {
@@ -294,25 +297,82 @@ split_segments() {
       action = "((do|does|must)[[:space:]]+not[[:space:]]+)?(must[[:space:]]+)?(use|select|require|choose|run|execute|call|set|inspect|verify|ensure|is[[:space:]]+(required|mandatory|fixed|specified)|are[[:space:]]+(required|mandatory|fixed|specified)|required|mandatory|fixed|specified|必須|固定|指定|使う|使用|利用|選択|実行|呼び出す)"
       punctuation = "[;,!?。！？、|:.][[:space:]]*" action "[[:space:]]+"
       connector = "[[:space:]]+(and|but|or|then|also|as[[:space:]]+well[[:space:]]+as|かつ|または|ただし|そして)[[:space:]]+" action "[[:space:]]+"
+      boundary = "[;,、|:()][[:space:]]*|[.!?][[:space:]]+|[。！？][[:space:]]*"
       safe_intro = "(for[[:space:]]+example|e[.]g[.]|as[[:space:]]+an[[:space:]]+example|例として|たとえば|例えば)"
       safe_scope = 0
-      while (match(remaining, punctuation "|" connector)) {
-        separator = substr(remaining, RSTART, RLENGTH)
-        prefix = substr(remaining, 1, RSTART - 1)
+      while (find_boundary(remaining)) {
+        separator = substr(remaining, boundary_start, boundary_length)
+        prefix = substr(remaining, 1, boundary_start - 1)
         if (prefix ~ safe_intro) safe_scope = 1
         print prefix
-        sentence_end = separator ~ /^[.!?。！？]/
+        sentence_end = separator ~ /^[.!?。！？;]/
         if (separator ~ /^[[:space:]]+(and|but|or|then|also|as[[:space:]]+well[[:space:]]+as|かつ|または|ただし|そして)[[:space:]]+/) {
           sub(/^[[:space:]]+(and|but|or|then|also|as[[:space:]]+well[[:space:]]+as|かつ|または|ただし|そして)[[:space:]]+/, "", separator)
         } else {
-          sub(/^[;,!?。！？、|:.][[:space:]]*/, "", separator)
+          sub(/^[;,!?。！？、|:.()][[:space:]]*/, "", separator)
         }
         if (safe_scope && !sentence_end) separator = safe_scope_marker " " separator
-        remaining = separator substr(remaining, RSTART + RLENGTH)
+        remaining = separator substr(remaining, boundary_start + boundary_length)
         if (sentence_end) safe_scope = 0
       }
       print remaining
       exit
+    }
+
+    function find_boundary(text,    i, ch, candidate, in_backtick, quote, escaped) {
+      in_backtick = 0
+      quote = ""
+      escaped = 0
+      for (i = 1; i <= length(text); i++) {
+        ch = substr(text, i, 1)
+        if (escaped) {
+          escaped = 0
+          continue
+        }
+        if (quote != "") {
+          if (ch == "\\") {
+            escaped = 1
+          } else if (ch == quote) {
+            quote = ""
+          }
+          continue
+        }
+        if (ch == "\\") {
+          escaped = 1
+          continue
+        }
+        if (ch == "`") {
+          in_backtick = !in_backtick
+          continue
+        }
+        if (in_backtick && (ch == "\"" || ch == sprintf("%c", 39))) {
+          quote = ch
+          continue
+        }
+        if (in_backtick) {
+          continue
+        }
+        if (ch == ":" && substr(text, i, 3) == "://") {
+          continue
+        }
+        candidate = substr(text, i)
+        if (match(candidate, punctuation) && RSTART == 1) {
+          boundary_start = i
+          boundary_length = RLENGTH
+          return 1
+        }
+        if (match(candidate, connector) && RSTART == 1) {
+          boundary_start = i
+          boundary_length = RLENGTH
+          return 1
+        }
+        if (match(candidate, boundary) && RSTART == 1) {
+          boundary_start = i
+          boundary_length = RLENGTH
+          return 1
+        }
+      }
+      return 0
     }
   '
 }
@@ -324,9 +384,28 @@ segment_is_actionable() {
   local segment
   while IFS= read -r segment; do
     if grep -Eiq -- "$token_pattern" <<< "$segment" \
-      && ! grep -Eiq -- "$safe_pattern" <<< "$segment" \
       && ! grep -Fq -- "$SAFE_SCOPE_MARKER" <<< "$segment"; then
-      return 0
+      local context token_offset action_offset safe_before_action
+      # URLs are not prose context. A safe word before the instruction keeps
+      # the token explanatory; an unrelated safe word after it does not.
+      context="$(printf '%s\n' "$segment" | sed -E 's#https?://[^[:space:]]*##g')"
+      if ! grep -Eiq -- "$safe_pattern" <<< "$context"; then
+        return 0
+      fi
+      token_offset="$(grep -Eibo -- "$token_pattern" <<< "$context" | head -n1 | cut -d: -f1 || true)"
+      action_offset="$(grep -Eibo -- "$ACTION_PREFIX_PATTERN" <<< "$context" \
+        | awk -F: -v token_offset="$token_offset" '$1 <= token_offset { print $1; exit }' || true)"
+      if [[ -n "$action_offset" ]]; then
+        safe_before_action="$(grep -Eibo -- "$safe_pattern" <<< "$context" \
+          | awk -F: -v action_offset="$action_offset" '$1 < action_offset { print $1; exit }' || true)"
+        if [[ -z "$safe_before_action" ]]; then
+          return 0
+        fi
+        continue
+      fi
+      # Without an instruction prefix, a safe word remains explanatory
+      # context for the matched token.
+      continue
     fi
   done < <(split_segments "$text")
   return 1
@@ -390,6 +469,14 @@ expect_regex_match \
   "family model token" \
   "$MODEL_ID_TOKEN_PATTERN" \
   "Use claude-opus-4-1."
+for text in \
+  "Use **gpt-5.6**." \
+  "Use _gpt-5.6_." \
+  "Use [gpt-5.6](https://example.test/models)."; do
+  if ! model_id_is_actionable "$text"; then
+    fail "regex self-test missed a Markdown-delimited model ID: $text"
+  fi
+done
 expect_regex_no_match \
   "embedded model-like word" \
   "$MODEL_ID_TOKEN_PATTERN" \
@@ -428,6 +515,18 @@ if ! model_id_is_actionable "Do not use gpt-5.6. Use claude-opus-4-1."; then
 fi
 if ! model_id_is_actionable "Do not use gpt-5.6 and use claude-opus-4-1."; then
   fail "regex self-test lost an actionable model after a connector"
+fi
+if ! model_id_is_actionable "Use gpt-5.6; consult documentation afterward."; then
+  fail "regex self-test suppressed an actionable model before unrelated safe text"
+fi
+if ! model_id_is_actionable "Use gpt-5.6: consult documentation afterward."; then
+  fail "regex self-test suppressed an actionable model before a colon"
+fi
+if ! model_id_is_actionable "Use gpt-5.6 (see documentation)."; then
+  fail "regex self-test suppressed an actionable model before parentheses"
+fi
+if ! model_id_is_actionable "Use gpt-5.6 documentation."; then
+  fail "regex self-test suppressed an actionable model before unrelated documentation"
 fi
 if model_id_is_actionable "Do not use gpt-5.6 and do not use claude-opus-4-1."; then
   fail "regex self-test accepted a fully negated model sentence"
@@ -498,6 +597,18 @@ fi
 if ! vendor_mandate_is_actionable "Do not use OpenAI and use Anthropic."; then
   fail "regex self-test lost an actionable vendor after a connector"
 fi
+if ! vendor_mandate_is_actionable "Use OpenAI; consult documentation afterward."; then
+  fail "regex self-test suppressed an actionable vendor before unrelated safe text"
+fi
+if ! vendor_mandate_is_actionable "Use OpenAI: consult documentation afterward."; then
+  fail "regex self-test suppressed an actionable vendor before a colon"
+fi
+if ! vendor_mandate_is_actionable "Use OpenAI (see documentation)."; then
+  fail "regex self-test suppressed an actionable vendor before parentheses"
+fi
+if ! vendor_mandate_is_actionable "Use OpenAI documentation."; then
+  fail "regex self-test suppressed an actionable vendor before unrelated documentation"
+fi
 if vendor_mandate_is_actionable "Do not use OpenAI and do not use Anthropic."; then
   fail "regex self-test accepted a fully negated vendor sentence"
 fi
@@ -517,6 +628,18 @@ expect_regex_match \
   "backticked command syntax" \
   "$TOOL_SYNTAX_PATTERN" \
   "Use ${REGEX_BACKTICK}gh pr create --draft${REGEX_BACKTICK}."
+expect_regex_match \
+  "backticked quoted argument" \
+  "$TOOL_SYNTAX_PATTERN" \
+  "Use ${REGEX_BACKTICK}gh pr comment --body \"approved\"${REGEX_BACKTICK}."
+expect_regex_match \
+  "backticked escaped quoted argument" \
+  "$TOOL_SYNTAX_PATTERN" \
+  "Use ${REGEX_BACKTICK}gh pr comment --body \"say \\\"approved\\\"\"${REGEX_BACKTICK}."
+expect_regex_match \
+  "backticked quoted argument with punctuation" \
+  "$TOOL_SYNTAX_PATTERN" \
+  "Use ${REGEX_BACKTICK}gh pr comment --body \"approved, thanks\"${REGEX_BACKTICK}."
 expect_regex_match \
   "bare command syntax" \
   "$TOOL_SYNTAX_PATTERN" \
@@ -546,6 +669,18 @@ if tool_syntax_is_actionable "Do not use ${REGEX_BACKTICK}gh pr create${REGEX_BA
 fi
 if ! tool_syntax_is_actionable "Use ${REGEX_BACKTICK}codex review${REGEX_BACKTICK}."; then
   fail "regex self-test expected an actionable tool instruction"
+fi
+if ! tool_syntax_is_actionable "Use ${REGEX_BACKTICK}codex review${REGEX_BACKTICK}; consult documentation afterward."; then
+  fail "regex self-test suppressed an actionable tool before unrelated safe text"
+fi
+if ! tool_syntax_is_actionable "Use ${REGEX_BACKTICK}codex review${REGEX_BACKTICK}: consult documentation afterward."; then
+  fail "regex self-test suppressed an actionable tool before a colon"
+fi
+if ! tool_syntax_is_actionable "Use ${REGEX_BACKTICK}codex review${REGEX_BACKTICK} (see documentation)."; then
+  fail "regex self-test suppressed an actionable tool before parentheses"
+fi
+if ! tool_syntax_is_actionable "Use ${REGEX_BACKTICK}codex review${REGEX_BACKTICK} documentation."; then
+  fail "regex self-test suppressed an actionable tool before unrelated documentation"
 fi
 if tool_syntax_is_actionable "For example, run ${REGEX_BACKTICK}codex review${REGEX_BACKTICK}."; then
   fail "regex self-test lost the safe scope of a tool introduction"
