@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 REQUIRED_VERIFIER = "python scripts/verify_task_skills.py"
+REQUIRED_VERIFIER_COMMANDS = (REQUIRED_VERIFIER,)
 REQUIRED_SCENARIO_IDS = {
     "scoped-diff",
     "unavailable-surface",
@@ -24,6 +25,14 @@ def load_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(f"JSON document must be an object: {path}")
     return value
+
+
+def validate_verifier_commands(commands: Any) -> None:
+    if commands != list(REQUIRED_VERIFIER_COMMANDS):
+        raise ValueError(
+            "benchmark verifier commands must exactly match the reviewed allowlist: "
+            + ", ".join(REQUIRED_VERIFIER_COMMANDS)
+        )
 
 
 def validate_config(config: dict[str, Any]) -> None:
@@ -48,8 +57,7 @@ def validate_config(config: dict[str, Any]) -> None:
 
     verifiers = config.get("verifiers", {})
     commands = verifiers.get("commands") if isinstance(verifiers, dict) else None
-    if not isinstance(commands, list) or REQUIRED_VERIFIER not in commands:
-        raise ValueError(f"benchmark must retain verifier command: {REQUIRED_VERIFIER}")
+    validate_verifier_commands(commands)
 
     scenarios = config.get("scenarios", [])
     if not isinstance(scenarios, list):
@@ -80,7 +88,29 @@ def validate_config(config: dict[str, Any]) -> None:
         )
 
 
+def run_self_test() -> None:
+    validate_verifier_commands(list(REQUIRED_VERIFIER_COMMANDS))
+    for commands in (
+        [],
+        [REQUIRED_VERIFIER, "echo unreviewed"],
+        ["echo unreviewed"],
+        [REQUIRED_VERIFIER, REQUIRED_VERIFIER],
+    ):
+        try:
+            validate_verifier_commands(commands)
+        except ValueError:
+            continue
+        raise ValueError(
+            "self-test failed: verifier allowlist accepted "
+            + repr(commands)
+        )
+    print("Plugin Eval benchmark validator self-test: PASS")
+
+
 def main() -> int:
+    if len(sys.argv) == 2 and sys.argv[1] == "--self-test":
+        run_self_test()
+        return 0
     if len(sys.argv) != 2:
         raise SystemExit("usage: validate_plugin_eval_benchmark.py <benchmark-config>")
     path = Path(sys.argv[1])
