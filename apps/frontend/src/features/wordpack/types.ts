@@ -65,9 +65,22 @@ export interface WordPackListItem {
   learned_count: number;
 }
 
+export interface WordPackListFacetCounts {
+  public: number;
+  private: number;
+  generated: number;
+  not_generated: number;
+}
+
+export const WORDPACK_SEARCH_MAX_LENGTH = 128;
+export const WORDPACK_SEARCH_MAX_LENGTH_MESSAGE = `検索語は${WORDPACK_SEARCH_MAX_LENGTH}文字以内で入力してください。`;
+
 export interface WordPackListResponse {
   items: WordPackListItem[];
+  recent_items?: WordPackListItem[];
   total: number;
+  filtered_total?: number;
+  facet_counts?: WordPackListFacetCounts;
   limit: number;
   offset: number;
 }
