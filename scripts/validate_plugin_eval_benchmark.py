@@ -10,6 +10,9 @@ from typing import Any
 
 REQUIRED_VERIFIER = "python scripts/verify_task_skills.py"
 REQUIRED_VERIFIER_COMMANDS = (REQUIRED_VERIFIER,)
+REQUIRED_SANDBOX = "read-only"
+REQUIRED_APPROVAL_POLICY = "never"
+REQUIRED_EXTRA_ARGS: list[str] = []
 REQUIRED_SCENARIO_IDS = {
     "scoped-diff",
     "unavailable-surface",
@@ -35,6 +38,22 @@ def validate_verifier_commands(commands: Any) -> None:
         )
 
 
+def validate_runner_safety(runner: Any) -> None:
+    if not isinstance(runner, dict) or runner.get("type") != "codex-cli":
+        raise ValueError("benchmark runner must be codex-cli")
+    if runner.get("sandbox") != REQUIRED_SANDBOX:
+        raise ValueError(
+            f"benchmark runner sandbox must be exactly {REQUIRED_SANDBOX!r}"
+        )
+    if runner.get("approvalPolicy") != REQUIRED_APPROVAL_POLICY:
+        raise ValueError(
+            "benchmark runner approval policy must be exactly "
+            f"{REQUIRED_APPROVAL_POLICY!r}"
+        )
+    if runner.get("extraArgs") != REQUIRED_EXTRA_ARGS:
+        raise ValueError("benchmark runner extraArgs must be empty")
+
+
 def validate_config(config: dict[str, Any]) -> None:
     if config.get("kind") != "plugin-eval-benchmark" or config.get("schemaVersion") != 2:
         raise ValueError("benchmark config must use Plugin Eval schemaVersion 2")
@@ -42,10 +61,7 @@ def validate_config(config: dict[str, Any]) -> None:
         raise ValueError("benchmark target must be the application-security Skill")
 
     runner = config.get("runner", {})
-    if runner.get("type") != "codex-cli":
-        raise ValueError("benchmark runner must be codex-cli")
-    if runner.get("sandbox") != "workspace-write" or runner.get("approvalPolicy") != "never":
-        raise ValueError("benchmark sandbox or approval policy changed")
+    validate_runner_safety(runner)
 
     workspace = config.get("workspace", {})
     if workspace.get("sourcePath") != "." or workspace.get("setupMode") != "copy":
@@ -89,6 +105,44 @@ def validate_config(config: dict[str, Any]) -> None:
 
 
 def run_self_test() -> None:
+    validate_runner_safety(
+        {
+            "type": "codex-cli",
+            "sandbox": REQUIRED_SANDBOX,
+            "approvalPolicy": REQUIRED_APPROVAL_POLICY,
+            "extraArgs": REQUIRED_EXTRA_ARGS,
+        }
+    )
+    for sandbox in ("workspace-write", "danger-full-access", "full-access", "readOnly", None):
+        try:
+            validate_runner_safety(
+                {
+                    "type": "codex-cli",
+                    "sandbox": sandbox,
+                    "approvalPolicy": REQUIRED_APPROVAL_POLICY,
+                    "extraArgs": REQUIRED_EXTRA_ARGS,
+                }
+            )
+        except ValueError:
+            continue
+        raise ValueError(f"self-test failed: sandbox {sandbox!r} was accepted")
+    for extra_args in (
+        ["--sandbox", "workspace-write"],
+        ["-s", "workspace-write"],
+        ["-c", 'sandbox_mode="workspace-write"'],
+    ):
+        try:
+            validate_runner_safety(
+                {
+                    "type": "codex-cli",
+                    "sandbox": REQUIRED_SANDBOX,
+                    "approvalPolicy": REQUIRED_APPROVAL_POLICY,
+                    "extraArgs": extra_args,
+                }
+            )
+        except ValueError:
+            continue
+        raise ValueError(f"self-test failed: extraArgs {extra_args!r} was accepted")
     validate_verifier_commands(list(REQUIRED_VERIFIER_COMMANDS))
     for commands in (
         [],
