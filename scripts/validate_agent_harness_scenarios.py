@@ -414,6 +414,7 @@ def _validate_resource_scenario(scenario: Mapping[str, Any]) -> None:
     active_ports: dict[int, str] = {}
     active_workspaces: dict[str, str] = {}
     usable_resources: set[str] = set()
+    failed_readiness: set[str] = set()
     acquired_runtime = False
     acquired_workspace = False
     had_port_claim = False
@@ -461,14 +462,26 @@ def _validate_resource_scenario(scenario: Mapping[str, Any]) -> None:
             _require(scenario_id, event.get("owner") == resource["owner"], f"event {index} readiness owner mismatch")
             if "resource_key" in event:
                 _require(scenario_id, event.get("resource_key") == resource["resource_key"], f"event {index} readiness resource key mismatch")
-            _require(scenario_id, resource_id not in usable_resources, f"event {index} repeats readiness for {resource_id}")
+            _require(
+                scenario_id,
+                resource_id not in usable_resources and resource_id not in failed_readiness,
+                f"event {index} repeats readiness for {resource_id}",
+            )
             field = "ready" if event_type == "ready" else "usable"
-            _require(scenario_id, event.get(field) is True, f"event {index} does not confirm {field}")
-            usable_resources.add(resource_id)
+            readiness = event.get(field)
+            _require(scenario_id, isinstance(readiness, bool), f"event {index} must report boolean {field}")
+            if readiness:
+                usable_resources.add(resource_id)
+            else:
+                failed_readiness.add(resource_id)
         elif event_type == "release":
             resource_id = _nonempty_string(scenario_id, event.get("resource_id"), f"event {index} resource_id")
             _require(scenario_id, resource_id in active, f"event {index} releases unknown resource")
-            _require(scenario_id, resource_id in usable_resources, f"event {index} releases resource before readiness/usable")
+            _require(
+                scenario_id,
+                resource_id in usable_resources or resource_id in failed_readiness,
+                f"event {index} releases resource before readiness/usable result",
+            )
             resource = active[resource_id]
             _require(scenario_id, event.get("owner") == resource["owner"], f"event {index} cleanup owner mismatch")
             if "resource_key" in event:
@@ -493,6 +506,7 @@ def _validate_resource_scenario(scenario: Mapping[str, Any]) -> None:
                 active_workspaces.pop(resource["workspace"], None)
             active.pop(resource_id)
             usable_resources.discard(resource_id)
+            failed_readiness.discard(resource_id)
             released += 1
         else:
             _fail(scenario_id, f"event {index} has unsupported resource operation: {event_type}")
@@ -505,6 +519,7 @@ def _validate_resource_scenario(scenario: Mapping[str, Any]) -> None:
     _require(scenario_id, not active_keys, "scenario leaves a resource key active")
     _require(scenario_id, not active_workspaces, "scenario leaves a temporary workspace claim active")
     _require(scenario_id, not usable_resources, "scenario leaves a resource usable without release")
+    _require(scenario_id, not failed_readiness, "scenario leaves a failed readiness resource active")
     _require(scenario_id, not active_ports, "scenario leaves port claim active")
 
 
@@ -520,14 +535,12 @@ def _closure(scenario_id: str, event: Mapping[str, Any]) -> dict[str, list[str]]
     return result
 
 
-def _evidence_signature(scenario_id: str, event: Mapping[str, Any]) -> tuple[str, str, str]:
-    snapshot = _mapping(scenario_id, event.get("snapshot"), "snapshot")
-    _nonempty_string(scenario_id, snapshot.get("base"), "snapshot.base")
-    _nonempty_string(scenario_id, snapshot.get("head"), "snapshot.head")
-    _nonempty_string(scenario_id, snapshot.get("diff"), "snapshot.diff")
-    closure = _closure(scenario_id, event)
-    conditions = _mapping(scenario_id, event.get("conditions"), "conditions")
-    return _canonical(snapshot), _canonical(closure), _canonical(conditions)
+def _validated_snapshot(scenario_id: str, value: Any, label: str) -> dict[str, str]:
+    snapshot = _mapping(scenario_id, value, label)
+    return {
+        field: _nonempty_string(scenario_id, snapshot.get(field), f"{label}.{field}")
+        for field in ("base", "head", "diff")
+    }
 
 
 def _validate_evidence_reuse_scenario(scenario: Mapping[str, Any]) -> None:
@@ -549,9 +562,17 @@ def _validate_evidence_reuse_scenario(scenario: Mapping[str, Any]) -> None:
             _require(scenario_id, key not in evidence, f"event {index} duplicates evidence key {key}")
             _require(scenario_id, str(event.get("status", "")).lower() in {"passed", "success"}, f"event {index} is not a successful evidence result")
             _nonempty_string(scenario_id, event.get("artifact_reference"), f"event {index} artifact_reference")
+            snapshot = _validated_snapshot(scenario_id, event.get("snapshot"), "snapshot")
             closure = _closure(scenario_id, event)
-            signature = _evidence_signature(scenario_id, event)
-            evidence[key] = {"signature": signature, "closure": event["input_closure"], "artifact_reference": event["artifact_reference"]}
+            conditions = _mapping(scenario_id, event.get("conditions"), "conditions")
+            signature = (_canonical(snapshot), _canonical(closure), _canonical(conditions))
+            evidence[key] = {
+                "signature": signature,
+                "snapshot": snapshot,
+                "closure": closure,
+                "conditions": _canonical(conditions),
+                "artifact_reference": event["artifact_reference"],
+            }
             pending = sorted(source_key for source_key in invalidated if source_key not in reacquired)
             if pending:
                 closure_paths = [*closure["paths"], *closure["config"], *closure["artifacts"]]
@@ -579,8 +600,46 @@ def _validate_evidence_reuse_scenario(scenario: Mapping[str, Any]) -> None:
             source_key = _nonempty_string(scenario_id, event.get("source_key"), f"event {index} source_key")
             _require(scenario_id, source_key in evidence, f"event {index} reuses unknown evidence {source_key}")
             _require(scenario_id, source_key not in stale and source_key not in invalidated, f"event {index} reuses invalidated evidence {source_key}")
-            signature = _evidence_signature(scenario_id, event)
-            _require(scenario_id, signature == evidence[source_key]["signature"], f"event {index} changes snapshot, input closure, or conditions during reuse")
+            record = evidence[source_key]
+            has_source_snapshot = "source_snapshot" in event
+            has_target_snapshot = "target_snapshot" in event
+            if has_source_snapshot or has_target_snapshot:
+                _require(
+                    scenario_id,
+                    has_source_snapshot and has_target_snapshot,
+                    f"event {index} cross-snapshot reuse needs source_snapshot and target_snapshot",
+                )
+                source_snapshot = _validated_snapshot(scenario_id, event.get("source_snapshot"), "source_snapshot")
+                target_snapshot = _validated_snapshot(scenario_id, event.get("target_snapshot"), "target_snapshot")
+                _require(
+                    scenario_id,
+                    _canonical(source_snapshot) == record["signature"][0],
+                    f"event {index} source snapshot differs from evidence {source_key}",
+                )
+                _require(
+                    scenario_id,
+                    source_snapshot["base"] == target_snapshot["base"],
+                    f"event {index} changes base snapshot during reuse",
+                )
+            else:
+                snapshot = _validated_snapshot(scenario_id, event.get("snapshot"), "snapshot")
+                _require(
+                    scenario_id,
+                    _canonical(snapshot) == record["signature"][0],
+                    f"event {index} changes snapshot during reuse",
+                )
+            closure = _closure(scenario_id, event)
+            conditions = _mapping(scenario_id, event.get("conditions"), "conditions")
+            _require(
+                scenario_id,
+                _canonical(closure) == record["signature"][1],
+                f"event {index} changes input closure during reuse",
+            )
+            _require(
+                scenario_id,
+                _canonical(conditions) == record["signature"][2],
+                f"event {index} changes conditions during reuse",
+            )
             _require(scenario_id, event.get("artifact_reference") == evidence[source_key]["artifact_reference"], f"event {index} changes artifact_reference during reuse")
             saw_reuse = True
         elif event_type == "path_change":

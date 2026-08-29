@@ -164,28 +164,80 @@ def test_resource_validator_detects_duplicate_port_and_cleanup_leak() -> None:
         validate_scenario(duplicate_workspace)
 
 
+def test_resource_validator_allows_release_after_failed_readiness() -> None:
+    scenario = deepcopy(_load("scenarios.json")["scenarios"][3])
+    failed_release = next(
+        event
+        for event in scenario["events"]
+        if event.get("type") == "release" and event.get("resource_id") == "failed-runtime"
+    )
+    failed_release["process_alive"] = True
+
+    with pytest.raises(ScenarioValidationError, match="leaves process alive"):
+        validate_scenario(scenario)
+
+    owner_mismatch = deepcopy(_load("scenarios.json")["scenarios"][3])
+    failed_release = next(
+        event
+        for event in owner_mismatch["events"]
+        if event.get("type") == "release" and event.get("resource_id") == "failed-runtime"
+    )
+    failed_release["owner"] = "lane-b"
+    with pytest.raises(ScenarioValidationError, match="cleanup owner mismatch"):
+        validate_scenario(owner_mismatch)
+
+
 def test_evidence_reuse_invalidates_only_after_intersecting_change() -> None:
     scenario = deepcopy(_load("scenarios.json")["scenarios"][4])
-    scenario["events"].insert(6, deepcopy(scenario["events"][1]))
+    cross_snapshot_reuse = next(
+        event
+        for event in scenario["events"]
+        if event.get("type") == "evidence_reuse" and event.get("source_key") == "gate-1"
+    )
+    invalidation_index = next(
+        index for index, event in enumerate(scenario["events"]) if event.get("type") == "evidence_invalidate"
+    )
+    scenario["events"].insert(invalidation_index + 1, deepcopy(cross_snapshot_reuse))
 
     with pytest.raises(ScenarioValidationError, match="reuses invalidated evidence"):
         validate_scenario(scenario)
 
     unchanged_reacquire = deepcopy(_load("scenarios.json")["scenarios"][4])
-    unchanged_reacquire["events"][6]["snapshot"] = deepcopy(unchanged_reacquire["events"][0]["snapshot"])
-    unchanged_reacquire["events"][6]["artifact_reference"] = "artifact:gate-2"
+    gate_one = next(event for event in unchanged_reacquire["events"] if event.get("key") == "gate-1")
+    gate_two = next(event for event in unchanged_reacquire["events"] if event.get("key") == "gate-2")
+    gate_two["snapshot"] = deepcopy(gate_one["snapshot"])
+    gate_two["artifact_reference"] = "artifact:gate-2"
     with pytest.raises(ScenarioValidationError, match="current evidence"):
         validate_scenario(unchanged_reacquire)
 
     empty_reacquire = deepcopy(_load("scenarios.json")["scenarios"][4])
-    empty_reacquire["events"][6]["input_closure"] = {"paths": [], "config": [], "artifacts": []}
+    gate_two = next(event for event in empty_reacquire["events"] if event.get("key") == "gate-2")
+    gate_two["input_closure"] = {"paths": [], "config": [], "artifacts": []}
     with pytest.raises(ScenarioValidationError, match="non-empty input closure"):
         validate_scenario(empty_reacquire)
 
     unrelated_reacquire = deepcopy(_load("scenarios.json")["scenarios"][4])
-    unrelated_reacquire["events"][6]["input_closure"]["paths"] = ["docs/unrelated.md"]
+    gate_two = next(event for event in unrelated_reacquire["events"] if event.get("key") == "gate-2")
+    gate_two["input_closure"]["paths"] = ["docs/unrelated.md"]
     with pytest.raises(ScenarioValidationError, match="cover the changed path"):
         validate_scenario(unrelated_reacquire)
+
+
+def test_cross_snapshot_reuse_requires_same_base_and_non_intersecting_change() -> None:
+    base_changed = deepcopy(_load("scenarios.json")["scenarios"][4])
+    cross_snapshot_reuse = next(
+        event
+        for event in base_changed["events"]
+        if event.get("type") == "evidence_reuse" and event.get("source_key") == "gate-1"
+    )
+    cross_snapshot_reuse["target_snapshot"]["base"] = "base-b"
+    with pytest.raises(ScenarioValidationError, match="base snapshot"):
+        validate_scenario(base_changed)
+
+    intersecting_change = deepcopy(_load("scenarios.json")["scenarios"][4])
+    intersecting_change["events"][1]["path"] = "scripts/verify-agent-harness.sh"
+    with pytest.raises(ScenarioValidationError, match="reuses invalidated evidence"):
+        validate_scenario(intersecting_change)
 
 
 def test_validator_cli_accepts_positive_and_rejects_negative_fixture() -> None:

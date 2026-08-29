@@ -79,9 +79,12 @@
         {"type": "ready", "resource_id": "backend", "owner": "lane-a", "ready": true},
         {"type": "acquire", "resource_type": "runtime_resources", "resource_id": "frontend", "resource_key": "frontend-runtime", "owner": "lane-a", "pid": 1002, "process_group": "pg-b", "port": 5173},
         {"type": "usable", "resource_id": "frontend", "resource_key": "frontend-runtime", "owner": "lane-a", "usable": true},
+        {"type": "acquire", "resource_type": "runtime_resources", "resource_id": "failed-runtime", "resource_key": "failed-runtime", "owner": "lane-a", "pid": 1003, "process_group": "pg-c", "port": 6000},
+        {"type": "usable", "resource_id": "failed-runtime", "resource_key": "failed-runtime", "owner": "lane-a", "usable": false},
         {"type": "acquire", "resource_type": "temporary_worktree", "resource_id": "frontend-worktree", "resource_key": "frontend-worktree", "owner": "lane-a", "workspace": "tmp/worktrees/frontend"},
         {"type": "ready", "resource_id": "frontend-worktree", "resource_key": "frontend-worktree", "owner": "lane-a", "ready": true},
         {"type": "release", "resource_id": "frontend-worktree", "resource_key": "frontend-worktree", "owner": "lane-a", "cleanup": "complete", "workspace_exists": false},
+        {"type": "release", "resource_id": "failed-runtime", "resource_key": "failed-runtime", "owner": "lane-a", "cleanup": "complete", "process_alive": false, "port_open": false},
         {"type": "release", "resource_id": "frontend", "resource_key": "frontend-runtime", "owner": "lane-a", "cleanup": "complete", "process_alive": false, "port_open": false},
         {"type": "release", "resource_id": "backend", "owner": "lane-a", "cleanup": "complete", "process_alive": false, "port_open": false}
       ]
@@ -102,23 +105,12 @@
           "conditions": {"python": "3.14", "runtime": "static"},
           "artifact_reference": "artifact:gate-1"
         },
-        {
-          "type": "evidence_reuse",
-          "source_key": "gate-1",
-          "snapshot": {"base": "base-a", "head": "head-a", "diff": "diff-a"},
-          "input_closure": {
-            "paths": ["scripts/verify-agent-harness.sh"],
-            "config": ["requirements-agent-harness.txt"],
-            "artifacts": ["verification-summary"]
-          },
-          "conditions": {"python": "3.14", "runtime": "static"},
-          "artifact_reference": "artifact:gate-1"
-        },
         {"type": "path_change", "path": "docs/unrelated.md"},
         {
           "type": "evidence_reuse",
           "source_key": "gate-1",
-          "snapshot": {"base": "base-a", "head": "head-a", "diff": "diff-a"},
+          "source_snapshot": {"base": "base-a", "head": "head-a", "diff": "diff-a"},
+          "target_snapshot": {"base": "base-a", "head": "head-b", "diff": "diff-b"},
           "input_closure": {
             "paths": ["scripts/verify-agent-harness.sh"],
             "config": ["requirements-agent-harness.txt"],
@@ -150,7 +142,8 @@
         {
           "type": "evidence_reuse",
           "source_key": "gate-2",
-          "snapshot": {"base": "base-a", "head": "head-b", "diff": "diff-b"},
+          "source_snapshot": {"base": "base-a", "head": "head-b", "diff": "diff-b"},
+          "target_snapshot": {"base": "base-a", "head": "head-b", "diff": "diff-b"},
           "input_closure": {
             "paths": ["scripts/verify-agent-harness.sh"],
             "config": ["requirements-agent-harness.txt"],

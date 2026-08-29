@@ -74,7 +74,8 @@
         {
           "type": "evidence_reuse",
           "source_key": "gate-1",
-          "snapshot": {"base": "base-a", "head": "head-a", "diff": "diff-a"},
+          "source_snapshot": {"base": "base-a", "head": "head-a", "diff": "diff-a"},
+          "target_snapshot": {"base": "base-a", "head": "head-b", "diff": "diff-b"},
           "input_closure": {"paths": ["scripts/verify-agent-harness.sh"], "config": [], "artifacts": []},
           "conditions": {"runtime": "static"},
           "artifact_reference": "artifact:gate-1"
