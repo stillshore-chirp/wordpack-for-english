@@ -296,7 +296,7 @@ expect_regex_no_match() {
 # keep their context across commas and connectors; decimal model versions stay
 # intact.
 split_segments() {
-  printf '%s\n' "$1" | awk -v safe_scope_marker="$SAFE_SCOPE_MARKER" '
+  printf '%s\n' "$1" | LC_ALL=C awk -v safe_scope_marker="$SAFE_SCOPE_MARKER" '
     BEGIN {
       if ((getline remaining) <= 0) exit
       remaining = tolower(remaining)
@@ -740,12 +740,18 @@ CANONICAL_HARNESS_PATHS=(
   "docs/operations/AGENTS.md"
   "docs/agent-harness.md"
   "docs/agent-principles.md"
+  "docs/testing/index.md"
   "docs/ai-governance/13-maintenance-policy.md"
   "docs/ai-governance/15-agent-harness-compatibility.md"
   "requirements-agent-harness.txt"
   "scripts/validate_agent_frontmatter.py"
+  "scripts/classify_verification_inputs.py"
   "scripts/verify-agent-harness.sh"
   "scripts/verify-ai-governance.sh"
+  "tests/test_github_actions_branch_policy.py"
+  "tests/test_ui_test_change_classifier.py"
+  "tests/test_verification_inputs.py"
+  ".github/workflows/agent-harness.yml"
   ".agents/skills/ui-ux-review/SKILL.md"
   ".agents/skills/github-delivery/SKILL.md"
   ".agents/skills/production-investigation/SKILL.md"
@@ -794,7 +800,7 @@ for file in "${CANONICAL_HARNESS_PATHS[@]}"; do
       CURSOR_RULE_PATHS+=("$file")
       MODEL_NEUTRAL_PATHS+=("$file")
       ;;
-    AGENTS.md|CLAUDE.md|apps/frontend/AGENTS.md|apps/backend/AGENTS.md|docs/operations/AGENTS.md|docs/agent-harness.md|docs/agent-principles.md|docs/ai-governance/13-maintenance-policy.md|docs/ai-governance/15-agent-harness-compatibility.md|scripts/verify-ai-governance.sh)
+    AGENTS.md|CLAUDE.md|apps/frontend/AGENTS.md|apps/backend/AGENTS.md|docs/operations/AGENTS.md|docs/agent-harness.md|docs/agent-principles.md|docs/testing/index.md|docs/ai-governance/13-maintenance-policy.md|docs/ai-governance/15-agent-harness-compatibility.md|scripts/verify-ai-governance.sh)
       MODEL_NEUTRAL_PATHS+=("$file")
       ;;
   esac
@@ -899,32 +905,44 @@ reject_text "scripts/verify-ai-governance.sh" "P0 または P1 を含まない�
 require_text "docs/agent-harness.md" "Hard gateとheuristic"
 require_text "docs/agent-harness.md" "Instruction budget"
 require_text "docs/agent-harness.md" "clean review"
-require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "サブエージェントは独立して並行実行でき、handoffの固定費に見合うbounded work laneへ使います"
-require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "primary agentは要件・計画・割当・進捗・競合・ガバナンス・受入・配送判断を担います"
-require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "委任、短い作業のprimary担当、lane owner、長い検証前のprocess状態、HEAD/baseに束縛したevidenceの詳細は"
-require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "docs/agent-harness.md"
-require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "変更範囲に必要な包含関係上の最上位full gateをそれぞれ原則1回実行し"
-require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "各gateが内包するgateを同じsnapshotで別途実行しません"
-require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "包括レビューは同一PR・同一HEAD系列で原則2周まで"
-require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "P2以下だけなら影響とnon-blocking判断を記録して収束"
-reject_text "AGENTS.md" "同じworktreeとHEADで長い検証を始める前に"
-reject_text "AGENTS.md" "各evidenceは対象HEADとbase HEAD、確認済みpath、diff identifierに束縛します"
+require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "委任、control plane、evidence package、review収束は docs/agent-harness.md"
+require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "配送順序、gate選択、証跡失効は GitHub配送Skill"
+reject_text "AGENTS.md" "TTYの全表再描画"
+reject_text "AGENTS.md" "input closure"
 require_block_text ".agents/skills/github-delivery/SKILL.md" "## 3. Branch、実装、commit" "delivery-stack" "stacked PRでは、親PR・子PRのbaseと依存順を記録"
 require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "開発中とreview修正中は変更pathに対応するfocused testを使い"
 require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "変更範囲に必要な包含関係上の最上位full gateをそれぞれ原則1回実行する"
-require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "相互に包含しない独立領域のgateはそれぞれ実行する"
-require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "UIガバナンス変更は scripts/verify-ai-governance.sh、agent-harnessだけの変更は scripts/verify-agent-harness.sh を選ぶ"
-require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "前者は後者を内包するため、同じsnapshotで後者を別途実行しない"
-require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "親merge後のbase統合・最上位full gate・latest HEAD reviewをそれぞれ原則1回"
-require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "同じHEAD・同じ状態キーでは詳細を再利用し"
-require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "待機timeoutだけでは証拠を失効させず"
-require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "状態が変わらないfull historyを再取得しない"
-require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "push: 同じHEADを送っただけならlocal test、full gate、review証拠は失効せず"
-require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "base変更・base統合: HEAD/base snapshotとbase依存のCI・review・mergeabilityを失効させる"
-require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "review thread解決: thread状態だけを更新し"
-require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "scripts/verify-ai-governance.sh"
-require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "scripts/verify-agent-harness.sh"
-require_block_text ".agents/skills/github-delivery/SKILL.md" "## 6. 権限境界と終了" "delivery-exit" "merge直前には、必要な再確認を終えた同一時点の単一snapshotへ"
+require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "包含関係は内包側だけを選ぶ"
+require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "workflowまたはpath classifierを変更した場合"
+require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "contract test、変更workflowのYAML parse、base...head classification、latest Actions"
+require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "backend full pytestや無関係なPlaywrightを追加しない"
+require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "workflow未変更のreview fixでは、既存のYAML証跡を保持する"
+require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "gateの入力閉包は、変更path、関連設定、生成物、実行条件の集合"
+require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "同じHEAD・入力閉包・条件で成功したgateは再実行しない"
+require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "新commitだけではlocal full gateを一括失効させず"
+require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "fallback reason"
+require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "success / failure / pending / skip count、changed checks、failure detail"
+require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "TTYの全表再描画を流さない"
+require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "bounded field、bounded result、小さい合計出力"
+require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "file別coverageや反復行は返さない"
+require_text "docs/testing/index.md" "pytest -q --no-cov tests/test_verification_inputs.py tests/test_github_actions_branch_policy.py tests/test_ui_test_change_classifier.py"
+require_text "docs/testing/index.md" 'coverage検証ではないfocused pytestは必ず `--no-cov`'
+for owner in AGENTS.md docs/agent-harness.md .agents/skills/github-delivery/SKILL.md docs/testing/index.md; do
+  reject_text "$owner" "gh pr checks --watch"
+done
+for public_file in \
+  AGENTS.md \
+  docs/agent-harness.md \
+  docs/ai-governance/13-maintenance-policy.md \
+  docs/testing/index.md \
+  .agents/skills/github-delivery/SKILL.md \
+  .github/workflows/agent-harness.yml \
+  scripts/classify_verification_inputs.py \
+  tests/test_verification_inputs.py; do
+  reject_regex "$public_file" '/(Users|home)/[^[:space:]]+'
+done
+max_size "scripts/classify_verification_inputs.py" 220 16384
+require_block_text ".agents/skills/github-delivery/SKILL.md" "## 6. 権限境界と終了" "delivery-exit" "単一snapshotへlatest HEAD、base"
 [[ "$(grep -Fxc -- 'bash scripts/verify-agent-harness.sh' scripts/verify-ai-governance.sh)" -eq 1 ]] || fail "scripts/verify-ai-governance.sh must invoke verify-agent-harness.sh exactly once"
 python3 - ".github/workflows/agent-harness.yml" <<'PY'
 import sys
@@ -950,6 +968,40 @@ if "bash scripts/verify-agent-harness.sh" in commands:
     raise SystemExit("agent-harness workflow must not separately run the contained gate")
 if commands.count("python scripts/verify_task_skills.py") != 1:
     raise SystemExit("agent-harness workflow must preserve task-skill verification")
+
+focused = [
+    step
+    for step in steps
+    if step.get("name") == "Run focused workflow and classifier contracts"
+]
+if len(focused) != 1 or "python -m pytest -q --no-cov" not in focused[0].get("run", ""):
+    raise SystemExit("agent-harness workflow must run focused pytest without coverage")
+for path in (
+    "tests/test_verification_inputs.py",
+    "tests/test_github_actions_branch_policy.py",
+    "tests/test_ui_test_change_classifier.py",
+):
+    if path not in focused[0]["run"]:
+        raise SystemExit(f"focused contract step must include {path}")
+
+parse_steps = [step for step in steps if step.get("name") == "Parse workflow YAML"]
+if len(parse_steps) != 1 or "yaml.safe_load" not in parse_steps[0].get("run", ""):
+    raise SystemExit("agent-harness workflow must parse workflow YAML once")
+
+classification = [
+    step for step in steps if step.get("name") == "Classify PR verification inputs"
+]
+if len(classification) != 1:
+    raise SystemExit("agent-harness workflow must classify PR verification inputs once")
+classification_command = classification[0].get("run", "")
+for path in (
+    "scripts/classify_verification_inputs.py",
+    "scripts/classify_ui_test_changes.py",
+):
+    if path not in classification_command:
+        raise SystemExit(f"classification step must invoke {path}")
+if '--base "${BASE_SHA}" --head "${HEAD_SHA}"' not in classification_command:
+    raise SystemExit("classification step must use the PR base...head snapshot")
 PY
 require_block_text ".agents/skills/ui-ux-review/SKILL.md" "## 2. レビュー経路を選ぶ" "uiux-review-routing" "UI変更レビュー: 変更した画面、component、状態、文言、操作を確認する。単一画面の局所変更だけならフロー監査を追加しない。"
 require_block_text ".agents/skills/ui-ux-review/SKILL.md" "## 2. レビュー経路を選ぶ" "uiux-review-routing" "フロー監査: 既存画面または複数ステップの体験を監査する依頼、または画面遷移を追わなければタスク達成を評価できない場合に使う。"
@@ -996,76 +1048,43 @@ require_text "docs/ai-governance/templates/completion-gate-report.md" "Pre-exist
 require_text "docs/ai-governance/templates/completion-gate-report.md" "standaloneのフロー監査はdiff由来findingがないため、Change statusにN/A / 未分類（standalone）"
 require_block_text "docs/ai-governance/templates/completion-gate-report.md" "## 変更scope（UI変更レビューで差分がある場合）" "uiux-completion-scope" "Target snapshot / ref"
 require_block_text "docs/ai-governance/templates/completion-gate-report.md" "## 変更scope（UI変更レビューで差分がある場合）" "uiux-completion-scope" "Coverage / 未確認consumer / 除外理由"
-require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "同一PR・同一HEAD系列の包括レビューは、配送対象の最終HEADに対する初回レビュー1回と、指摘修正後の再レビュー1回までを原則とする"
-require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "同じ配送系列への包括レビュー実行回数で数え、review comment、thread、指摘の件数では数えない"
-require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "3回目以降の包括レビューは実行しません。次のいずれかで前回証拠が失効した場合だけ、対象risk laneと変更pathを明示した限定再確認を行う"
-require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "未解決のP0またはP1"
-require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "セキュリティ、秘密情報、データ整合性に関わる未解決事項"
-require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "前回レビュー後に新しい変更範囲またはrisk laneが追加された"
-require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "前回のレビュー証拠に具体的な不足または矛盾が見つかった"
-require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "P2以下の指摘だけが残る場合は、影響とnon-blocking判断をPRへ記録し、必要なら別Issueへ分離して同じPRの包括レビュー周回を終了する"
-require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "修正commit、変更path、元の指摘、focused test結果だけを文脈として使う"
-require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "成功済みレビューまたはfull gateを再実行する場合は、対象変更、新規risk lane、実行条件変更、証拠期限切れなど、証拠が失効した具体的な理由を記録する"
-require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "同じHEAD・同じ状態キーでは取得済みのreview本文、thread、check一覧を保持し"
-require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "待機のtimeoutは状態変化や証拠失効を意味しません"
-require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "同じAPI・同じpayloadの詳細照会を直ちに繰り返さず"
-require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "判断に必要な差分、失敗箇所、最終結果に限定し"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "対象HEAD、対象path、確認する具体的な問い"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "既存報告やメインエージェント自身の一次証拠確認では不足する理由"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "委任対象は、他の作業から独立して並列化できるbounded laneだけです"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "CIの待機・監視だけを行う作業"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "同一PRの各laneは、一人のownerが開始からcompletionまで継続して担当します"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "同じworktreeとHEADで長い検証を始める前に、利用可能なprocess stateをoperatorが確認し"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "環境が自動的なlockを保証する仕組みではありません"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "各evidenceは対象HEADとbase HEAD、確認済みpath、diff identifierに束縛します"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "同一HEAD・同一risk laneの独立監査は原則1回"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "包括監査を複数agentへ同時委任せず"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "再監査を認めるのは、対象コードが変わった、新しい実行証拠が得られた、前回監査に明確な不足がある、または未解決の証拠矛盾がある場合"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "修正後に変更pathを対象再検証すること"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "監査結果が矛盾した場合は追加agentの多数決を取りません"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "full-history forkを既定にしません"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "必要なHEAD、path、acceptance、既知の指摘だけを短く渡します"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "primary agentは、要件・適用ルール、完了条件・非対象、lane設計、担当割当、依存関係、進捗、lane間の競合、ガバナンス、成果受入、Issue・commit・PR・CI・review・mergeabilityの確認、配送判断を担います"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "subagentは、コードベース・履歴・仕様の探索、実装、focused verification、コード・セキュリティ・公開安全性review、review fix、docs、配送など、分離できる実務を担当できます"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "subagentを監査専用には限定しません"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "実行環境のモデル、ベンダー、製品固有tool、固有command、config keyを指定せず"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "owner、write ownership、completion、verification、invalidation condition"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "開発中とreview修正中は、変更によって影響を受けるfocused test"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "最終HEAD確定前にfull gateを機械的に繰り返しません"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "変更範囲に必要な包含関係上の最上位full gateをそれぞれ原則1回実行する"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "独立領域のgateが相互に包含しない場合は各gateを実行し"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "同じsnapshotで内包gateを別途実行しません"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "成功済み検証を再実行する時は、対象変更、生成物変更、実行条件変更、証拠期限切れなど、証拠が失効した理由を記録する"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "completionに定めた停止・scope縮小・primaryへの返却条件に従い"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "安全な部分結果と未確認範囲を返します"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "invalidation conditionが成立した場合にだけ再開し"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "HEADだけを監査済みsnapshotとして扱いません"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "target HEAD"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "target path"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "completion"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "verification"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "evidence package"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "changed paths"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| verified snapshot |"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| invalidation condition |"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "primary agentの受入はevidence packageからscope、acceptance、evidence、unrelated diff、commit responsibility、lane conflict、completion gatesを確認し"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| completion | laneの完了条件と、進捗がない場合の停止・scope縮小・primaryへの返却条件 |"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| evidence package | scope、acceptance、changed paths、conclusion、verification results、unperformed checks、remaining risks、unrelated diff、commit responsibility、lane conflict、completion gates、snapshotまたはdiff identifier |"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "初回レビュー1回と指摘修正後の再レビュー1回まで"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "P2以下だけが残る場合"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "primaryが継続保持するcontrol-plane ledger"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "旧HEADはcommit、finding、fix commit、invalidation reasonだけ"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "Gate evidence ledger"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "input paths"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "related config"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "generated artifacts"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "execution conditions"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "HEADが変わっただけでは全gateを失効させず"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "exit code、pass / fail / skip、coverage総計、warning要約、failure箇所、artifact参照"
+require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "file別coverageと反復進捗を渡さず"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "専門riskを独立したbounded lane"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "単一API、CI watcher、read-only照会、短いthread返信、短い競合解消"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "target HEAD / base、target path、確認する具体的な問い"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "write ownership、completion、verification、invalidation condition"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "同一HEAD・同一risk laneの監査は原則1回"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "製品固有のtool、UI、runtime configを共有契約へ持ち込みません"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "raw log、file全文、full historyは必須にせず"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "進捗がなく同じ結果を反復するlane"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "停止・scope縮小・primary返却条件"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "compactな部分結果と未確認範囲"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "invalidation conditionが成立した場合だけ再開"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| target HEAD / base |"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| evidence package | scope / acceptance、changed paths、conclusion、verification results、unperformed checks、remaining risks、snapshotまたはdiff identifier |"
 require_block_text "docs/ai-governance/13-maintenance-policy.md" "## サブエージェント運用" "subagent-maintenance" "docs/agent-harness.md"
 require_block_text "docs/ai-governance/13-maintenance-policy.md" "## サブエージェント運用" "subagent-maintenance" "同一HEADの重複監査"
 require_block_text "docs/ai-governance/13-maintenance-policy.md" "## Review収束" "review-maintenance" "docs/agent-harness.md"
-require_block_text "docs/ai-governance/13-maintenance-policy.md" "## Review収束" "review-maintenance" "P2以下だけを理由とする包括レビュー反復"
-require_block_text "docs/ai-governance/13-maintenance-policy.md" "## 検証" "maintenance-verification" "開発中とreview修正中は変更pathに対応するfocused testを使います"
-require_block_text "docs/ai-governance/13-maintenance-policy.md" "## 検証" "maintenance-verification" "変更範囲に必要な包含関係上の最上位full gateをそれぞれ1回実行し"
-require_block_text "docs/ai-governance/13-maintenance-policy.md" "## 検証" "maintenance-verification" "同じsnapshotで内包gateを別途実行しません"
+require_block_text "docs/ai-governance/13-maintenance-policy.md" "## Review収束" "review-maintenance" "CI待機、最新snapshot、gate失効は GitHub配送Skill"
+require_block_text "docs/ai-governance/13-maintenance-policy.md" "## 検証" "maintenance-verification" "実行コマンドと変更path別のtestは docs/testing/index.md"
+require_block_text "docs/ai-governance/13-maintenance-policy.md" "## 検証" "maintenance-verification" "gate選択・包含・失効はGitHub配送Skill"
 require_text ".agents/skills/github-delivery/SKILL.md" "docs/agent-harness.md"
 require_text "docs/agent-principles.md" "重複回数だけで抽象化を強制しない"
 require_text "AGENTS.md" "大小を問わずすべてソースコード変更"
 require_text "AGENTS.md" "GitHub配送Skillが定義する通常配送"
 require_text "AGENTS.md" "GitHub上でCIとコードレビュー対応が完了し、マージ可能な状態"
 require_text "AGENTS.md" "観測可能な完了条件"
-require_text "AGENTS.md" "独立した責務を未commitのまま蓄積せず"
-require_text "AGENTS.md" "GitHub配送Skillを正本"
 require_text ".agents/skills/github-delivery/SKILL.md" "大小を問わず必ず発動"
 require_text ".agents/skills/github-delivery/SKILL.md" "ソースコード変更は規模や種類にかかわらず主Issueを必須"
 require_text ".agents/skills/github-delivery/SKILL.md" "非ドラフトPRを作成または更新"

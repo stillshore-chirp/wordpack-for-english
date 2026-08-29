@@ -1,6 +1,6 @@
 ---
 name: github-delivery
-description: "大小を問わないすべてのソースコード変更と、Issue、branch、commit、push、PR、CI、review、release準備を安全に一気通貫で行う時に使う。利用可能なGitHub clientを使い、latest headの検証、コードレビュー、mergeabilityを確認し、merge/closeは別の明示指示がある場合だけ行う。"
+description: "ソースコード変更とIssue、branch、commit、push、PR、CI、review準備をIssueからマージ可能な状態まで配送するときに使う。latest headとmergeabilityを確認し、merge/closeは別の明示指示が必要。"
 ---
 
 # GitHub配送 Skill
@@ -15,7 +15,7 @@ description: "大小を問わないすべてのソースコード変更と、Iss
 - 現在のdefault branch、作業branch、未commit差分、直近履歴を確認する。
 - 無関係な差分の所有者と範囲を確認し、巻き込まない。
 - ソースコード編集前に主Issueと専用branchを確定する。detached HEADでは編集せず、既存PRを継続する場合はIssue・branch・PRが同じ作業を指していることを確認する。
-- GitHub CLI、GitHub API、connectorなど、利用可能で認証済みのclientを使う。一つのclientが使えなくても、同等のclientで完了ゲートを満たせる場合は作業を止めない。
+- 利用可能で認証済みのGitHub clientを使い、同等clientの利用を妨げない。
 
 ## 2. Issue
 
@@ -50,19 +50,18 @@ description: "大小を問わないすべてのソースコード変更と、Iss
 ## 5. CIとreview
 <!-- agent-harness:delivery-review:start -->
 
-- latest headに紐づき、対象branchで定義されたpush / pull_request等のCIを確認する。失敗時はログから原因を特定し、修正、commit、push、再確認する。
+- latest headに紐づく対象branchのCIを確認し、成功後はlatest-head review、未解決thread、mergeabilityも確認する。失敗時は原因を特定し、修正、commit、push、再確認する。
 - 開発中とreview修正中は変更pathに対応するfocused testを使い、最終HEAD確定前にfull gateを機械的に繰り返さない。
-- 配送対象の最終HEADでは、変更範囲に必要な包含関係上の最上位full gateをそれぞれ原則1回実行する。相互に包含しない独立領域のgateはそれぞれ実行する。UIガバナンス変更は `scripts/verify-ai-governance.sh`、agent-harnessだけの変更は `scripts/verify-agent-harness.sh` を選ぶ。前者は後者を内包するため、同じsnapshotで後者を別途実行しない。stacked PRでは、親merge後のbase統合・最上位full gate・latest HEAD reviewをそれぞれ原則1回確認する。
-- 包括レビューの周回上限、3周目以降の限定条件、P2以下の収束、再レビュー文脈は [`docs/agent-harness.md`](../../../docs/agent-harness.md) のGitHub reviewの収束を正本とする。
-- CI成功後、GitHub上で確認可能な自動または人間のコードレビュー、review thread、review commentをlatest headで確認する。
-- 外部状態の確認では、HEAD、base、更新時刻、statusなどの軽量な状態キーと取得済み証拠を記録する。同じHEAD・同じ状態キーでは詳細を再利用し、変化した項目だけreview本文、thread、check一覧を再取得する。待機timeoutだけでは証拠を失効させず、同じAPI・同じpayloadの詳細照会を直ちに繰り返さない。
-- tool出力は判断に必要な差分、失敗箇所、最終結果へ限定し、状態が変わらないfull historyを再取得しない。
+- 配送対象の最終HEADでは、変更範囲に必要な包含関係上の最上位full gateをそれぞれ原則1回実行する。独立領域は各gate、包含関係は内包側だけを選ぶ。UIガバナンス変更は `scripts/verify-ai-governance.sh`、agent-harnessだけの変更は `scripts/verify-agent-harness.sh` を選び、前者が後者を内包するため同じsnapshotで重ねない。stacked PRは親merge後にbase統合、最上位gate、latest HEAD reviewを各1回確認する。
+- workflowまたはpath classifierを変更した場合は、変更pathに対応するcontract test、変更workflowのYAML parse、`base...head` classification、latest Actionsを選択する。backend application / Firestore / frontend runtimeに影響しない場合、backend full pytestや無関係なPlaywrightを追加しない。workflow未変更のreview fixでは、既存のYAML証跡を保持する。
+- gateの入力閉包は、変更path、関連設定、生成物、実行条件の集合とする。`gate / HEAD・base / input closure / conditions / result / artifact reference` をcompact ledgerへ記録し、失効時は `invalidation reason / reacquire scope`、判定不能時は `fallback reason` を残す。laneとevidence packageのschemaは [`docs/agent-harness.md`](../../../docs/agent-harness.md) を正本とする。
+- 同じHEAD・入力閉包・条件で成功したgateは再実行しない。新commitだけではlocal full gateを一括失効させず、閉包と交差する変更だけを失効させる。閉包が同じ証跡を後続HEADで再利用する場合は、由来HEADと新しいHEADをledgerへ併記する。
+- 同一HEADの再pushはlocal/full gate/review証拠を保持し、そのHEADで開始したCIだけ確認する。
+- base変更・base統合ではbase依存のCI、review、thread、mergeabilityを失効させ、local gateは入力閉包が変わったものだけ再取得する。review threadの解決はthread状態だけを更新し、他の証跡を失効させない。判定不能時は理由付きで広いgateへfallbackし、skipしない。
+- 待機中に返すのはHEAD、success / failure / pending / skip count、changed checks、failure detailだけとし、TTYの全表再描画を流さない。状態キーが変わらない間は詳細を再取得せず、timeoutだけでは証拠を失効させない。failureまたはfinal時だけ詳細を取得する。
+- read-only照会はbounded field、bounded result、小さい合計出力に限定し、PR本文と全check一覧を同じ結果へ詰め込まない。長いraw logは一時artifactへ退避し、成功時は全体結果・閾値・artifact参照だけ返し、file別coverageや反復行は返さない。
 - actionableな指摘はまとめて修正し、正本のreview予算と限定条件に従って変更後の証拠を再確認する。
 - 正本のreview収束条件を満たし、actionableな未解決threadがなく、GitHubのmergeabilityがcleanで、CIと必須条件を満たせばreviewを終了する。
-- `push`: 同じHEADを送っただけならlocal test、full gate、review証拠は失効せず、そのHEADに開始されたCIだけを確認する。新commitでHEADが変わった場合は旧HEADのCI・review・full gateを失効させ、変更pathに関係するlocal testと最終HEADのfull gateだけを再確認する。
-- `base変更・base統合`: HEAD/base snapshotとbase依存のCI・review・mergeabilityを失効させる。working treeが変わったpathのlocal testとfull gateだけを再確認し、影響を受けないlocal証拠は保持する。
-- `review thread解決`: thread状態だけを更新し、HEAD/base、local test、CI、取得済みreviewを失効させない。未解決threadのsnapshotを更新し、受付済みreviewを再依頼しない。
-- 証拠を再取得または検証を再実行する時は、失効理由と対象範囲を記録し、同じHEADのfull gateを重ねない。
 - 変更のないheadでclean結果を増やすためだけの再レビューを行わない。
 - ソースコード変更でコードレビューが提供されない場合、自己レビューは補助証跡に限り、完了条件の代替にしない。未完了のblockerとして報告する。
 <!-- agent-harness:delivery-review:end -->
@@ -70,7 +69,7 @@ description: "大小を問わないすべてのソースコード変更と、Iss
 ## 6. 権限境界と終了
 <!-- agent-harness:delivery-exit:start -->
 
-- merge直前には、必要な再確認を終えた同一時点の単一snapshotへ、latest HEAD、base（親PRのmergeを含む）、CI、latest-head review、未解決thread、mergeability、closing issue（`Closes #123` または `Refs #123`）を記録する。snapshot後に対象HEAD・base・CI・review状態が変わった場合は、該当証拠を失効させてから最終snapshotを更新する。
+- merge直前は再確認済みの単一snapshotへlatest HEAD、base（親merge含む）、CI、latest-head review、未解決thread、mergeabilityを記録する。snapshot後にHEAD・base・CI・review状態が変わった場合は、該当証拠を失効して更新する。
 - merge、Issue / PRのclose、release、production deploy、破壊的変更は、対象を特定した別の明示指示がある場合だけ行う。
 - blocker報告には、失敗しているcheckまたは操作、証跡、試した対応、未完了範囲、次の最短アクションを含める。
 - 最終報告には、Issue、branch、commit、PR、local verification、CI、review、remaining risksのうち今回に関係するものを示す。

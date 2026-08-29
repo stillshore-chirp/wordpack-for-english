@@ -84,6 +84,7 @@ KNOWN_NON_UI_FILES = {
     "env.deploy.example",
     "env.example",
     "requirements-agent-harness.txt",
+    "scripts/classify_verification_inputs.py",
 }
 
 
@@ -119,7 +120,7 @@ def _classify_path(path: str) -> UiTestScope | None:
         return UiTestScope(playwright_smoke=True, playwright_visual=True)
 
     if path == "scripts/classify_ui_test_changes.py":
-        return UiTestScope(playwright_smoke=True, playwright_visual=True)
+        return UiTestScope(playwright_smoke=False, playwright_visual=False)
 
     if path in SMOKE_POLICY_FILES:
         return UiTestScope(playwright_smoke=True, playwright_visual=False)
@@ -186,6 +187,7 @@ def changed_paths(base: str, head: str) -> list[str]:
         ],
         check=True,
         stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
     )
     return [
         value.decode("utf-8", errors="surrogateescape")
