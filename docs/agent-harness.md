@@ -165,7 +165,7 @@ gate evidenceは、次のcompact ledgerで入力閉包とsnapshotへ束縛しま
 
 input closureは、gateが実際に読む対象path、関連設定、生成物、実行条件、必要なbase依存の集合です。証拠にはこの閉包、snapshot、result、`artifact_reference` fieldを含むevidence packageを記録します。`reuse_evidence`は、同一snapshot・input closure・execution conditionsならそのまま再利用し、snapshotが異なる場合はsource snapshotとtarget snapshot、between-diffがinput closureと交差しないこと、baseとexecution conditionsが不変であることを記録して再利用します。HEADが変わっただけでは全gateを失効させず、閉包を構成するpath・設定・生成物・条件・base依存が変わったgateだけを失効させ、`invalidation_condition`、理由、再取得対象をledgerへ記録します。閉包が不変であるgateは、target snapshotへ影響しない根拠を残して再利用できます。
 
-長時間検証のevidence packageは、exit code、pass / fail / skip、coverage総計、warning要約、failure箇所、`artifact_reference` fieldだけにします。成功時はfile別coverageと反復進捗を渡さず、raw outputは必要な場合だけ参照へ置きます。
+長時間検証のevidence packageは、exit code、pass / fail / skip、coverage総計、warning要約、failure箇所、artifact参照（evidence package内の artifact_reference field）だけにします。成功時はfile別coverageと反復進捗を渡さず、raw outputは必要な場合だけ参照へ置きます。
 <!-- agent-harness:review-convergence:end -->
 
 ## Subagent orchestration
