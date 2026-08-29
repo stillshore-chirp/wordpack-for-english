@@ -143,6 +143,9 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 <!-- agent-harness:review-convergence:start -->
 
 - latest meaningful changeに対して対象branchで定義されたpush / pull_request等のCIと、GitHub上で確認可能な自動または人間のコードレビューを確認する。
+- 外部状態の証拠には、HEAD、base、更新時刻、statusなど判断に必要な最小の状態キーと詳細取得時点を記録する。同じHEAD・同じ状態キーでは取得済みのreview本文、thread、check一覧を保持し、状態キーが変化した項目だけ詳細を再取得する。
+- 待機のtimeoutは状態変化や証拠失効を意味しません。timeoutだけを理由に同じAPI・同じpayloadの詳細照会を直ちに繰り返さず、次の確認はevent-drivenな通知またはbackoff後の軽量な状態キーに限定する。
+- 取得・引き渡すtool出力は、判断に必要な差分、失敗箇所、最終結果に限定し、状態が変わらないfull historyを再取得しません。
 - 同一PR・同一HEAD系列の包括レビューは、配送対象の最終HEADに対する初回レビュー1回と、指摘修正後の再レビュー1回までを原則とする。修正によるHEAD更新を含む同じ配送系列への包括レビュー実行回数で数え、review comment、thread、指摘の件数では数えない。
 - 3回目以降の包括レビューは実行しません。次のいずれかで前回証拠が失効した場合だけ、対象risk laneと変更pathを明示した限定再確認を行う。
   - 未解決のP0またはP1がある。
@@ -179,13 +182,13 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 
 監査結果が矛盾した場合は追加agentの多数決を取りません。メインエージェントがsource code、test設定、実際のcommand結果、commit hashなどの一次証拠を確認して解決します。
 
-委任時はfull-history forkを既定にしません。必要なHEAD、path、acceptance、既知の指摘だけを短く渡します。報告は変更path、P0 / P1、実行結果、未実行項目と残るriskを中心に簡潔にします。
+委任時はfull-history forkを既定にしません。必要なHEAD、path、acceptance、既知の指摘だけを短く渡します。報告は変更path、P0 / P1、実行結果、未実行項目と残るriskを中心に簡潔にします。探索・検証・待機で進捗がなく、同じ結果を反復する場合は、同じscopeを無制限に継続しません。`completion`に定めた停止・scope縮小・primaryへの返却条件に従い、安全な部分結果と未確認範囲を返します。`invalidation condition`が成立した場合にだけ再開し、primary agentがscopeを再評価します。
 
 検証は次の段階を守ります。
 
-1. 開発中は変更によって影響を受けるfocused testを先に実行する。
+1. 開発中とreview修正中は、変更によって影響を受けるfocused testを先に実行する。最終HEAD確定前にfull gateを機械的に繰り返しません。
 2. 同じworktreeとHEADで長い検証を始める前に、利用可能なprocess stateをoperatorが確認し、確認済みの実行中processを重複起動しません。これは運用者向けのoperator ruleであり、環境が自動的なlockを保証する仕組みではありません。
-3. 配送対象の最終HEADが確定した時点でfrontend / backend / operationsなど必要なfull gateを原則1回実行する。
+3. 配送対象の最終HEADが確定した時点で、変更範囲を包含する最上位full gateだけを原則1回実行する。選択したgateが別のgateを内包する場合、同じsnapshotで内包gateを別途実行しません。
 4. 成功済み検証を再実行する時は、対象変更、生成物変更、実行条件変更、証拠期限切れなど、証拠が失効した理由を記録する。
 
 メインエージェントは次のrisk lane台帳を保ち、担当scopeと結果を統合して重複を止めます。clean commitを確認した場合はcommit SHAを記録します。未commitの共有worktreeを確認した場合は、base HEADに加えて、確認したpathとdiffを一意に識別できる値を記録し、HEADだけを監査済みsnapshotとして扱いません。各evidenceは対象HEADとbase HEAD、確認済みpath、diff identifierに束縛します。対象snapshotが変わらない限りevidenceを再取得せず、invalidation conditionで失効したevidenceだけを再取得し、その理由と範囲を台帳に記録します。primary agentの受入はevidence packageからscope、acceptance、evidence、unrelated diff、commit responsibility、lane conflict、completion gatesを確認し、laneの完了と配送判断を行います。
@@ -199,7 +202,7 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 | target HEAD | 委任時点で確認対象とするcommitまたはbase HEAD |
 | target path | 調査・変更・検証の対象path |
 | write ownership | laneが編集・生成・公開できるpathと操作の境界 |
-| completion | laneを完了と判定する観測可能な条件 |
+| completion | laneの完了条件と、進捗がない場合の停止・scope縮小・primaryへの返却条件 |
 | verification | 実行する検証と、その結果の証跡 |
 | verified snapshot | clean commit、またはbase HEADと確認済みdiffの識別子 |
 | status | pending / active / passed / finding / blocked |
@@ -217,8 +220,8 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 6. hard gateとheuristicを区別した。
 7. instruction budgetを満たした。
 8. 旧正本、循環参照、壊れたリンクを残していない。
-9. `bash scripts/verify-agent-harness.sh`を実行した。
-10. UI/UXガバナンスを変えた場合は`bash scripts/verify-ai-governance.sh`も実行した。
+9. 開発中とreview修正中は変更pathに対応するfocused testを実行した。
+10. 最終HEADで変更範囲を包含する最上位full gateだけを1回実行し、同じsnapshotで内包gateを別途実行していない。
 
 ## 既知の限界
 

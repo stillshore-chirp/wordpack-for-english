@@ -51,16 +51,18 @@ description: "大小を問わないすべてのソースコード変更と、Iss
 <!-- agent-harness:delivery-review:start -->
 
 - latest headに紐づき、対象branchで定義されたpush / pull_request等のCIを確認する。失敗時はログから原因を特定し、修正、commit、push、再確認する。
-- 同一HEADのfull gateは原則1回とする。stacked PRでは、親merge後のbase統合・full gate・latest HEAD reviewをそれぞれ原則1回確認する。
+- 開発中とreview修正中は変更pathに対応するfocused testを使い、最終HEAD確定前にfull gateを機械的に繰り返さない。
+- 配送対象の最終HEADでは、変更範囲を包含する最上位full gateだけを原則1回実行する。UIガバナンス変更は `scripts/verify-ai-governance.sh`、agent-harnessだけの変更は `scripts/verify-agent-harness.sh` を選ぶ。前者は後者を内包するため、同じsnapshotで後者を別途実行しない。stacked PRでは、親merge後のbase統合・最上位full gate・latest HEAD reviewをそれぞれ原則1回確認する。
 - 包括レビューの周回上限、3周目以降の限定条件、P2以下の収束、再レビュー文脈は [`docs/agent-harness.md`](../../../docs/agent-harness.md) のGitHub reviewの収束を正本とする。
 - CI成功後、GitHub上で確認可能な自動または人間のコードレビュー、review thread、review commentをlatest headで確認する。
+- 外部状態の確認では、HEAD、base、更新時刻、statusなどの軽量な状態キーと取得済み証拠を記録する。同じHEAD・同じ状態キーでは詳細を再利用し、変化した項目だけreview本文、thread、check一覧を再取得する。待機timeoutだけでは証拠を失効させず、同じAPI・同じpayloadの詳細照会を直ちに繰り返さない。
+- tool出力は判断に必要な差分、失敗箇所、最終結果へ限定し、状態が変わらないfull historyを再取得しない。
 - actionableな指摘はまとめて修正し、正本のreview予算と限定条件に従って変更後の証拠を再確認する。
 - 正本のreview収束条件を満たし、actionableな未解決threadがなく、GitHubのmergeabilityがcleanで、CIと必須条件を満たせばreviewを終了する。
 - `push`: 同じHEADを送っただけならlocal test、full gate、review証拠は失効せず、そのHEADに開始されたCIだけを確認する。新commitでHEADが変わった場合は旧HEADのCI・review・full gateを失効させ、変更pathに関係するlocal testと最終HEADのfull gateだけを再確認する。
 - `base変更・base統合`: HEAD/base snapshotとbase依存のCI・review・mergeabilityを失効させる。working treeが変わったpathのlocal testとfull gateだけを再確認し、影響を受けないlocal証拠は保持する。
 - `review thread解決`: thread状態だけを更新し、HEAD/base、local test、CI、取得済みreviewを失効させない。未解決threadのsnapshotを更新し、受付済みreviewを再依頼しない。
 - 証拠を再取得または検証を再実行する時は、失効理由と対象範囲を記録し、同じHEADのfull gateを重ねない。
-- このリポジトリでは `scripts/verify-ai-governance.sh` が実際に `scripts/verify-agent-harness.sh` を呼び出すため、同じsnapshotで包含側の検証後に内包側を個別再実行しない。
 - 変更のないheadでclean結果を増やすためだけの再レビューを行わない。
 - ソースコード変更でコードレビューが提供されない場合、自己レビューは補助証跡に限り、完了条件の代替にしない。未完了のblockerとして報告する。
 <!-- agent-harness:delivery-review:end -->
