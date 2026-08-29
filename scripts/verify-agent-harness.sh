@@ -103,8 +103,15 @@ if end_index + 1 < len(tokens):
         raise SystemExit(2)
 
 visible_lines: list[str] = []
+allowed_inner_markers = {
+    f"<!-- agent-harness:subagent-orchestration-contract:{index:02d} -->"
+    for index in range(1, 8)
+} if start == "<!-- agent-harness:subagent-orchestration:start -->" else set()
 for token in tokens[start_index + 1 : end_index]:
     if token.type == "html_block":
+        stripped = token.content.strip()
+        if stripped in allowed_inner_markers and "\n" not in stripped:
+            continue
         raise SystemExit(2)
     if token.type != "inline":
         continue
@@ -774,6 +781,7 @@ CANONICAL_HARNESS_PATHS=(
 
 SCENARIO_FIXTURE="tests/fixtures/agent-harness/scenarios.json"
 require_file "scripts/validate_agent_harness_scenarios.py"
+require_file "scripts/validate_agent_harness_markers.py"
 require_file "scripts/measure_effective_instruction_budget.py"
 require_file "$SCENARIO_FIXTURE"
 
@@ -1214,6 +1222,7 @@ require_text "docs/ai-governance/templates/completion-gate-report.md" "Pre-exist
 require_text "docs/ai-governance/templates/completion-gate-report.md" "standaloneのフロー監査はdiff由来findingがないため、Change statusにN/A / 未分類（standalone）"
 require_block_text "docs/ai-governance/templates/completion-gate-report.md" "## 変更scope（UI変更レビューで差分がある場合）" "uiux-completion-scope" "Target snapshot / ref"
 require_block_text "docs/ai-governance/templates/completion-gate-report.md" "## 変更scope（UI変更レビューで差分がある場合）" "uiux-completion-scope" "Coverage / 未確認consumer / 除外理由"
+python3 scripts/validate_agent_harness_markers.py "$ROOT" "$SCENARIO_FIXTURE"
 require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "初回レビュー1回と指摘修正後の再レビュー1回まで"
 require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "P2以下だけが残る場合"
 require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "primaryが継続保持するcontrol-plane ledger"
@@ -1226,27 +1235,6 @@ require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-c
 require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "HEADが変わっただけでは全gateを失効させず"
 require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "exit code、pass / fail / skip、coverage総計、warning要約、failure箇所、artifact参照"
 require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "file別coverageと反復進捗を渡さず"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "専門riskを独立したbounded lane"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "分離可能ならsubagent-default（subagent-first）で委任します"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "単一API、CI watcher、read-only照会、短いthread返信、短い競合解消"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "target HEAD / base、target path、確認する具体的な問い"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "write ownership、completion、verification、invalidation condition"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "分離可能な仕事をprimaryが直接行うのはdirect-primary exceptionに限ります"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "specific reason、context-vs-work"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "full fileやfull logを要求しません"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "同一HEAD・同一risk laneの監査は原則1回"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "製品固有のtool、UI、runtime configを共有契約へ持ち込みません"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "raw log、file全文、full historyは必須にせず"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "進捗がなく同じ結果を反復するlane"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "checkpoint miss → partial result（同じownerへ1回）"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "no progress / continuation unknownならscope shrink"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "縮小scope後もno progressならreassign"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "first agent failure alone はdirect-primary exceptionの理由にならず"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "停止・scope縮小・primary返却条件"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "partial resultと未確認範囲を返してから縮小scopeでも進展がない場合だけownerを再割当します"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "invalidation conditionが成立した場合だけ再開"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| target HEAD / base |"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| evidence package | scope / acceptance、changed paths、conclusion、verification results、unperformed checks、remaining risks、snapshotまたはdiff identifier |"
 require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "委任、control plane、evidence package、review収束は"
 require_block_text "docs/ai-governance/13-maintenance-policy.md" "## サブエージェント運用" "subagent-maintenance" "docs/agent-harness.md"
 require_block_text "docs/ai-governance/13-maintenance-policy.md" "## サブエージェント運用" "subagent-maintenance" "同一HEADの重複監査"

@@ -196,6 +196,20 @@ input closureは、gateが実際に読む対象path、関連設定、生成物�
 ## Subagent orchestration
 <!-- agent-harness:subagent-orchestration:start -->
 
+<!-- agent-harness:subagent-orchestration-contract:01 -->
+
+<!-- agent-harness:subagent-orchestration-contract:02 -->
+
+<!-- agent-harness:subagent-orchestration-contract:03 -->
+
+<!-- agent-harness:subagent-orchestration-contract:04 -->
+
+<!-- agent-harness:subagent-orchestration-contract:05 -->
+
+<!-- agent-harness:subagent-orchestration-contract:06 -->
+
+<!-- agent-harness:subagent-orchestration-contract:07 -->
+
 サブエージェントは、同じ証拠を読む担当を増やすためではなく、専門riskを独立したbounded laneへ分けるために使います。探索、実装、focused verification、review、review fix、docsは、分離可能ならsubagent-default（subagent-first）で委任します。単一API、CI watcher、read-only照会、短いthread返信、短い競合解消などhandoffの固定費が見合わない作業はprimaryが担当します。
 
 委任前に、他作業と重複しないrisk lane、target HEAD / base、target path、確認する具体的な問い、acceptanceを委任の最低文脈として定義し、target pathsは単一pathでも対象集合として明示します。既存報告やprimaryの一次証拠で不足する理由、write ownership、`depends_on`、`snapshot_phase`、runtime_resources、ports、cleanup、output_cap、completion、verification、`reuse_evidence`、`invalidation_condition`、`artifact_reference`も定義し、従来の委任記録にあるwrite ownership、completion、verification、invalidation conditionを維持します。同一PRの各laneは一人のownerが開始からcompletionまで担当し、同一HEAD・同一risk laneの監査は原則1回です。包括監査を複数agentへ同時委任せず、対象変更、新しい実行証拠、明確な証拠不足・矛盾がある場合だけ再監査します。委任文脈では製品固有のtool、UI、runtime configを共有契約へ持ち込みません。委任判断の説明ではspecific reason、context-vs-workを補助的に示してもよいが、direct-primary exceptionのfieldには含めません。
