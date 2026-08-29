@@ -2,10 +2,6 @@ name: Playwright visual regression
 
 on:
   pull_request:
-    paths:
-      - 'apps/frontend/src/**'
-      - 'apps/frontend/**/*.css'
-      - 'apps/frontend/**/*.tsx'
 
 concurrency:
   group: playwright-visual-${{ github.workflow }}-${{ github.ref }}
@@ -15,10 +11,42 @@ permissions:
   contents: read
 
 jobs:
+  ui_test_scope:
+    name: Classify visual test scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      playwright_visual: ${{ steps.scope.outputs.playwright_visual }}
+    steps:
+      - name: Checkout pull request history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Classify changed paths
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python scripts/classify_ui_test_changes.py \
+            --base "${BASE_SHA}" \
+            --head "${HEAD_SHA}" \
+            --github-output "${GITHUB_OUTPUT}"
+
   playwright_visual:
     name: Playwright visual regression
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    needs:
+      - ui_test_scope
+    if: >-
+      ${{
+        always() &&
+        needs.ui_test_scope.result == 'success' &&
+        needs.ui_test_scope.outputs.playwright_visual == 'true'
+      }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -67,3 +95,29 @@ jobs:
             test-results/
           retention-days: 90
           if-no-files-found: ignore
+
+  visual_test_gate:
+    name: Visual test selection gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ always() }}
+    needs:
+      - playwright_visual
+      - ui_test_scope
+    steps:
+      - name: Validate selected visual test result
+        env:
+          PLAYWRIGHT_VISUAL: ${{ needs.ui_test_scope.outputs.playwright_visual }}
+          SCOPE_RESULT: ${{ needs.ui_test_scope.result }}
+          VISUAL_RESULT: ${{ needs.playwright_visual.result }}
+        run: |
+          if [ "${SCOPE_RESULT}" != "success" ]; then
+            echo "Visual test scope classification did not succeed" >&2
+            exit 1
+          fi
+
+          if [ "${PLAYWRIGHT_VISUAL}" = "true" ]; then
+            test "${VISUAL_RESULT}" = "success"
+          else
+            test "${VISUAL_RESULT}" = "skipped"
+          fi

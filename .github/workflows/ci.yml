@@ -14,6 +14,38 @@ permissions:
   contents: read
 
 jobs:
+  ui_test_scope:
+    name: Classify UI test scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      playwright_smoke: ${{ steps.scope.outputs.playwright_smoke }}
+    steps:
+      - name: Checkout pull request history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Classify changed paths
+        id: scope
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          GIT_REF: ${{ github.ref }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          if [ "${EVENT_NAME}" = "pull_request" ]; then
+            python scripts/classify_ui_test_changes.py \
+              --base "${BASE_SHA}" \
+              --head "${HEAD_SHA}" \
+              --github-output "${GITHUB_OUTPUT}"
+          elif [ "${GIT_REF}" = "refs/heads/main" ]; then
+            echo "playwright_smoke=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "playwright_smoke=false" >> "${GITHUB_OUTPUT}"
+          fi
+
   security_text_scan:
     name: Security text scan
     runs-on: ubuntu-latest
@@ -228,8 +260,17 @@ jobs:
     needs:
       - backend
       - frontend
+      - ui_test_scope
     # CD の前提チェックとして main push でもスモークを実行し、デプロイ前に主要動線を検証する。
-    if: github.event_name == 'pull_request' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
+    # PR では主要導線へ影響する差分だけを対象にし、job-level skipをcheckとして残す。
+    if: >-
+      ${{
+        always() &&
+        needs.backend.result == 'success' &&
+        needs.frontend.result == 'success' &&
+        needs.ui_test_scope.result == 'success' &&
+        needs.ui_test_scope.outputs.playwright_smoke == 'true'
+      }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -294,6 +335,38 @@ jobs:
             test-results/
           retention-days: 90
           if-no-files-found: ignore
+
+  ui_test_gate:
+    name: UI test selection gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ always() }}
+    needs:
+      - backend
+      - frontend
+      - playwright_smoke
+      - ui_test_scope
+    steps:
+      - name: Validate selected UI test result
+        env:
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          PLAYWRIGHT_SMOKE: ${{ needs.ui_test_scope.outputs.playwright_smoke }}
+          SCOPE_RESULT: ${{ needs.ui_test_scope.result }}
+          SMOKE_RESULT: ${{ needs.playwright_smoke.result }}
+        run: |
+          if [ "${SCOPE_RESULT}" != "success" ] || \
+             [ "${BACKEND_RESULT}" != "success" ] || \
+             [ "${FRONTEND_RESULT}" != "success" ]; then
+            echo "UI test prerequisites did not succeed" >&2
+            exit 1
+          fi
+
+          if [ "${PLAYWRIGHT_SMOKE}" = "true" ]; then
+            test "${SMOKE_RESULT}" = "success"
+          else
+            test "${SMOKE_RESULT}" = "skipped"
+          fi
 
   cloud_run_guard:
     name: Cloud Run config guard
