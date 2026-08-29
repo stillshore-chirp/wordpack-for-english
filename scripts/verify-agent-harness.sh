@@ -926,7 +926,7 @@ require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview"
 require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "bounded field、bounded result、小さい合計出力"
 require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "file別coverageや反復行は返さない"
 require_text "docs/testing/index.md" "pytest -q --no-cov tests/test_verification_inputs.py tests/test_github_actions_branch_policy.py tests/test_ui_test_change_classifier.py"
-require_text "docs/testing/index.md" 'coverage検証ではないfocused pytestは必ず `--no-cov`'
+require_text "docs/testing/index.md" "coverage検証ではないfocused pytestは必ず \`--no-cov\`"
 for owner in AGENTS.md docs/agent-harness.md .agents/skills/github-delivery/SKILL.md docs/testing/index.md; do
   reject_text "$owner" "gh pr checks --watch"
 done
