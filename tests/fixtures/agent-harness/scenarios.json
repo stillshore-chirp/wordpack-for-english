@@ -15,6 +15,7 @@
     },
     {
       "id": "completed-agent",
+      "output_cap": {"unit": "utf8_bytes", "max_bytes": 2048},
       "events": [
         {
           "type": "heartbeat",
@@ -33,9 +34,10 @@
               "config": ["requirements-agent-harness.txt"],
               "artifacts": ["verification-summary"]
             },
-            "execution_conditions": {"runtime": "static", "python": "3.14"}
-          },
-          "artifact_reference": "artifact:agent-a"
+            "execution_conditions": {"runtime": "static", "python": "3.14"},
+            "artifact_reference": "artifact:agent-a",
+            "details": {"changed_paths": ["scripts/verify-agent-harness.sh"], "status": "compact"}
+          }
         },
         {"type": "read", "target": "evidence_package"},
         {"type": "read", "target": "artifact_reference"}
@@ -75,9 +77,12 @@
       "events": [
         {"type": "acquire", "resource_type": "runtime", "resource_id": "backend", "owner": "lane-a", "pid": 1001, "process_group": "pg-a", "port": 8000},
         {"type": "ready", "resource_id": "backend", "owner": "lane-a", "ready": true},
-        {"type": "acquire", "resource_type": "runtime", "resource_id": "frontend", "owner": "lane-a", "pid": 1002, "process_group": "pg-b", "port": 5173},
-        {"type": "ready", "resource_id": "frontend", "owner": "lane-a", "ready": true},
-        {"type": "release", "resource_id": "frontend", "owner": "lane-a", "cleanup": "complete", "process_alive": false, "port_open": false},
+        {"type": "acquire", "resource_type": "runtime_resources", "resource_id": "frontend", "resource_key": "frontend-runtime", "owner": "lane-a", "pid": 1002, "process_group": "pg-b", "port": 5173},
+        {"type": "usable", "resource_id": "frontend", "resource_key": "frontend-runtime", "owner": "lane-a", "usable": true},
+        {"type": "acquire", "resource_type": "temporary_worktree", "resource_id": "frontend-worktree", "resource_key": "frontend-worktree", "owner": "lane-a", "workspace": "tmp/worktrees/frontend"},
+        {"type": "ready", "resource_id": "frontend-worktree", "resource_key": "frontend-worktree", "owner": "lane-a", "ready": true},
+        {"type": "release", "resource_id": "frontend-worktree", "resource_key": "frontend-worktree", "owner": "lane-a", "cleanup": "complete", "workspace_exists": false},
+        {"type": "release", "resource_id": "frontend", "resource_key": "frontend-runtime", "owner": "lane-a", "cleanup": "complete", "process_alive": false, "port_open": false},
         {"type": "release", "resource_id": "backend", "owner": "lane-a", "cleanup": "complete", "process_alive": false, "port_open": false}
       ]
     },
@@ -133,6 +138,18 @@
           "type": "evidence_success",
           "key": "gate-2",
           "status": "passed",
+          "snapshot": {"base": "base-a", "head": "head-b", "diff": "diff-b"},
+          "input_closure": {
+            "paths": ["scripts/verify-agent-harness.sh"],
+            "config": ["requirements-agent-harness.txt"],
+            "artifacts": ["verification-summary"]
+          },
+          "conditions": {"python": "3.14", "runtime": "static"},
+          "artifact_reference": "artifact:gate-2"
+        },
+        {
+          "type": "evidence_reuse",
+          "source_key": "gate-2",
           "snapshot": {"base": "base-a", "head": "head-b", "diff": "diff-b"},
           "input_closure": {
             "paths": ["scripts/verify-agent-harness.sh"],

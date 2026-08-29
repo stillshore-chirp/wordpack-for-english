@@ -835,42 +835,105 @@ python3 scripts/validate_agent_frontmatter.py "${FRONTMATTER_PATHS[@]}"
 
 python3 scripts/validate_agent_harness_scenarios.py "$SCENARIO_FIXTURE"
 
-budget_output="$(mktemp "${TMPDIR:-/tmp}/agent-harness-budget.XXXXXX")"
-cleanup_budget_output() {
-  rm -f "$budget_output"
+budget_dir="$(mktemp -d "${TMPDIR:-/tmp}/agent-harness-budget.XXXXXX")"
+cleanup_budget_artifacts() {
+  rm -rf "$budget_dir"
 }
-trap cleanup_budget_output EXIT
-python3 scripts/measure_effective_instruction_budget.py \
-  --revision "working-tree" \
-  --apply-path "scripts/verify-agent-harness.sh" \
-  --apply-path "scripts/validate_agent_harness_scenarios.py" \
-  --activation-condition "agent-harness verifier" \
-  --root "AGENTS.md" \
-  --nested "apps/frontend/AGENTS.md" \
-  --nested "apps/backend/AGENTS.md" \
-  --nested "docs/operations/AGENTS.md" \
-  --activated-skill ".agents/skills/ui-ux-review/SKILL.md" \
-  --activated-skill ".agents/skills/github-delivery/SKILL.md" \
-  --activated-skill ".agents/skills/production-investigation/SKILL.md" \
-  --activated-skill ".agents/skills/security-publication/SKILL.md" \
-  --conditional-hook-context ".claude/rules/agent-harness.md" \
-  --conditional-hook-context ".cursor/rules/agent-harness.mdc" \
-  >"$budget_output"
-python3 - "$budget_output" <<'PY'
-import json
+trap cleanup_budget_artifacts EXIT
+python3 - "$budget_dir" <<'PY'
+from pathlib import Path
 import sys
 
-with open(sys.argv[1], encoding="utf-8") as handle:
-    report = json.load(handle)
-if report.get("observed_usage") is not None or report.get("estimate", {}).get("observed_usage") is not None:
-    raise SystemExit("budget report must not claim observed usage")
-for group in ("global", "root", "nested", "activated_skills", "conditional_hook_contexts"):
-    totals = report.get("groups", {}).get(group, {})
-    if any(field not in totals for field in ("lines", "utf8_bytes", "estimated_tokens")):
-        raise SystemExit(f"budget report missing totals for {group}")
+root = Path(sys.argv[1])
+contents = {
+    "baseline": {
+        "global": "synthetic global\n",
+        "root": "synthetic root\n",
+        "nested": "synthetic nested\n",
+        "skill": "synthetic activated skill\n",
+        "conditional": "synthetic conditional hook\n",
+    },
+    "current": {
+        "global": "synthetic global\n",
+        "root": "synthetic root\ncurrent delta\n",
+        "nested": "synthetic nested\n",
+        "skill": "synthetic activated skill\n",
+        "conditional": "synthetic conditional hook\ncurrent delta\n",
+    },
+}
+for revision, files in contents.items():
+    revision_dir = root / revision
+    revision_dir.mkdir(parents=True, exist_ok=True)
+    for name, text in files.items():
+        (revision_dir / f"{name}.txt").write_text(text, encoding="utf-8")
 PY
-cleanup_budget_output
+for revision in baseline current; do
+  python3 scripts/measure_effective_instruction_budget.py \
+    --revision "$revision" \
+    --apply-path "scripts/verify-agent-harness.sh" \
+    --activation-condition "synthetic agent-harness verifier" \
+    --global "$budget_dir/$revision/global.txt" \
+    --root "$budget_dir/$revision/root.txt" \
+    --nested "$budget_dir/$revision/nested.txt" \
+    --activated-skill "$budget_dir/$revision/skill.txt" \
+    --conditional-hook-context "$budget_dir/$revision/conditional.txt" \
+    > "$budget_dir/$revision.json"
+done
+python3 - "$budget_dir/baseline.json" "$budget_dir/current.json" "$budget_dir/comparison.json" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+baseline_path, current_path, comparison_path = map(Path, sys.argv[1:])
+groups = ("global", "root", "nested", "activated_skills", "conditional_hook_contexts")
+fields = ("lines", "utf8_bytes", "estimated_tokens")
+local_markers = ("/Users/", "/home/", "/private/var/", "worktrees/")
+
+def load_report(path: Path) -> dict:
+    serialized = path.read_text(encoding="utf-8")
+    if any(marker in serialized for marker in local_markers):
+        raise SystemExit(f"budget report contains a local path: {path}")
+    report = json.loads(serialized)
+    if report.get("observed_usage") is not None or report.get("estimate", {}).get("observed_usage") is not None:
+        raise SystemExit("budget report must not claim observed usage")
+    if set(report.get("groups", {})) != set(groups):
+        raise SystemExit("budget report must contain all five explicit groups")
+    if any(field not in report.get("totals", {}) for field in fields):
+        raise SystemExit("budget report is missing total fields")
+    for group in groups:
+        section = report["groups"][group]
+        if not section.get("files") or any(field not in section for field in fields):
+            raise SystemExit(f"budget report missing bounded shape for {group}")
+        for record in section["files"]:
+            if any(field not in record for field in ("path", *fields)):
+                raise SystemExit(f"budget report missing file record fields for {group}")
+    return report
+
+baseline = load_report(baseline_path)
+current = load_report(current_path)
+delta = {field: current["totals"][field] - baseline["totals"][field] for field in fields}
+if not any(value != 0 for value in delta.values()):
+    raise SystemExit("synthetic baseline/current budget delta must be non-zero")
+comparison = {
+    "schema_version": 1,
+    "measurement": "effective-instruction-budget-comparison",
+    "baseline": {"revision": baseline["conditions"]["revision"], "totals": baseline["totals"]},
+    "current": {"revision": current["conditions"]["revision"], "totals": current["totals"]},
+    "delta": delta,
+    "estimate": {"observed_usage": None},
+}
+comparison_path.write_text(json.dumps(comparison, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+checked = json.loads(comparison_path.read_text(encoding="utf-8"))
+if set(checked) != {"schema_version", "measurement", "baseline", "current", "delta", "estimate"}:
+    raise SystemExit("budget comparison artifact has an unexpected shape")
+if checked["delta"] != delta or not any(value != 0 for value in checked["delta"].values()):
+    raise SystemExit("budget comparison artifact lost the baseline/current delta")
+if any(marker in comparison_path.read_text(encoding="utf-8") for marker in local_markers):
+    raise SystemExit("budget comparison artifact contains a local path")
+PY
+cleanup_budget_artifacts
 trap - EXIT
+
 
 python3 -m pytest -q --no-cov \
   tests/test_agent_harness_scenarios.py \

@@ -12,6 +12,7 @@
     },
     {
       "id": "completed-agent",
+      "output_cap": {"unit": "utf8_bytes", "max_bytes": 2048},
       "events": [
         {
           "type": "heartbeat",
@@ -26,11 +27,13 @@
             "remaining_risks": ["tool telemetry"],
             "snapshot": {"base": "base-a", "head": "head-a", "diff": "diff-a"},
             "input_closure": {"paths": ["scripts/verify-agent-harness.sh"], "config": [], "artifacts": []},
-            "execution_conditions": {"runtime": "static"}
+            "execution_conditions": {"runtime": "static"},
+            "artifact_reference": "artifact:agent-a"
           },
           "artifact_reference": "artifact:agent-a"
         },
-        {"type": "read", "target": "final_output"}
+        {"type": "read", "target": "final_output"},
+        {"type": "unknown"}
       ]
     },
     {
@@ -38,7 +41,8 @@
       "depends_on": [{"id": "schema-contract", "snapshot_phase": "provisional"}],
       "events": [
         {"type": "after", "snapshot_phase": "provisional", "head": "head-a", "latest_head": "head-a", "review_state": "pending"},
-        {"type": "after", "snapshot_phase": "final", "head": "head-a", "latest_head": "head-a", "review_state": "converged", "unresolved_actionable_threads": 0, "mergeability": "clean"}
+        {"type": "after", "snapshot_phase": "final", "head": "head-a", "latest_head": "head-a", "review_state": "converged", "unresolved_actionable_threads": 0, "mergeability": "clean"},
+        {"type": "unknown"}
       ]
     },
     {
@@ -46,6 +50,10 @@
       "events": [
         {"type": "acquire", "resource_type": "runtime", "resource_id": "backend", "owner": "lane-a", "pid": 1001, "process_group": "pg-a", "port": 8000},
         {"type": "acquire", "resource_type": "runtime", "resource_id": "frontend", "owner": "lane-a", "pid": 1002, "process_group": "pg-b", "port": 8000},
+        {"type": "acquire", "resource_type": "temporary_worktree", "resource_id": "frontend-worktree", "owner": "lane-a", "workspace": "tmp/worktrees/frontend"},
+        {"type": "ready", "resource_id": "frontend-worktree", "owner": "lane-a", "ready": true},
+        {"type": "release", "resource_id": "frontend-worktree", "owner": "lane-b", "cleanup": "complete", "workspace_exists": false},
+        {"type": "release", "resource_id": "frontend-worktree", "owner": "lane-a", "cleanup": "complete", "workspace_exists": true},
         {"type": "release", "resource_id": "backend", "owner": "lane-a", "cleanup": "complete", "process_alive": false, "port_open": false},
         {"type": "release", "resource_id": "frontend", "owner": "lane-a", "cleanup": "complete", "process_alive": false, "port_open": false}
       ]
