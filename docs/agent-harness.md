@@ -146,8 +146,9 @@ CI watcherとread-only照会の配送順序は [GitHub配送Skill](../.agents/sk
 
 primaryが継続保持するcontrol-plane ledgerは、goal、acceptance、非対象、HEAD / base、changed paths、commit責務、completion-gate summary、CI / review / thread / mergeability、権限、riskだけです。raw log、file全文、PR本文全文、解決済みthread全文は台帳や委任報告へ入れず、必要な場合だけ参照へ退避します。旧HEADはcommit、finding、fix commit、invalidation reasonだけを残します。
 
-- latest meaningful changeのCI・review・thread・mergeabilityは、配送Skillが定める最新snapshotで確認し、台帳には状態の要約と取得時点だけを残す。同じHEAD / baseと状態キーでは既存証拠を再利用する。
-- timeoutは状態変化や証拠失効を意味しない。timeoutだけを理由に同じ照会を繰り返さず、次の確認は通知またはbackoff後の軽量な状態キーに限る。
+- latest meaningful changeのCI・review・thread・mergeabilityは、配送Skillが定める最新snapshotで確認し、台帳には状態の要約と取得時点だけを残す。同じHEAD / base、input closure、execution conditions、状態キーでは既存証拠を再利用する。
+- timeoutは状態変化や証拠失効を意味しない。timeout後は通知またはbackoff付きre-waitを優先し、状態照会は`new signal`または具体的な`diagnostic reason`がある場合だけ行う。
+- 完了したlaneの長文結果を再取得しない。bounded evidence packageと`artifact_reference`を使い、必要な詳細は限定された参照先から一度だけ取得する。
 - 同一PR・同一HEAD系列の包括レビューは、初回レビュー1回と指摘修正後の再レビュー1回までを原則とする。レビューcomment、thread、指摘の件数ではなく、同じ配送系列のreview実行回数で数える。
 - 3回目以降は、未解決のP0 / P1、security・secret・data integrityの未解決事項、新しい変更範囲またはrisk lane、前回証拠の具体的な不足・矛盾のいずれかがある場合だけ、変更pathとrisk laneを限定して再確認する。
 - P2以下だけが残る場合は、影響とnon-blocking判断を記録し、必要なら別Issueへ分離して包括レビューを終了する。成功済みreviewやfull gateを再実行する場合も、失効理由と対象範囲を台帳へ記録する。
@@ -158,11 +159,11 @@ primaryが継続保持するcontrol-plane ledgerは、goal、acceptance、非対
 
 gate evidenceは、次のcompact ledgerで入力閉包とsnapshotへ束縛します。
 
-| gate | input paths | related config | generated artifacts | execution conditions | snapshot / result | invalidation reason / reacquisition target |
+| gate | input paths | related config | generated artifacts | execution conditions | snapshot / result / artifact_reference | invalidation reason / reacquisition target |
 |---|---|---|---|---|---|---|
-| gateごと | 対象pathと依存path | 関連設定・schema | 生成物とchecksum | runtime、base依存、実行条件 | HEAD / base、pass・fail・skip | 失効理由と再取得対象 |
+| gateごと | 対象pathと依存path | 関連設定・schema | 生成物とchecksum | runtime、base依存、実行条件 | HEAD / base、pass・fail・skip、`artifact_reference` | 失効理由と再取得対象 |
 
-input closureは、gateが実際に読む対象path、関連設定、生成物、実行条件、必要なbase依存の集合です。証拠にはこの閉包、snapshot、resultを記録します。HEADが変わっただけでは全gateを失効させず、閉包を構成するpath・設定・生成物・条件・base依存が変わったgateだけを失効させ、理由と再取得対象をledgerへ記録します。閉包が不変であるgateは、旧snapshotを参照しつつ新しいHEADへ影響しない根拠を残して再利用できます。
+input closureは、gateが実際に読む対象path、関連設定、生成物、実行条件、必要なbase依存の集合です。証拠にはこの閉包、snapshot、result、`artifact_reference`を記録します。`reuse_evidence`は同一snapshot・input closure・execution conditionsの成功証跡だけを参照します。HEADが変わっただけでは全gateを失効させず、閉包を構成するpath・設定・生成物・条件・base依存が変わったgateだけを失効させ、`invalidation_condition`、理由、再取得対象をledgerへ記録します。閉包が不変であるgateは、旧snapshotを参照しつつ新しいHEADへ影響しない根拠を残して再利用できます。
 
 長時間検証のevidence packageは、exit code、pass / fail / skip、coverage総計、warning要約、failure箇所、artifact参照だけにします。成功時はfile別coverageと反復進捗を渡さず、raw outputは必要な場合だけ参照へ置きます。
 <!-- agent-harness:review-convergence:end -->
@@ -172,13 +173,11 @@ input closureは、gateが実際に読む対象path、関連設定、生成物�
 
 サブエージェントは、同じ証拠を読む担当を増やすためではなく、専門riskを独立したbounded laneへ分けるために使います。探索、実装、focused verification、review、review fix、docsは、分離可能ならsubagent-default（subagent-first）で委任します。単一API、CI watcher、read-only照会、短いthread返信、短い競合解消などhandoffの固定費が見合わない作業はprimaryが担当します。
 
-委任前に、他作業と重複しないrisk lane、target HEAD / base、target path、確認する具体的な問い、既存報告やprimaryの一次証拠で不足する理由、write ownership、completion、verification、invalidation conditionを定義します。同一PRの各laneは一人のownerが開始からcompletionまで担当し、同一HEAD・同一risk laneの監査は原則1回です。包括監査を複数agentへ同時委任せず、対象変更、新しい実行証拠、明確な証拠不足・矛盾がある場合だけ再監査します。
+委任前に、他作業と重複しないrisk lane、target HEAD / base、target path、確認する具体的な問い、acceptanceを委任の最低文脈として定義し、target pathsは単一pathでも対象集合として明示します。既存報告やprimaryの一次証拠で不足する理由、write ownership、`depends_on`、`snapshot_phase`、runtime_resources、ports、cleanup、output_cap、completion、verification、`reuse_evidence`、`invalidation_condition`、`artifact_reference`も定義し、従来の委任記録にあるwrite ownership、completion、verification、invalidation conditionを維持します。同一PRの各laneは一人のownerが開始からcompletionまで担当し、同一HEAD・同一risk laneの監査は原則1回です。包括監査を複数agentへ同時委任せず、対象変更、新しい実行証拠、明確な証拠不足・矛盾がある場合だけ再監査します。委任文脈では製品固有のtool、UI、runtime configを共有契約へ持ち込みません。委任判断の説明ではspecific reason、context-vs-workを補助的に示してもよいが、direct-primary exceptionのfieldには含めません。
 
-委任文脈はtarget HEAD / base、target path、acceptanceに限り、製品固有のtool、UI、runtime configを共有契約へ持ち込みません。
+分離可能な仕事をprimaryが直接行うのはdirect-primary exceptionに限ります。例外の記録は、`specific_reason`、`evidence_subagent_cannot_continue`、`scope_shrink_history`、`reassignment_history`、`primary_only_question`、`target_paths`、`output_cap`の7 fieldだけを持ちます。受入・統合・配送判断はprimaryの固有責務で、監査の矛盾は一次証拠で解決します。
 
-分離可能な仕事をprimaryが直接行うのはdirect-primary exceptionに限ります。記録にはspecific reason、context-vs-work、primary-only question、target paths、output capを含めます。受入・統合・配送判断はprimaryの固有責務で、監査の矛盾は一次証拠で解決します。
-
-subagent evidence packageは、scope / acceptance、changed paths、conclusion、verification results、unperformed checks、remaining risks、snapshotまたはdiff identifierだけを必要最小限として返します。raw log、file全文、full historyは必須にせず、必要な詳細は参照へ置きます。primaryの最終受入はこのpackageを根拠にし、full fileやfull logを要求しません。
+subagent evidence packageは、scope / acceptance、changed paths、conclusion、verification results、unperformed checks、remaining risks、`snapshot_phase`、snapshotまたはdiff identifier、input closure、execution conditions、`artifact_reference`だけを必要最小限として返します。raw log、file全文、full historyは必須にせず、必要な詳細は参照へ置きます。primaryの最終受入はこのpackageを根拠にし、full fileやfull logを要求しません。
 
 進捗がなく同じ結果を反復するlaneは、`scope shrink → partial result → reassign → primary（必要時のみdirect-primary exception）` の順で止めます。first agent failure alone はdirect-primary exceptionの理由にならず、部分結果と未確認範囲を返してからownerを再割当します。completionに定めた停止・scope縮小・primary返却条件に従い、invalidation conditionが成立した場合だけ再開します。
 
@@ -188,13 +187,22 @@ subagent evidence packageは、scope / acceptance、changed paths、conclusion�
 | owner | agentまたはメインエージェント |
 | target HEAD / base | 委任時点で確認対象とするcommitとbase |
 | target path | 調査・変更・検証の対象path |
+| depends_on | 先行laneまたは必要evidenceのreference。循環依存は許可しない |
+| snapshot_phase | `implementation`、`provisional`、`review`、`final`など、証跡を取得した段階。provisionalをfinalの根拠へ昇格しない |
 | write ownership | laneが編集・生成・公開できるpathと操作の境界 |
+| runtime_resources | laneが使用する一時runtime resource、そのowner、用途、解放条件 |
+| ports | laneが占有するport claim、そのowner、解放条件 |
+| cleanup | 完了・停止・失敗時の後始末、owner、完了条件 |
+| output_cap | handoffへ返す出力の上限と単位。raw logの全文化を許可しない |
 | completion | laneの完了条件と、進捗がない場合の停止・scope縮小・primaryへの返却条件 |
 | verification | 実行する検証と、compactな結果の証跡 |
 | verified snapshot | clean commit、またはbase HEADと確認済みdiffの識別子 |
 | status | pending / active / passed / finding / blocked |
-| invalidation condition | 再検証が必要になる対象変更または新証拠 |
+| reuse_evidence | 同一snapshot・input closure・execution conditionsで取得済みの成功証跡へのreference |
+| invalidation_condition | 再検証が必要になる対象変更または新証拠、失効理由、再取得範囲 |
+| artifact_reference | bounded evidence packageまたは必要時のartifactを指す公開安全なreference |
 | evidence package | scope / acceptance、changed paths、conclusion、verification results、unperformed checks、remaining risks、snapshotまたはdiff identifier |
+| evidence package extensions | `snapshot_phase`、input closure、execution conditions、`artifact_reference` |
 <!-- agent-harness:subagent-orchestration:end -->
 
 ## ルール変更時の確認

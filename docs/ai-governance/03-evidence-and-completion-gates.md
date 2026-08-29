@@ -56,7 +56,11 @@ commit rangeやPRは、Target snapshot / refに記録した既存のHead ref / S
 
 ### 前後screenshot
 
-アプリ本体UIまたはリポジトリが制御する独自UIの変更では、該当画面・状態の変更前と変更後のscreenshotをPR本文へ添付します。
+アプリ本体UI（リポジトリが制御する独自アプリUIを含む）の変更では、該当画面・状態の変更前と変更後のscreenshotをPR本文へ添付します。GitHub共同作業面だけの変更は、後述の面別証跡に従います。
+
+beforeは、実装前にbase snapshotから先行取得できます。base ref / SHA、対象surface・状態、viewport / device、runtime条件、artifact参照を記録し、これらが変わらない場合だけ比較証跡として再利用します。base snapshotのbeforeは、フロー監査で求める現在の監査実行・各stepの証跡を代替しません。
+
+実装中または包括review中に取得したafterは`provisional`です。実装が完了し、同じ配送系列の包括reviewが収束した後、latest HEADで再取得したものだけを`final`としてPRの完了証跡に採用します。latest HEAD / base、所有path、review state、finding / fix、またはruntime条件の変更はafterを失効させ、review中なら`provisional`、収束後なら現行latest HEADで再取得します。失効前の画像は履歴または比較資料として残せますが、finalの根拠には使いません。
 
 取得できない場合は、次を示します。
 
@@ -67,6 +71,10 @@ commit rangeやPRは、Target snapshot / refに記録した既存のHead ref / S
 - 次に必要な確認
 
 受け入れ条件または変更内容上screenshotが必須なのに取得できない場合は、完了扱いにしません。
+
+### runtime / dev serverの実行記録
+
+runtimeまたはdev serverを使用する場合は、起動前にownerを確定し、PID、process group、port、readiness確認、cleanup結果をbounded artifactへ記録します。cleanupではprocess groupの終了とport解放を確認します。既存プロセスを再利用する場合も、owner、対象port、実装との一致、readiness、cleanup責任を確認できることが条件です。owner不明、port衝突、readiness未確認、cleanup未確認の実行はcurrent-run証跡に採用せず、具体的なblockerまたは未確認範囲として報告します。runtimeを使用しない場合は、runtime resources / ports / cleanupを空として記録し、不要な実行記録を作りません。公開報告には運用識別子を必要最小限だけ記載します。
 
 ## 4. フロー監査の証跡
 
@@ -112,7 +120,7 @@ Issue / PR template、repository Markdown、workflowの入力・説明などで�
 - previewまたは実ページ確認が必要か
 - 実行していない検証と残るリスク
 
-GitHubが所有し、リポジトリが変更していないlayout、keyboard、focus、loading、permission stateへ、アプリ本体UIと同じstate matrixやaccessibility証跡を要求しません。screenshotは、リポジトリが制御する視覚構成・操作が実質的に変わる場合、受け入れ条件に含まれる場合、または明示依頼がある場合に必要です。
+GitHubが所有し、リポジトリが変更していないlayout、keyboard、focus、loading、permission stateへ、アプリ本体UIと同じstate matrixやaccessibility証跡を要求しません。GitHub共同作業面だけの変更では、アプリ本体UI用のscreenshotやruntime / dev serverを要求せず、owner / PID / process group / port / readiness / cleanupの実行記録も不要です。screenshotまたはpreviewは、リポジトリが制御する視覚構成・操作が実質的に変わる場合、受け入れ条件に含まれる場合、または明示依頼がある場合に限り追加します。
 
 ## 7. 完了ゲート
 
@@ -133,6 +141,8 @@ GitHubが所有し、リポジトリが変更していないlayout、keyboard、
 - accessibility、視覚階層、copy、熟練者効率、信頼感を確認している。
 - 反証レビューを実施している。
 - 必要な前後screenshotをPRで確認できる。
+- beforeがbase snapshotへ、afterが実装・包括review収束後のlatest headへ束縛され、review中のafterを`provisional`として扱っている。
+- runtime / dev serverを使った場合、owner、PID、process group、port、readiness、cleanupを確認している。
 
 ### UI変更レビュー（差分を伴う場合）
 
@@ -141,6 +151,11 @@ GitHubが所有し、リポジトリが変更していないlayout、keyboard、
 - coverage、未確認consumer、除外理由を示している。
 - IntroducedとRegressionを今回の判定対象としている。
 - Pre-existingの通常の変更起因件数・責任を分離している。ただし、変更目的または安全性を阻害するP0/P1等のblocking findingは完了可否・判定理由に残し、scopeと完了判断を明示的に見直している。
+
+### GitHub共同作業面
+
+- 文言、項目、順序、必須性、構造、link、公開安全性を変更範囲に比例して確認している。
+- アプリ本体UI用の前後screenshot、runtime / dev server、またはその実行記録を要求していない。
 
 ### フロー監査
 

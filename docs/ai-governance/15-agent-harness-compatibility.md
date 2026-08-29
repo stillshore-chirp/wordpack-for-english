@@ -65,6 +65,10 @@
 - Skillから索引を経由して同じSkillへ戻る循環参照を作らない。
 - 1つのSkillへ異なる作業種類を集約しない。
 
+### 5.4 effective instruction budget
+
+3製品で比較する実効instruction budgetは、`global / user-level`、repository root、nested rule、activated Skill、条件成立時のconditional hook contextの合算です。計測条件をexplicit input（revision、path、発動条件、入力資料）としてportableに固定し、estimateとobserved usageを別欄で報告します。製品固有のtoken telemetryや、未発動Hookの注入量を観測済みとは扱いません。
+
 ## 6. tool中立性
 
 共通正本では、結果と契約を定義します。特定toolの操作方法はadapterまたはSkillの補足に留めます。
