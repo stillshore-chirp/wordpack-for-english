@@ -104,12 +104,9 @@ AGENTS.md、Skill、docs、tool専用ruleに同じ長文を複製
 公式仕様が変わった場合は、3製品の現行仕様を確認し、adapterと検証scriptを同時に更新します。
 
 ## 検証
+<!-- agent-harness:maintenance-verification:start -->
 
-変更後は次を実行します。
-
-```bash
-bash scripts/verify-agent-harness.sh
-bash scripts/verify-ai-governance.sh
-```
+開発中とreview修正中は変更pathに対応するfocused testを使います。最終HEADではGitHub配送Skillに従い、変更範囲に必要な包含関係上の最上位full gateをそれぞれ1回実行し、同じsnapshotで内包gateを別途実行しません。
 
 加えて、変更したshellの`bash -n` / `shellcheck`、YAML / frontmatter、link、公開安全性を確認します。ソースコード変更の発動条件、Issue必須、通常配送の権限、reviewとmergeabilityの完了条件、merge等の別権限が機械検査で退行しないことも確認します。検証できない項目は理由と残るリスクを報告します。
+<!-- agent-harness:maintenance-verification:end -->

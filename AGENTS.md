@@ -30,7 +30,7 @@
 
 限定されたタスクは、調査だけ、実装だけ、PR作成だけで恣意的に分断しません。権限、秘密情報、外部サービス障害などの真の blocker がある場合だけ、安全な整合点で止め、確認済み事実、未完了範囲、次の最短アクションを示します。
 
-サブエージェントは独立して並行実行でき、handoffの固定費に見合うbounded work laneへ使います。primary agentは要件・計画・割当・進捗・競合・ガバナンス・受入・配送判断を担います。配送対象の最終HEADではfull gateを原則1回実行します。包括レビューは同一PR・同一HEAD系列で原則2周までとし、P2以下だけなら影響とnon-blocking判断を記録して収束します。委任、短い作業のprimary担当、lane owner、長い検証前のprocess状態、HEAD/baseに束縛したevidenceの詳細は [`docs/agent-harness.md`](docs/agent-harness.md) のGitHub reviewの収束とSubagent orchestrationを正本とします。
+サブエージェントは独立して並行実行でき、handoffの固定費に見合うbounded work laneへ使います。primary agentは要件・計画・割当・進捗・競合・ガバナンス・受入・配送判断を担います。配送対象の最終HEADでは、変更範囲に必要な包含関係上の最上位full gateをそれぞれ原則1回実行し、各gateが内包するgateを同じsnapshotで別途実行しません。包括レビューは同一PR・同一HEAD系列で原則2周までとし、P2以下だけなら影響とnon-blocking判断を記録して収束します。委任、短い作業のprimary担当、lane owner、長い検証前のprocess状態、HEAD/baseに束縛したevidenceの詳細は [`docs/agent-harness.md`](docs/agent-harness.md) のGitHub reviewの収束とSubagent orchestrationを正本とします。
 <!-- agent-harness:workflow:end -->
 
 ## ソースコード変更の配送契約
@@ -99,11 +99,4 @@ DRY、KISS、SRP、SoC、YAGNI、OCP、POLA、テストピラミッドなどは�
 
 ルールを追加・変更する場合は、Codex・Claude Code・Cursor の3製品について、常時読込量、path scope、Skill 発見、正本の重複、tool 固有命令の漏出を確認します。詳細手順をルートへ戻さず、まず nested `AGENTS.md`、task Skill、機械検証のいずれかへ配置します。
 
-変更後は次を実行します。
-
-```bash
-python -m pip install -r requirements-agent-harness.txt
-python scripts/verify_task_skills.py
-bash scripts/verify-agent-harness.sh
-bash scripts/verify-ai-governance.sh
-```
+変更pathに対応するfocused testと、最終HEADでのfull gateの選択・再実行条件はGitHub配送Skillを正本とします。
