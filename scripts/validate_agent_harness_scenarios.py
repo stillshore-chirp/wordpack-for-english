@@ -12,7 +12,6 @@ import argparse
 import fnmatch
 import json
 from pathlib import Path
-import sys
 from typing import Any, Iterable, Mapping, NoReturn, Sequence
 
 
