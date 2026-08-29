@@ -67,6 +67,7 @@ VISUAL_SOURCE_SUFFIXES = {
     ".scss",
     ".svg",
     ".ttf",
+    ".ts",
     ".tsx",
     ".webp",
     ".woff",
@@ -122,6 +123,10 @@ def _is_frontend_test(path: str) -> bool:
     )
 
 
+def _is_type_declaration(path: str) -> bool:
+    return PurePosixPath(path).name.endswith(".d.ts")
+
+
 def _is_visual_e2e_path(path: str) -> bool:
     return path in VISUAL_E2E_FILES or path.startswith(
         "tests/e2e/visual.spec.ts-snapshots/"
@@ -155,6 +160,9 @@ def _classify_path(path: str) -> UiTestScope | None:
 
     if path.startswith(BACKEND_RUNTIME_PREFIX):
         return UiTestScope(playwright_smoke=True, playwright_visual=False)
+
+    if path.startswith(FRONTEND_SOURCE_PREFIX) and _is_type_declaration(path):
+        return UiTestScope(playwright_smoke=False, playwright_visual=False)
 
     if path.startswith(FRONTEND_SOURCE_PREFIX) and not _is_frontend_test(path):
         return UiTestScope(

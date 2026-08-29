@@ -29,8 +29,8 @@ from scripts.classify_ui_test_changes import (
             UiTestScope(playwright_smoke=False, playwright_visual=False),
         ),
         (
-            ["apps/frontend/src/features/quiz/progress.ts"],
-            UiTestScope(playwright_smoke=True, playwright_visual=False),
+            ["apps/frontend/src/lib/date.ts"],
+            UiTestScope(playwright_smoke=True, playwright_visual=True),
         ),
         (
             ["apps/frontend/src/pages/QuizPage/index.tsx"],
@@ -39,6 +39,10 @@ from scripts.classify_ui_test_changes import (
         (
             ["apps/frontend/src/shared/styles/tokens.css"],
             UiTestScope(playwright_smoke=True, playwright_visual=True),
+        ),
+        (
+            ["apps/frontend/src/env.d.ts"],
+            UiTestScope(playwright_smoke=False, playwright_visual=False),
         ),
         (
             ["apps/backend/backend/routers/wordpacks.py"],
