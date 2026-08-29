@@ -1,0 +1,148 @@
+{
+  "kind": "agent-harness-scenario-fixture",
+  "schema_version": 1,
+  "scenarios": [
+    {
+      "id": "timeout-no-repeat",
+      "events": [
+        {"type": "status", "state_key": "ci:head-a", "outcome": "pending"},
+        {"type": "list", "state_key": "ci:head-a", "outcome": "pending"},
+        {"type": "wait", "state_key": "ci:head-a", "outcome": "timeout", "operation": "wait", "backoff_seconds": 10},
+        {"type": "wait", "state_key": "ci:head-a", "outcome": "timeout", "operation": "re_wait", "backoff_seconds": 20},
+        {"type": "signal", "state_key": "ci:head-a", "new_signal": true, "signal": "revision-2"},
+        {"type": "status", "state_key": "ci:head-a", "outcome": "completed"}
+      ]
+    },
+    {
+      "id": "completed-agent",
+      "events": [
+        {
+          "type": "heartbeat",
+          "agent_id": "agent-a",
+          "status": "completed",
+          "evidence_package": {
+            "scope": "synthetic harness lane",
+            "acceptance": "bounded evidence",
+            "conclusion": "passed",
+            "verification_results": ["contract"],
+            "unperformed_checks": ["live runtime"],
+            "remaining_risks": ["tool telemetry"],
+            "snapshot": {"base": "base-a", "head": "head-a", "diff": "diff-a"},
+            "input_closure": {
+              "paths": ["scripts/verify-agent-harness.sh"],
+              "config": ["requirements-agent-harness.txt"],
+              "artifacts": ["verification-summary"]
+            },
+            "execution_conditions": {"runtime": "static", "python": "3.14"}
+          },
+          "artifact_reference": "artifact:agent-a"
+        },
+        {"type": "read", "target": "evidence_package"},
+        {"type": "read", "target": "artifact_reference"}
+      ]
+    },
+    {
+      "id": "provisional-after-final-review",
+      "depends_on": [
+        {"id": "schema-contract", "snapshot_phase": "provisional"},
+        {"id": "ui-evidence", "snapshot_phase": "final"}
+      ],
+      "events": [
+        {"type": "dependency", "id": "schema-contract", "snapshot_phase": "provisional"},
+        {"type": "after", "snapshot_phase": "provisional", "head": "head-a", "latest_head": "head-a", "review_state": "pending"},
+        {"type": "dependency", "id": "schema-contract", "snapshot_phase": "final"},
+        {
+          "type": "review",
+          "status": "converged",
+          "head": "head-b",
+          "latest_head": "head-b",
+          "unresolved_actionable_threads": 0,
+          "mergeability": "clean"
+        },
+        {
+          "type": "after",
+          "snapshot_phase": "final",
+          "head": "head-b",
+          "latest_head": "head-b",
+          "review_state": "converged",
+          "unresolved_actionable_threads": 0,
+          "mergeability": "clean"
+        }
+      ]
+    },
+    {
+      "id": "resource-ownership-cleanup",
+      "events": [
+        {"type": "acquire", "resource_type": "runtime", "resource_id": "backend", "owner": "lane-a", "pid": 1001, "process_group": "pg-a", "port": 8000},
+        {"type": "ready", "resource_id": "backend", "owner": "lane-a", "ready": true},
+        {"type": "acquire", "resource_type": "runtime", "resource_id": "frontend", "owner": "lane-a", "pid": 1002, "process_group": "pg-b", "port": 5173},
+        {"type": "ready", "resource_id": "frontend", "owner": "lane-a", "ready": true},
+        {"type": "release", "resource_id": "frontend", "owner": "lane-a", "cleanup": "complete", "process_alive": false, "port_open": false},
+        {"type": "release", "resource_id": "backend", "owner": "lane-a", "cleanup": "complete", "process_alive": false, "port_open": false}
+      ]
+    },
+    {
+      "id": "evidence-reuse",
+      "events": [
+        {
+          "type": "evidence_success",
+          "key": "gate-1",
+          "status": "passed",
+          "snapshot": {"base": "base-a", "head": "head-a", "diff": "diff-a"},
+          "input_closure": {
+            "paths": ["scripts/verify-agent-harness.sh"],
+            "config": ["requirements-agent-harness.txt"],
+            "artifacts": ["verification-summary"]
+          },
+          "conditions": {"python": "3.14", "runtime": "static"},
+          "artifact_reference": "artifact:gate-1"
+        },
+        {
+          "type": "evidence_reuse",
+          "source_key": "gate-1",
+          "snapshot": {"base": "base-a", "head": "head-a", "diff": "diff-a"},
+          "input_closure": {
+            "paths": ["scripts/verify-agent-harness.sh"],
+            "config": ["requirements-agent-harness.txt"],
+            "artifacts": ["verification-summary"]
+          },
+          "conditions": {"python": "3.14", "runtime": "static"},
+          "artifact_reference": "artifact:gate-1"
+        },
+        {"type": "path_change", "path": "docs/unrelated.md"},
+        {
+          "type": "evidence_reuse",
+          "source_key": "gate-1",
+          "snapshot": {"base": "base-a", "head": "head-a", "diff": "diff-a"},
+          "input_closure": {
+            "paths": ["scripts/verify-agent-harness.sh"],
+            "config": ["requirements-agent-harness.txt"],
+            "artifacts": ["verification-summary"]
+          },
+          "conditions": {"python": "3.14", "runtime": "static"},
+          "artifact_reference": "artifact:gate-1"
+        },
+        {"type": "path_change", "path": "scripts/verify-agent-harness.sh"},
+        {
+          "type": "evidence_invalidate",
+          "source_key": "gate-1",
+          "reason": "input closure intersects changed path",
+          "reacquire_scope": "agent-harness verifier"
+        },
+        {
+          "type": "evidence_success",
+          "key": "gate-2",
+          "status": "passed",
+          "snapshot": {"base": "base-a", "head": "head-b", "diff": "diff-b"},
+          "input_closure": {
+            "paths": ["scripts/verify-agent-harness.sh"],
+            "config": ["requirements-agent-harness.txt"],
+            "artifacts": ["verification-summary"]
+          },
+          "conditions": {"python": "3.14", "runtime": "static"},
+          "artifact_reference": "artifact:gate-2"
+        }
+      ]
+    }
+  ]
+}

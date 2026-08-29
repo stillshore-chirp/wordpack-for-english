@@ -772,6 +772,11 @@ CANONICAL_HARNESS_PATHS=(
   ".cursor/rules/operations.mdc"
 )
 
+SCENARIO_FIXTURE="tests/fixtures/agent-harness/scenarios.json"
+require_file "scripts/validate_agent_harness_scenarios.py"
+require_file "scripts/measure_effective_instruction_budget.py"
+require_file "$SCENARIO_FIXTURE"
+
 FRONTMATTER_PATHS=()
 CLAUDE_RULE_PATHS=()
 CLAUDE_SKILL_PATHS=()
@@ -827,6 +832,49 @@ done
 
 python3 scripts/validate_agent_frontmatter.py --self-test
 python3 scripts/validate_agent_frontmatter.py "${FRONTMATTER_PATHS[@]}"
+
+python3 scripts/validate_agent_harness_scenarios.py "$SCENARIO_FIXTURE"
+
+budget_output="$(mktemp "${TMPDIR:-/tmp}/agent-harness-budget.XXXXXX")"
+cleanup_budget_output() {
+  rm -f "$budget_output"
+}
+trap cleanup_budget_output EXIT
+python3 scripts/measure_effective_instruction_budget.py \
+  --revision "working-tree" \
+  --apply-path "scripts/verify-agent-harness.sh" \
+  --apply-path "scripts/validate_agent_harness_scenarios.py" \
+  --activation-condition "agent-harness verifier" \
+  --root "AGENTS.md" \
+  --nested "apps/frontend/AGENTS.md" \
+  --nested "apps/backend/AGENTS.md" \
+  --nested "docs/operations/AGENTS.md" \
+  --activated-skill ".agents/skills/ui-ux-review/SKILL.md" \
+  --activated-skill ".agents/skills/github-delivery/SKILL.md" \
+  --activated-skill ".agents/skills/production-investigation/SKILL.md" \
+  --activated-skill ".agents/skills/security-publication/SKILL.md" \
+  --conditional-hook-context ".claude/rules/agent-harness.md" \
+  --conditional-hook-context ".cursor/rules/agent-harness.mdc" \
+  >"$budget_output"
+python3 - "$budget_output" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    report = json.load(handle)
+if report.get("observed_usage") is not None or report.get("estimate", {}).get("observed_usage") is not None:
+    raise SystemExit("budget report must not claim observed usage")
+for group in ("global", "root", "nested", "activated_skills", "conditional_hook_contexts"):
+    totals = report.get("groups", {}).get(group, {})
+    if any(field not in totals for field in ("lines", "utf8_bytes", "estimated_tokens")):
+        raise SystemExit(f"budget report missing totals for {group}")
+PY
+cleanup_budget_output
+trap - EXIT
+
+python3 -m pytest -q --no-cov \
+  tests/test_agent_harness_scenarios.py \
+  tests/test_agent_harness_budget.py
 
 CLAUDE_CONTENT="$(tr -d '\r' < CLAUDE.md | sed '/^[[:space:]]*$/d')"
 [[ "$CLAUDE_CONTENT" == "@AGENTS.md" ]] || fail "CLAUDE.md must contain only @AGENTS.md"

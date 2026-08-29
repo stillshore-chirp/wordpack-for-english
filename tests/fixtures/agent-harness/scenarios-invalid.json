@@ -1,0 +1,77 @@
+{
+  "kind": "agent-harness-scenario-fixture",
+  "schema_version": 1,
+  "scenarios": [
+    {
+      "id": "timeout-no-repeat",
+      "events": [
+        {"type": "wait", "state_key": "ci:head-a", "outcome": "timeout", "operation": "wait", "backoff_seconds": 10},
+        {"type": "wait", "state_key": "ci:head-a", "outcome": "timeout", "operation": "wait", "backoff_seconds": 10},
+        {"type": "signal", "state_key": "ci:head-a", "new_signal": true}
+      ]
+    },
+    {
+      "id": "completed-agent",
+      "events": [
+        {
+          "type": "heartbeat",
+          "agent_id": "agent-a",
+          "status": "completed",
+          "evidence_package": {
+            "scope": "synthetic harness lane",
+            "acceptance": "bounded evidence",
+            "conclusion": "passed",
+            "verification_results": ["contract"],
+            "unperformed_checks": ["live runtime"],
+            "remaining_risks": ["tool telemetry"],
+            "snapshot": {"base": "base-a", "head": "head-a", "diff": "diff-a"},
+            "input_closure": {"paths": ["scripts/verify-agent-harness.sh"], "config": [], "artifacts": []},
+            "execution_conditions": {"runtime": "static"}
+          },
+          "artifact_reference": "artifact:agent-a"
+        },
+        {"type": "read", "target": "final_output"}
+      ]
+    },
+    {
+      "id": "provisional-after-final-review",
+      "depends_on": [{"id": "schema-contract", "snapshot_phase": "provisional"}],
+      "events": [
+        {"type": "after", "snapshot_phase": "provisional", "head": "head-a", "latest_head": "head-a", "review_state": "pending"},
+        {"type": "after", "snapshot_phase": "final", "head": "head-a", "latest_head": "head-a", "review_state": "converged", "unresolved_actionable_threads": 0, "mergeability": "clean"}
+      ]
+    },
+    {
+      "id": "resource-ownership-cleanup",
+      "events": [
+        {"type": "acquire", "resource_type": "runtime", "resource_id": "backend", "owner": "lane-a", "pid": 1001, "process_group": "pg-a", "port": 8000},
+        {"type": "acquire", "resource_type": "runtime", "resource_id": "frontend", "owner": "lane-a", "pid": 1002, "process_group": "pg-b", "port": 8000},
+        {"type": "release", "resource_id": "backend", "owner": "lane-a", "cleanup": "complete", "process_alive": false, "port_open": false},
+        {"type": "release", "resource_id": "frontend", "owner": "lane-a", "cleanup": "complete", "process_alive": false, "port_open": false}
+      ]
+    },
+    {
+      "id": "evidence-reuse",
+      "events": [
+        {
+          "type": "evidence_success",
+          "key": "gate-1",
+          "status": "passed",
+          "snapshot": {"base": "base-a", "head": "head-a", "diff": "diff-a"},
+          "input_closure": {"paths": ["scripts/verify-agent-harness.sh"], "config": [], "artifacts": []},
+          "conditions": {"runtime": "static"},
+          "artifact_reference": "artifact:gate-1"
+        },
+        {"type": "path_change", "path": "scripts/verify-agent-harness.sh"},
+        {
+          "type": "evidence_reuse",
+          "source_key": "gate-1",
+          "snapshot": {"base": "base-a", "head": "head-a", "diff": "diff-a"},
+          "input_closure": {"paths": ["scripts/verify-agent-harness.sh"], "config": [], "artifacts": []},
+          "conditions": {"runtime": "static"},
+          "artifact_reference": "artifact:gate-1"
+        }
+      ]
+    }
+  ]
+}
