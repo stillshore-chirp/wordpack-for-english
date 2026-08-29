@@ -83,7 +83,7 @@ AGENTS.md、Skill、docs、tool専用ruleに同じ長文を複製
 ## Review収束
 <!-- agent-harness:review-maintenance:start -->
 
-- review回数、限定再確認、P2以下の収束、primary ledgerは [`docs/agent-harness.md`](../agent-harness.md)、CI待機、最新snapshot、gate失効は [GitHub配送Skill](../../.agents/skills/github-delivery/SKILL.md) を正本とする。
+- review回数、review decision record、停止条件、限定再確認、P2以下の収束、primary ledgerは [`docs/agent-harness.md`](../agent-harness.md)、CI待機、最新snapshot、gate失効は [GitHub配送Skill](../../.agents/skills/github-delivery/SKILL.md) を正本とする。
 - root、nested rule、adapterへその本文を複製せず、特定製品のreview名やtool挙動を共有完了条件にしない。
 - review未提供を自己レビューで代替しないこと、未解決thread・mergeability・merge / close権限のhard gateを、上記正本の変更時に維持する。
 <!-- agent-harness:review-maintenance:end -->

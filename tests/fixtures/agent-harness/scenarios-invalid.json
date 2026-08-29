@@ -42,7 +42,7 @@
       "events": [
         {"type": "after", "snapshot_phase": "provisional", "head": "head-a", "latest_head": "head-a", "review_state": "pending"},
         {"type": "dependency", "id": "schema-contract", "snapshot_phase": "final"},
-        {"type": "review", "status": "converged", "head": "head-b", "latest_head": "head-b", "unresolved_actionable_threads": 0, "mergeability": "clean"},
+        {"type": "review", "status": "converged", "head": "head-b", "latest_head": "head-b", "unresolved_actionable_threads": 0, "mergeability": "clean", "scope": "focused", "terminal": true, "decision_record": {"review_round": 1, "highest_severity": "none", "action": "pass", "exception_reason": null, "invalidated_evidence": [], "follow_up_reference": null}},
         {"type": "review", "status": "changes_requested", "head": "head-b", "latest_head": "head-b", "unresolved_actionable_threads": 1, "mergeability": "blocked"},
         {"type": "after", "snapshot_phase": "final", "head": "head-b", "latest_head": "head-b", "review_state": "converged", "unresolved_actionable_threads": 0, "mergeability": "clean"}
       ]
@@ -89,6 +89,51 @@
           "conditions": {"runtime": "static"},
           "reacquire_source_key": "other-gate",
           "artifact_reference": "artifact:gate-2"
+        }
+      ]
+    },
+    {
+      "id": "review-budget",
+      "events": [
+        {
+          "type": "evidence_success",
+          "key": "review-gate",
+          "gate": "agent-harness-review-input",
+          "status": "passed",
+          "input_closure": {"paths": ["scripts/verify-agent-harness.sh"], "config": [], "artifacts": []},
+          "conditions": {"runtime": "static"},
+          "artifact_reference": "artifact:review-gate"
+        },
+        {
+          "type": "full_gate",
+          "gate": "agent-harness-final",
+          "phase": "final",
+          "status": "passed",
+          "input_closure": {"paths": ["scripts/verify-agent-harness.sh"], "config": [], "artifacts": []},
+          "conditions": {"runtime": "static"}
+        }
+      ]
+    },
+    {
+      "id": "review-budget-exception",
+      "events": [
+        {
+          "type": "review",
+          "status": "converged",
+          "head": "head-a",
+          "latest_head": "head-a",
+          "unresolved_actionable_threads": 0,
+          "mergeability": "clean",
+          "scope": "focused",
+          "terminal": true,
+          "decision_record": {
+            "review_round": 1,
+            "highest_severity": "P2",
+            "action": "re_review",
+            "exception_reason": null,
+            "invalidated_evidence": [],
+            "follow_up_reference": "review:628/retry"
+          }
         }
       ]
     }

@@ -150,10 +150,29 @@ primaryが継続保持するcontrol-plane ledgerは、goal、acceptance、非対
 - timeoutは状態変化や証拠失効を意味しない。timeout後は通知またはbackoff付きre-waitを優先し、状態照会は`new signal`または具体的な`diagnostic reason`がある場合だけ行う。
 - 完了したlaneの長文結果を再取得しない。`artifact_reference` fieldを含むbounded evidence packageを使い、必要な詳細は限定された参照先から一度だけ取得する。
 - 同一PR・同一HEAD系列の包括レビューは、初回レビュー1回と指摘修正後の再レビュー1回までを原則とする。レビューcomment、thread、指摘の件数ではなく、同じ配送系列のreview実行回数で数える。
-- 3回目以降は、未解決のP0 / P1、security・secret・data integrityの未解決事項、新しい変更範囲またはrisk lane、前回証拠の具体的な不足・矛盾のいずれかがある場合だけ、変更pathとrisk laneを限定して再確認する。
-- P2以下だけが残る場合は、影響とnon-blocking判断を記録し、必要なら別Issueへ分離して包括レビューを終了する。成功済みreviewやfull gateを再実行する場合も、失効理由と対象範囲を台帳へ記録する。
+- 3回目以降は、P0 / P1、security・secret・data integrity、または現在の受入証跡が誤りと分かる具体的な矛盾だけを許可し、新しい変更範囲・risk laneや抽象的な`evidence gap`だけでは例外にしない。許可前に対象gate、無効になる証跡、severity、未修正時の具体的な影響を記録する。
+- P2以下だけが残る場合は、影響とnon-blocking判断を記録し、必要なら別Issueへ分離して包括レビューを終了する。P2-only（hard-riskまたは現在の受入証跡が誤りと分かる具体的な矛盾がない場合）は`action=track`をterminalとし、`follow_up_reference`を必須にする。`action=fix`、`action=re_review`、追加の包括reviewは拒否する。成功済みreviewやfull gateを再実行する場合も、失効理由と対象範囲を台帳へ記録する。
 - 変更path、修正commit、元の指摘、focused test結果だけを再レビューの文脈にする。変更のないheadでclean reviewを追加せず、reviewが提供されない場合は未確認範囲とblockerを報告する。
 - actionableな未解決threadがなく、GitHubのmergeabilityがcleanであることを確認する。mergeまたはcloseは別の明示指示がある場合だけ行う。
+
+### Review decision record
+
+既存`review` eventは、既存のstatus、head、latest head、actionable thread、mergeabilityを保持したまま、boundedな`decision_record` objectを含めます。decision recordのfieldは次の6つだけです。`review_round`は同一delivery系列の包括reviewの序数とし、focused reviewはそのround内のterminal確認として扱います。`scope`（focused / comprehensive）と`terminal`はevent metadataであり、decision recordのfieldには数えません。
+
+| Field | Meaning |
+|---|---|
+| `review_round` | 1から始まる同一delivery系列の包括review round。2回目は指摘修正後の再review、3回目以降は許可された例外だけ。 |
+| `highest_severity` | `none`、`P2`、`P1`、`P0`の最高severity。security、secret、data integrity、具体的な受入証跡の矛盾は`exception_reason`のcategoryで明示し、P2-onlyへ隠さない。 |
+| `action` | `pass`、`track`、`fix`、`re_review`、`blocked`の判定。`track`はP2-onlyのterminal、`fix` / `re_review`はP0 / P1または許可例外だけで使う。 |
+| `exception_reason` | 通常は空。round 3以降の例外では、category、target gate、具体的なdetail、`impact_if_unfixed`を持つbounded recordとし、`evidence gap`単独を拒否する。 |
+| `invalidated_evidence` | 例外または修正で無効になる対象gateのevidence key / reference列。例外を許可する前に対象範囲を確定する。 |
+| `follow_up_reference` | `track`、`fix`、`re_review`に結び付く公開安全なIssue、commit、review、gate等の参照。P2-onlyの`track`では必須。 |
+
+`highest_severity=P2`でhard-riskと具体的な証跡矛盾がない場合だけP2-onlyと判定し、`track`をterminalにします。`pass`でP2を隠したり、P2を理由に`fix` / `re_review`や追加包括reviewへ進めたりしません。round 3以降の例外は、`exception_reason`、非空の`invalidated_evidence`、`highest_severity`、`impact_if_unfixed`をactionの前に揃えます。
+
+同じevent streamの`review`でfocused reviewのterminal（converged）を確定してから、後続の`full_gate` finalizationを1回だけ許可します。terminal前のfull gate、高コストgateの先行実行、terminal後の同一full gateの追加実行は拒否します。同一input closure・execution conditionsで成功したgateは既存evidenceをreuseし、P2 trackだけでは再取得しません。input closureまたは条件が失効した場合だけ、既存のinvalidation ruleに従って再取得します。
+
+このdecision recordとstate transitionはrepository required verifierでhard gateとして検査可能にします。Codex app-onlyのUI/API enforcementはアプリ層の責務であり、共有正本やrepository verifierがその実装を擬似実装・runtime証拠化しません。roleを識別できないHookは既存どおりadvisory・fail-openとします。
 
 ### Gate evidence ledger
 

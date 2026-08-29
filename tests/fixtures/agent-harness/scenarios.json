@@ -59,7 +59,17 @@
           "head": "head-b",
           "latest_head": "head-b",
           "unresolved_actionable_threads": 0,
-          "mergeability": "clean"
+          "mergeability": "clean",
+          "scope": "focused",
+          "terminal": true,
+          "decision_record": {
+            "review_round": 1,
+            "highest_severity": "none",
+            "action": "pass",
+            "exception_reason": null,
+            "invalidated_evidence": [],
+            "follow_up_reference": null
+          }
         },
         {
           "type": "after",
@@ -155,6 +165,176 @@
           },
           "conditions": {"python": "3.14", "runtime": "static"},
           "artifact_reference": "artifact:gate-2"
+        }
+      ]
+    },
+    {
+      "id": "review-budget",
+      "events": [
+        {
+          "type": "evidence_success",
+          "key": "review-gate-before",
+          "gate": "agent-harness-review-input",
+          "status": "passed",
+          "input_closure": {
+            "paths": ["scripts/verify-agent-harness.sh"],
+            "config": ["requirements-agent-harness.txt"],
+            "artifacts": ["verification-summary"]
+          },
+          "conditions": {"runtime": "static", "python": "3.14"},
+          "artifact_reference": "artifact:review-gate-before"
+        },
+        {
+          "type": "review",
+          "status": "converged",
+          "head": "head-a",
+          "latest_head": "head-a",
+          "unresolved_actionable_threads": 0,
+          "mergeability": "clean",
+          "scope": "focused",
+          "terminal": true,
+          "decision_record": {
+            "review_round": 1,
+            "highest_severity": "P2",
+            "action": "track",
+            "exception_reason": null,
+            "invalidated_evidence": [],
+            "follow_up_reference": "issue:628/p2-follow-up"
+          }
+        },
+        {
+          "type": "full_gate",
+          "gate": "agent-harness-final",
+          "phase": "final",
+          "status": "passed",
+          "input_closure": {
+            "paths": ["scripts/verify-agent-harness.sh"],
+            "config": ["requirements-agent-harness.txt"],
+            "artifacts": ["verification-summary"]
+          },
+          "conditions": {"runtime": "static", "python": "3.14"}
+        },
+        {
+          "type": "evidence_reuse",
+          "source_key": "review-gate-before",
+          "gate": "agent-harness-review-input",
+          "input_closure": {
+            "paths": ["scripts/verify-agent-harness.sh"],
+            "config": ["requirements-agent-harness.txt"],
+            "artifacts": ["verification-summary"]
+          },
+          "conditions": {"runtime": "static", "python": "3.14"},
+          "artifact_reference": "artifact:review-gate-before"
+        }
+      ]
+    },
+    {
+      "id": "review-budget-exception",
+      "events": [
+        {
+          "type": "evidence_success",
+          "key": "review-gate-round-1",
+          "gate": "agent-harness-review-input",
+          "status": "passed",
+          "input_closure": {
+            "paths": ["scripts/verify-agent-harness.sh"],
+            "config": ["requirements-agent-harness.txt"],
+            "artifacts": ["verification-summary"]
+          },
+          "conditions": {"runtime": "static", "python": "3.14"},
+          "artifact_reference": "artifact:review-gate-round-1"
+        },
+        {
+          "type": "review",
+          "status": "changes_requested",
+          "head": "head-a",
+          "latest_head": "head-a",
+          "unresolved_actionable_threads": 1,
+          "mergeability": "blocked",
+          "scope": "comprehensive",
+          "terminal": false,
+          "decision_record": {
+            "review_round": 1,
+            "highest_severity": "P1",
+            "action": "fix",
+            "exception_reason": null,
+            "invalidated_evidence": ["review-gate-round-1"],
+            "follow_up_reference": "review:628/round-1-fix"
+          }
+        },
+        {
+          "type": "evidence_success",
+          "key": "review-gate-round-2",
+          "gate": "agent-harness-review-input",
+          "status": "passed",
+          "input_closure": {
+            "paths": ["scripts/verify-agent-harness.sh"],
+            "config": ["requirements-agent-harness.txt"],
+            "artifacts": ["verification-summary"]
+          },
+          "conditions": {"runtime": "static", "python": "3.14", "revision": "fixed"},
+          "reacquire_source_key": "review-gate-round-1",
+          "artifact_reference": "artifact:review-gate-round-2"
+        },
+        {
+          "type": "review",
+          "status": "converged",
+          "head": "head-b",
+          "latest_head": "head-b",
+          "unresolved_actionable_threads": 0,
+          "mergeability": "clean",
+          "scope": "comprehensive",
+          "terminal": false,
+          "decision_record": {
+            "review_round": 2,
+            "highest_severity": "none",
+            "action": "pass",
+            "exception_reason": null,
+            "invalidated_evidence": [],
+            "follow_up_reference": null
+          }
+        },
+        {
+          "type": "review",
+          "status": "converged",
+          "head": "head-b",
+          "latest_head": "head-b",
+          "unresolved_actionable_threads": 0,
+          "mergeability": "clean",
+          "scope": "focused",
+          "terminal": true,
+          "decision_record": {
+            "review_round": 2,
+            "highest_severity": "none",
+            "action": "pass",
+            "exception_reason": null,
+            "invalidated_evidence": [],
+            "follow_up_reference": null
+          }
+        },
+        {
+          "type": "full_gate",
+          "gate": "agent-harness-final",
+          "phase": "final",
+          "status": "passed",
+          "input_closure": {
+            "paths": ["scripts/verify-agent-harness.sh"],
+            "config": ["requirements-agent-harness.txt"],
+            "artifacts": ["verification-summary"]
+          },
+          "conditions": {"runtime": "static", "python": "3.14", "revision": "fixed"}
+        },
+        {
+          "type": "evidence_reuse",
+          "source_key": "review-gate-round-2",
+          "gate": "agent-harness-review-input",
+          "input_closure": {
+            "paths": ["scripts/verify-agent-harness.sh"],
+            "config": ["requirements-agent-harness.txt"],
+            "artifacts": ["verification-summary"]
+          },
+          "conditions": {"runtime": "static", "python": "3.14", "revision": "fixed"},
+          "artifact_reference": "artifact:review-gate-round-2"
         }
       ]
     }

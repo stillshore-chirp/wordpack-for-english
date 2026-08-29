@@ -32,6 +32,8 @@ def test_positive_fixture_covers_all_relationship_scenarios() -> None:
         "provisional-after-final-review",
         "resource-ownership-cleanup",
         "evidence-reuse",
+        "review-budget",
+        "review-budget-exception",
     }
 
 
@@ -294,6 +296,276 @@ def test_evidence_success_binds_reacquisition_to_invalidated_source() -> None:
         validate_scenario(wrong_binding)
 
 
+def _scenario(name: str) -> dict[str, object]:
+    return deepcopy(next(item for item in _load("scenarios.json")["scenarios"] if item["id"] == name))
+
+
+def test_review_budget_tracks_p2_and_allows_one_terminal_full_gate() -> None:
+    scenario = _scenario("review-budget")
+    validate_scenario(scenario)
+
+    review = next(event for event in scenario["events"] if event.get("type") == "review")
+    assert review["decision_record"]["action"] == "track"
+    assert review["decision_record"]["follow_up_reference"]
+
+
+def test_review_budget_rejects_p2_fix_and_extra_round() -> None:
+    p2_fix = _scenario("review-budget")
+    review = next(event for event in p2_fix["events"] if event.get("type") == "review")
+    review["decision_record"]["action"] = "fix"
+    with pytest.raises(ScenarioValidationError, match="P2-only decision"):
+        validate_scenario(p2_fix)
+
+    p2_extra_round = _scenario("review-budget")
+    review = next(event for event in p2_extra_round["events"] if event.get("type") == "review")
+    review["decision_record"]["review_round"] = 2
+    with pytest.raises(ScenarioValidationError, match="focused review round"):
+        validate_scenario(p2_extra_round)
+
+    unjustified_round = _scenario("review-budget-exception")
+    first_review = unjustified_round["events"][1]
+    first_review["status"] = "converged"
+    first_review["unresolved_actionable_threads"] = 0
+    first_review["mergeability"] = "clean"
+    first_review["decision_record"] = {
+        "review_round": 1,
+        "highest_severity": "none",
+        "action": "pass",
+        "exception_reason": None,
+        "invalidated_evidence": [],
+        "follow_up_reference": None,
+    }
+    unjustified_round["events"][2].pop("reacquire_source_key")
+    with pytest.raises(ScenarioValidationError, match="second comprehensive review"):
+        validate_scenario(unjustified_round)
+
+
+def test_review_budget_requires_concrete_exception_for_round_three() -> None:
+    base = _scenario("review-budget-exception")
+    focused_index = next(index for index, event in enumerate(base["events"]) if event.get("scope") == "focused")
+    round_three = deepcopy(base["events"][3])
+    round_three["decision_record"]["review_round"] = 3
+    round_three["decision_record"]["highest_severity"] = "P1"
+    round_three["decision_record"]["action"] = "fix"
+    round_three["decision_record"]["invalidated_evidence"] = ["review-gate-round-2"]
+    round_three["decision_record"]["follow_up_reference"] = "review:628/round-3-fix"
+    base["events"].insert(focused_index, round_three)
+
+    with pytest.raises(ScenarioValidationError, match=r"round 3\+"):
+        validate_scenario(base)
+
+    abstract_gap = deepcopy(base)
+    abstract_gap["events"][focused_index]["decision_record"]["exception_reason"] = {
+        "category": "evidence_gap",
+        "target_gate": "agent-harness-final",
+        "detail": "more evidence would be useful",
+        "impact_if_unfixed": "review confidence is lower",
+    }
+    with pytest.raises(ScenarioValidationError, match="abstract evidence gap"):
+        validate_scenario(abstract_gap)
+
+    hard_risk = deepcopy(base)
+    hard_risk["events"][focused_index]["decision_record"]["exception_reason"] = {
+        "category": "security",
+        "target_gate": "agent-harness-final",
+        "detail": "synthetic security finding remains actionable",
+        "impact_if_unfixed": "the required safety gate could be bypassed",
+    }
+    gate_three = deepcopy(hard_risk["events"][2])
+    gate_three["key"] = "review-gate-round-3"
+    gate_three["conditions"]["revision"] = "hard-risk"
+    gate_three["reacquire_source_key"] = "review-gate-round-2"
+    gate_three["artifact_reference"] = "artifact:review-gate-round-3"
+    hard_risk["events"].insert(focused_index + 1, gate_three)
+    hard_risk_focused = next(event for event in hard_risk["events"] if event.get("scope") == "focused")
+    hard_risk_focused["decision_record"]["review_round"] = 3
+    hard_risk_reuse = next(event for event in hard_risk["events"] if event.get("type") == "evidence_reuse")
+    hard_risk_reuse["source_key"] = "review-gate-round-3"
+    hard_risk_reuse["conditions"]["revision"] = "hard-risk"
+    hard_risk_reuse["artifact_reference"] = "artifact:review-gate-round-3"
+    validate_scenario(hard_risk)
+
+
+def test_review_budget_rejects_nonconverged_review_and_gate_reruns() -> None:
+    nonconverged = _scenario("review-budget")
+    review = next(event for event in nonconverged["events"] if event.get("type") == "review")
+    review["status"] = "changes_requested"
+    with pytest.raises(ScenarioValidationError, match="focused review must converge"):
+        validate_scenario(nonconverged)
+
+    underreported_thread = _scenario("review-budget")
+    underreported_thread["events"].insert(1, {"type": "thread", "actionable": True})
+    with pytest.raises(ScenarioValidationError, match="underreports actionable threads"):
+        validate_scenario(underreported_thread)
+
+    early_gate = _scenario("review-budget")
+    gate = deepcopy(next(event for event in early_gate["events"] if event.get("type") == "full_gate"))
+    early_gate["events"].insert(1, gate)
+    with pytest.raises(ScenarioValidationError, match="requires focused review terminal"):
+        validate_scenario(early_gate)
+
+    duplicate_gate = _scenario("review-budget")
+    gate = deepcopy(next(event for event in duplicate_gate["events"] if event.get("type") == "full_gate"))
+    gate["gate"] = "agent-harness-final-retry"
+    duplicate_gate["events"].append(gate)
+    with pytest.raises(ScenarioValidationError, match="same closure and conditions"):
+        validate_scenario(duplicate_gate)
+
+
+def test_review_budget_requires_exact_decision_record_and_known_events() -> None:
+    missing_field = _scenario("review-budget")
+    review = next(event for event in missing_field["events"] if event.get("type") == "review")
+    review["decision_record"].pop("follow_up_reference")
+    with pytest.raises(ScenarioValidationError, match="exactly the six"):
+        validate_scenario(missing_field)
+
+    unknown_event = _scenario("review-budget")
+    unknown_event["events"].append({"type": "bogus"})
+    with pytest.raises(ScenarioValidationError, match="unknown review-budget event"):
+        validate_scenario(unknown_event)
+
+
+def test_review_budget_decision_invalidation_is_immediately_stateful() -> None:
+    reuse_after_decision = _scenario("review-budget-exception")
+    reuse_after_decision["events"].insert(
+        2,
+        {
+            "type": "evidence_reuse",
+            "source_key": "review-gate-round-1",
+            "gate": "agent-harness-review-input",
+            "input_closure": {
+                "paths": ["scripts/verify-agent-harness.sh"],
+                "config": ["requirements-agent-harness.txt"],
+                "artifacts": ["verification-summary"],
+            },
+            "conditions": {"runtime": "static", "python": "3.14"},
+            "artifact_reference": "artifact:review-gate-round-1",
+        },
+    )
+    with pytest.raises(ScenarioValidationError, match="reuses invalidated evidence"):
+        validate_scenario(reuse_after_decision)
+
+    double_invalidation = _scenario("review-budget-exception")
+    double_invalidation["events"].insert(
+        2,
+        {
+            "type": "evidence_invalidate",
+            "source_key": "review-gate-round-1",
+            "reason": "duplicate invalidation attempt",
+        },
+    )
+    with pytest.raises(ScenarioValidationError, match="invalidates evidence twice"):
+        validate_scenario(double_invalidation)
+
+
+def test_review_budget_blocks_unsafe_blocked_decisions() -> None:
+    p2_blocked = _scenario("review-budget")
+    review = next(event for event in p2_blocked["events"] if event.get("type") == "review")
+    review["decision_record"]["action"] = "blocked"
+    review["terminal"] = False
+    with pytest.raises(ScenarioValidationError, match="blocked decision needs P0/P1"):
+        validate_scenario(p2_blocked)
+
+    missing_follow_up = _scenario("review-budget")
+    review = next(event for event in missing_follow_up["events"] if event.get("type") == "review")
+    review["status"] = "blocked"
+    review["terminal"] = False
+    review["decision_record"].update(
+        {
+            "highest_severity": "P1",
+            "action": "blocked",
+            "exception_reason": {
+                "category": "p1",
+                "target_gate": "agent-harness-final",
+                "detail": "synthetic blocker remains",
+                "impact_if_unfixed": "the final gate is blocked",
+            },
+            "invalidated_evidence": ["review-gate-before"],
+            "follow_up_reference": None,
+        }
+    )
+    with pytest.raises(ScenarioValidationError, match="blocked decision needs follow_up_reference"):
+        validate_scenario(missing_follow_up)
+
+    missing_exception = _scenario("review-budget")
+    review = next(event for event in missing_exception["events"] if event.get("type") == "review")
+    review["status"] = "blocked"
+    review["terminal"] = False
+    review["decision_record"].update(
+        {
+            "highest_severity": "P1",
+            "action": "blocked",
+            "invalidated_evidence": ["review-gate-before"],
+            "follow_up_reference": "review:628/blocker",
+        }
+    )
+    with pytest.raises(ScenarioValidationError, match="blocked decision needs exception_reason"):
+        validate_scenario(missing_exception)
+
+    missing_invalidation = _scenario("review-budget")
+    review = next(event for event in missing_invalidation["events"] if event.get("type") == "review")
+    review["status"] = "blocked"
+    review["terminal"] = False
+    review["decision_record"].update(
+        {
+            "highest_severity": "P1",
+            "action": "blocked",
+            "exception_reason": {
+                "category": "p1",
+                "target_gate": "agent-harness-final",
+                "detail": "synthetic blocker remains",
+                "impact_if_unfixed": "the final gate is blocked",
+            },
+            "invalidated_evidence": [],
+            "follow_up_reference": "review:628/blocker",
+        }
+    )
+    with pytest.raises(ScenarioValidationError, match="exception_reason needs invalidated_evidence"):
+        validate_scenario(missing_invalidation)
+
+
+def test_review_budget_requires_explicit_hard_risk_severity_and_normalizes_category() -> None:
+    missing_severity = _scenario("review-budget-exception")
+    review = missing_severity["events"][1]
+    review["decision_record"]["highest_severity"] = "none"
+    review["decision_record"]["exception_reason"] = {
+        "category": "security",
+        "target_gate": "agent-harness-final",
+        "detail": "synthetic security finding",
+        "impact_if_unfixed": "the safety gate could be bypassed",
+    }
+    with pytest.raises(ScenarioValidationError, match="explicit highest_severity"):
+        validate_scenario(missing_severity)
+
+    trailing_gap = _scenario("review-budget-exception")
+    review = trailing_gap["events"][1]
+    review["decision_record"]["exception_reason"] = {
+        "category": "evidence gap ",
+        "target_gate": "agent-harness-final",
+        "detail": "more evidence would be useful",
+        "impact_if_unfixed": "review confidence is lower",
+    }
+    with pytest.raises(ScenarioValidationError, match="abstract evidence gap"):
+        validate_scenario(trailing_gap)
+
+
+def test_review_budget_rejects_unbounded_or_private_event_strings() -> None:
+    local_absolute = "/" + "tmp/local-follow-up"
+    secret_like = "token" + "=" + "sk" + "-" + "live-123456789"
+    mutations = (
+        ("issue:628\nfollow-up", "contains a newline"),
+        (local_absolute, "local absolute path"),
+        (secret_like, "secret-like value"),
+        ("x" * 257, "exceeds the public string limit"),
+    )
+    for value, message in mutations:
+        scenario = _scenario("review-budget")
+        review = next(event for event in scenario["events"] if event.get("type") == "review")
+        review["decision_record"]["follow_up_reference"] = value
+        with pytest.raises(ScenarioValidationError, match=message):
+            validate_scenario(scenario)
+
+
 def test_validator_cli_accepts_positive_and_rejects_negative_fixture() -> None:
     script = Path("scripts/validate_agent_harness_scenarios.py")
     positive = subprocess.run(
@@ -310,6 +582,6 @@ def test_validator_cli_accepts_positive_and_rejects_negative_fixture() -> None:
     )
 
     assert positive.returncode == 0
-    assert "PASS (5 scenarios)" in positive.stdout
+    assert "PASS (7 scenarios)" in positive.stdout
     assert negative.returncode != 0
     assert "ERROR:" in negative.stderr

@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import fnmatch
 import json
+import re
 from pathlib import Path
 from typing import Any, Iterable, Mapping, NoReturn, Sequence
 
@@ -22,6 +23,8 @@ REQUIRED_SCENARIOS = {
     "provisional-after-final-review",
     "resource-ownership-cleanup",
     "evidence-reuse",
+    "review-budget",
+    "review-budget-exception",
 }
 FORBIDDEN_OUTPUT_KEYS = {
     "final_output",
@@ -54,6 +57,34 @@ FORBIDDEN_EVIDENCE_KEY_FRAGMENTS = ("output", "raw", "full", "log", "history")
 MAX_EVIDENCE_DEPTH = 8
 MAX_EVIDENCE_ITEMS = 32
 MAX_EVIDENCE_STRING_CHARS = 512
+MAX_REVIEW_EVENT_DEPTH = 6
+MAX_REVIEW_EVENT_ITEMS = 32
+MAX_REVIEW_STRING_CHARS = 256
+SECRET_LIKE_PATTERNS = (
+    re.compile(r"-----BEGIN [A-Z0-9 ]+PRIVATE KEY-----"),
+    re.compile(r"(?i)\b(?:bearer|token|password|passwd|api[_-]?key|secret)\s*[:=]\s*\S+"),
+    re.compile(r"\b(?:sk|ghp|github_pat|xox[baprs]-)[A-Za-z0-9_-]{8,}\b"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+)
+DECISION_RECORD_FIELDS = {
+    "review_round",
+    "highest_severity",
+    "action",
+    "exception_reason",
+    "invalidated_evidence",
+    "follow_up_reference",
+}
+DECISION_SEVERITIES = {"none", "P2", "P1", "P0"}
+DECISION_ACTIONS = {"pass", "track", "fix", "re_review", "blocked"}
+HARD_RISK_EXCEPTION_CATEGORIES = {
+    "p0",
+    "p1",
+    "security",
+    "secret",
+    "data_integrity",
+    "acceptance_contradiction",
+    "evidence_contradiction",
+}
 
 
 class ScenarioValidationError(ValueError):
@@ -89,6 +120,51 @@ def _events(scenario: Mapping[str, Any]) -> list[dict[str, Any]]:
 def _nonempty_string(scenario_id: str, value: Any, label: str) -> str:
     _require(scenario_id, isinstance(value, str) and bool(value.strip()), f"{label} must be non-empty")
     return value
+
+
+def _public_bounded_string(scenario_id: str, value: Any, label: str, *, allow_empty: bool = False) -> str:
+    _require(scenario_id, isinstance(value, str), f"{label} must be a string")
+    if not allow_empty:
+        _require(scenario_id, bool(value.strip()), f"{label} must be non-empty")
+    _require(scenario_id, len(value) <= MAX_REVIEW_STRING_CHARS, f"{label} exceeds the public string limit")
+    _require(scenario_id, "\n" not in value and "\r" not in value, f"{label} contains a newline")
+    normalized = value.replace("\\", "/")
+    local_absolute = (
+        normalized.startswith(("/", "~/", "//"))
+        or (len(normalized) >= 3 and normalized[0].isalpha() and normalized[1:3] == ":/")
+        or bool(re.search(r"(?:^|[:=])/(?:Users|home|tmp|private|var|etc|opt|workspace)/", normalized))
+        or normalized.lower().startswith("file://")
+    )
+    _require(scenario_id, not local_absolute, f"{label} must not contain a local absolute path")
+    _require(
+        scenario_id,
+        not any(pattern.search(value) for pattern in SECRET_LIKE_PATTERNS),
+        f"{label} contains a secret-like value",
+    )
+    return value
+
+
+def _validate_public_bounded_value(scenario_id: str, value: Any, label: str, depth: int = 0) -> None:
+    _require(scenario_id, depth <= MAX_REVIEW_EVENT_DEPTH, f"{label} exceeds review event nesting depth")
+    if isinstance(value, Mapping):
+        _require(scenario_id, len(value) <= MAX_REVIEW_EVENT_ITEMS, f"{label} has too many fields")
+        for key, item in value.items():
+            _public_bounded_string(scenario_id, key, f"{label} field name")
+            _validate_public_bounded_value(scenario_id, item, f"{label}.{key}", depth + 1)
+        return
+    if isinstance(value, list):
+        _require(scenario_id, len(value) <= MAX_REVIEW_EVENT_ITEMS, f"{label} has too many items")
+        for index, item in enumerate(value):
+            _validate_public_bounded_value(scenario_id, item, f"{label}[{index}]", depth + 1)
+        return
+    if isinstance(value, str):
+        _public_bounded_string(scenario_id, value, label, allow_empty=True)
+        return
+    _require(
+        scenario_id,
+        value is None or isinstance(value, (bool, int, float)),
+        f"{label} has an unsupported value type",
+    )
 
 
 def _path(value: Any) -> str:
@@ -354,6 +430,143 @@ def _mergeability_state(event: Mapping[str, Any]) -> str:
     return str(value).lower()
 
 
+def _validate_decision_record(scenario_id: str, event: Mapping[str, Any]) -> dict[str, Any]:
+    record = _mapping(scenario_id, event.get("decision_record"), "decision_record")
+    _require(
+        scenario_id,
+        set(record) == DECISION_RECORD_FIELDS,
+        "decision_record must contain exactly the six required fields",
+    )
+    review_round = record.get("review_round")
+    _require(
+        scenario_id,
+        isinstance(review_round, int) and not isinstance(review_round, bool) and review_round >= 1,
+        "decision_record.review_round must be a positive integer",
+    )
+    highest_severity = record.get("highest_severity")
+    _require(
+        scenario_id,
+        isinstance(highest_severity, str) and highest_severity in DECISION_SEVERITIES,
+        "decision_record.highest_severity is invalid",
+    )
+    action = record.get("action")
+    _require(
+        scenario_id,
+        isinstance(action, str) and action in DECISION_ACTIONS,
+        "decision_record.action is invalid",
+    )
+    scope = _nonempty_string(scenario_id, event.get("scope"), "review.scope").lower()
+    _require(scenario_id, scope in {"focused", "comprehensive"}, "review.scope is invalid")
+    terminal = event.get("terminal")
+    _require(scenario_id, isinstance(terminal, bool), "review.terminal must be boolean")
+
+    exception_value = record.get("exception_reason")
+    exception_empty = exception_value is None or exception_value == ""
+    hard_risk = False
+    if not exception_empty:
+        exception = _mapping(scenario_id, exception_value, "decision_record.exception_reason")
+        required_exception_fields = {"category", "target_gate", "detail", "impact_if_unfixed"}
+        _require(
+            scenario_id,
+            set(exception) == required_exception_fields,
+            "decision_record.exception_reason must contain category, target_gate, detail, and impact_if_unfixed",
+        )
+        category = _nonempty_string(scenario_id, exception.get("category"), "exception_reason.category")
+        normalized_category = category.strip().lower().replace("-", "_").replace(" ", "_")
+        _require(
+            scenario_id,
+            normalized_category not in {"evidence_gap", "abstract_evidence_gap"},
+            "abstract evidence gap cannot be the sole exception reason",
+        )
+        _require(
+            scenario_id,
+            normalized_category in HARD_RISK_EXCEPTION_CATEGORIES,
+            "exception_reason.category is not an allowed exception",
+        )
+        _nonempty_string(scenario_id, exception.get("target_gate"), "exception_reason.target_gate")
+        _nonempty_string(scenario_id, exception.get("detail"), "exception_reason.detail")
+        _nonempty_string(scenario_id, exception.get("impact_if_unfixed"), "exception_reason.impact_if_unfixed")
+        hard_risk = normalized_category in HARD_RISK_EXCEPTION_CATEGORIES
+        if hard_risk:
+            _require(
+                scenario_id,
+                highest_severity != "none",
+                "hard-risk exception needs an explicit highest_severity",
+            )
+
+    invalidated_evidence = record.get("invalidated_evidence")
+    _require(scenario_id, isinstance(invalidated_evidence, list), "decision_record.invalidated_evidence must be a list")
+    invalidated_keys: list[str] = []
+    for index, value in enumerate(invalidated_evidence):
+        invalidated_keys.append(_nonempty_string(scenario_id, value, f"invalidated_evidence[{index}]"))
+    _require(scenario_id, len(set(invalidated_keys)) == len(invalidated_keys), "decision_record.invalidated_evidence must be unique")
+
+    follow_up_reference = record.get("follow_up_reference")
+    if follow_up_reference is not None:
+        follow_up_reference = _nonempty_string(scenario_id, follow_up_reference, "decision_record.follow_up_reference")
+
+    if not exception_empty:
+        _require(
+            scenario_id,
+            highest_severity in {"P0", "P1"} or hard_risk,
+            "exception_reason needs P0/P1 or an allowed hard-risk severity",
+        )
+        _require(scenario_id, bool(invalidated_keys), "exception_reason needs invalidated_evidence")
+        _require(
+            scenario_id,
+            action in {"fix", "re_review", "blocked"},
+            "exception_reason needs a fix, re_review, or blocked action",
+        )
+
+    if action == "track":
+        _require(scenario_id, highest_severity == "P2" and not hard_risk and exception_empty, "P2-only decision must use track without an exception")
+        _require(scenario_id, terminal is True, "P2 track decision must be terminal")
+        _require(scenario_id, follow_up_reference is not None, "P2 track decision needs follow_up_reference")
+    elif action in {"fix", "re_review"}:
+        _require(
+            scenario_id,
+            highest_severity in {"P0", "P1"} or hard_risk,
+            "P2-only decision cannot use fix/re_review",
+        )
+        _require(scenario_id, follow_up_reference is not None, f"{action} decision needs follow_up_reference")
+        _require(scenario_id, bool(invalidated_keys), f"{action} decision needs invalidated_evidence")
+    elif action == "blocked":
+        _require(scenario_id, terminal is False, "blocked decision cannot be terminal")
+        _require(
+            scenario_id,
+            highest_severity in {"P0", "P1"} or hard_risk,
+            "blocked decision needs P0/P1 or an allowed hard-risk severity",
+        )
+        _require(scenario_id, not exception_empty, "blocked decision needs exception_reason")
+        _require(scenario_id, follow_up_reference is not None, "blocked decision needs follow_up_reference")
+        _require(scenario_id, bool(invalidated_keys), "blocked decision needs invalidated_evidence")
+    elif action == "pass":
+        _require(scenario_id, highest_severity == "none" and exception_empty, "pass cannot hide a finding or exception")
+        _require(scenario_id, not invalidated_keys and follow_up_reference is None, "pass decision cannot carry follow-up or invalidation")
+
+    if scope == "focused":
+        _require(scenario_id, action in {"pass", "track"}, "focused review must pass or track")
+
+    if scope == "comprehensive" and review_round >= 3:
+        _require(
+            scenario_id,
+            not exception_empty and (highest_severity in {"P0", "P1"} or hard_risk),
+            "review round 3+ needs an allowed concrete exception",
+        )
+        _require(scenario_id, bool(invalidated_keys), "review round 3+ needs invalidated_evidence")
+        _require(scenario_id, action in {"fix", "re_review"}, "review round 3+ needs fix or re_review")
+
+    return {
+        "review_round": review_round,
+        "highest_severity": highest_severity,
+        "action": action,
+        "scope": scope,
+        "terminal": terminal,
+        "hard_risk": hard_risk,
+        "invalidated_evidence": invalidated_keys,
+    }
+
+
 def _validate_provisional_final_scenario(scenario: Mapping[str, Any]) -> None:
     scenario_id = str(scenario["id"])
     events = _events(scenario)
@@ -405,8 +618,11 @@ def _validate_provisional_final_scenario(scenario: Mapping[str, Any]) -> None:
                 ):
                     _fail(scenario_id, f"event {index} makes final after evidence stale after converged review")
                 _fail(scenario_id, f"event {index} updates review after converged review; final evidence is stale")
+            decision = _validate_decision_record(scenario_id, event)
             if _review_is_converged(event):
                 _require(scenario_id, review_index is None, "converged review must be unique")
+                _require(scenario_id, decision["scope"] == "focused", "converged review must be a focused terminal review")
+                _require(scenario_id, decision["terminal"] is True, "converged review must be terminal")
                 _nonempty_string(scenario_id, event.get("head"), "review.head")
                 _require(scenario_id, event.get("latest_head") == event.get("head"), "review latest_head must equal reviewed head")
                 _require(scenario_id, event.get("unresolved_actionable_threads") == 0, "review has unresolved actionable threads")
@@ -455,6 +671,175 @@ def _validate_provisional_final_scenario(scenario: Mapping[str, Any]) -> None:
     _require(scenario_id, had_nonfinal_dependency, "scenario must exercise a non-final dependency")
     _require(scenario_id, provisional_count >= 1, "non-final dependency needs provisional after evidence")
     _require(scenario_id, final_evidence is not None and final_index is not None, "scenario needs final after evidence")
+
+
+def _validate_review_budget_scenario(scenario: Mapping[str, Any]) -> None:
+    scenario_id = str(scenario["id"])
+    events = _events(scenario)
+    allowed_event_types = {
+        "review",
+        "thread",
+        "review_thread",
+        "mergeability",
+        "full_gate",
+        "evidence_success",
+        "evidence_reuse",
+        "evidence_invalidate",
+    }
+    evidence: dict[str, dict[str, Any]] = {}
+    invalidated: set[str] = set()
+    reacquired: set[str] = set()
+    full_gate_runs: dict[str, tuple[str, str]] = {}
+    last_comprehensive_round = 0
+    last_comprehensive_decision: dict[str, Any] | None = None
+    terminal_review_index: int | None = None
+    saw_reuse = False
+    actionable_since_review = 0
+
+    for index, event in enumerate(events):
+        _validate_public_bounded_value(scenario_id, event, f"event {index}")
+        event_type = str(event["type"])
+        _require(scenario_id, event_type in allowed_event_types, f"event {index} has unknown review-budget event: {event_type}")
+        if terminal_review_index is not None and event_type in {"review", "thread", "review_thread", "mergeability"}:
+            _fail(scenario_id, f"event {index} occurs after terminal focused review")
+
+        if event_type == "review":
+            decision = _validate_decision_record(scenario_id, event)
+            status = str(event.get("status", event.get("state", ""))).lower()
+            _require(scenario_id, status in {"converged", "changes_requested", "pending", "blocked"}, f"event {index} has invalid review status")
+            if decision["action"] == "blocked":
+                _require(scenario_id, status == "blocked", f"event {index} blocked decision needs blocked review status")
+            unresolved = event.get("unresolved_actionable_threads", 0)
+            _require(
+                scenario_id,
+                isinstance(unresolved, int) and not isinstance(unresolved, bool) and unresolved >= 0,
+                "review unresolved_actionable_threads must be a non-negative integer",
+            )
+            new_actionable = _new_actionable_threads(scenario_id, event)
+            mergeability = _mergeability_state(event)
+            _require(
+                scenario_id,
+                unresolved >= max(new_actionable, actionable_since_review),
+                f"event {index} review underreports actionable threads",
+            )
+            if decision["action"] == "pass":
+                _require(
+                    scenario_id,
+                    status == "converged" and unresolved == 0 and new_actionable == 0 and mergeability == "clean",
+                    f"event {index} pass decision requires a converged clean review",
+                )
+            if "head" in event:
+                _nonempty_string(scenario_id, event.get("head"), f"event {index} review.head")
+            if "latest_head" in event:
+                _require(scenario_id, event.get("latest_head") == event.get("head"), f"event {index} review latest_head must equal head")
+
+            for evidence_key in decision["invalidated_evidence"]:
+                _require(scenario_id, evidence_key in evidence, f"event {index} decision references unknown evidence {evidence_key}")
+                _require(scenario_id, evidence_key not in invalidated, f"event {index} decision invalidates evidence twice")
+                invalidated.add(evidence_key)
+                reacquired.discard(evidence_key)
+
+            if decision["scope"] == "comprehensive":
+                _require(scenario_id, decision["terminal"] is False, f"event {index} comprehensive review cannot be terminal")
+                _require(scenario_id, decision["review_round"] == last_comprehensive_round + 1, f"event {index} review round must advance by one")
+                if decision["review_round"] == 2:
+                    _require(
+                        scenario_id,
+                        last_comprehensive_decision is not None
+                        and last_comprehensive_decision["action"] in {"fix", "re_review"}
+                        and (
+                            last_comprehensive_decision["highest_severity"] in {"P0", "P1"}
+                            or last_comprehensive_decision["hard_risk"]
+                        ),
+                        f"event {index} second comprehensive review needs a P0/P1 or hard-risk finding",
+                    )
+                _require(scenario_id, status != "converged" or (unresolved == 0 and new_actionable == 0 and mergeability == "clean"), f"event {index} converged review is not clean")
+                last_comprehensive_round = decision["review_round"]
+                last_comprehensive_decision = decision
+            else:
+                _require(scenario_id, decision["terminal"] is True, f"event {index} focused review must be terminal")
+                _require(scenario_id, terminal_review_index is None, f"event {index} has duplicate terminal focused review")
+                _require(scenario_id, decision["review_round"] == (last_comprehensive_round or 1), f"event {index} focused review round is out of sequence")
+                _require(
+                    scenario_id,
+                    last_comprehensive_decision is None or last_comprehensive_decision["action"] != "blocked",
+                    f"event {index} cannot close a blocked comprehensive decision",
+                )
+                _require(scenario_id, status == "converged", f"event {index} focused review must converge")
+                _nonempty_string(scenario_id, event.get("head"), f"event {index} review.head")
+                _require(scenario_id, event.get("latest_head") == event.get("head"), f"event {index} review latest_head must equal head")
+                _require(scenario_id, unresolved == 0 and new_actionable == 0, f"event {index} focused review has actionable threads")
+                _require(scenario_id, mergeability == "clean", f"event {index} focused review mergeability is not clean")
+                terminal_review_index = index
+            actionable_since_review = 0
+        elif event_type in {"thread", "review_thread"}:
+            actionable_since_review += _new_actionable_threads(scenario_id, event)
+        elif event_type == "mergeability":
+            mergeability = _mergeability_state(event)
+            _nonempty_string(scenario_id, mergeability, f"event {index} mergeability")
+        elif event_type == "full_gate":
+            _require(scenario_id, terminal_review_index is not None and terminal_review_index < index, f"event {index} full gate requires focused review terminal")
+            gate = _nonempty_string(scenario_id, event.get("gate"), f"event {index} gate")
+            _require(scenario_id, str(event.get("phase", "")).lower() == "final", f"event {index} full gate must be final")
+            _require(scenario_id, str(event.get("status", "")).lower() in {"passed", "success"}, f"event {index} full gate is not successful")
+            closure = _closure(scenario_id, event)
+            conditions = _mapping(scenario_id, event.get("conditions"), "conditions")
+            _require(scenario_id, gate not in full_gate_runs, f"event {index} reruns the same full gate")
+            signature = (_canonical(closure), _canonical(conditions))
+            _require(
+                scenario_id,
+                signature not in full_gate_runs.values(),
+                f"event {index} reruns a successful full gate under the same closure and conditions",
+            )
+            full_gate_runs[gate] = signature
+        elif event_type == "evidence_success":
+            key = _nonempty_string(scenario_id, event.get("key"), f"event {index} key")
+            _require(scenario_id, key not in evidence, f"event {index} duplicates evidence key {key}")
+            gate = _nonempty_string(scenario_id, event.get("gate"), f"event {index} gate")
+            _require(scenario_id, str(event.get("status", "")).lower() in {"passed", "success"}, f"event {index} evidence is not successful")
+            artifact_reference = _nonempty_string(scenario_id, event.get("artifact_reference"), f"event {index} artifact_reference")
+            closure = _closure(scenario_id, event)
+            conditions = _mapping(scenario_id, event.get("conditions"), "conditions")
+            signature = (_canonical(closure), _canonical(conditions))
+            pending = sorted(source_key for source_key in invalidated if source_key not in reacquired)
+            if pending:
+                reacquire_source_key = _nonempty_string(scenario_id, event.get("reacquire_source_key"), f"event {index} reacquire_source_key")
+                _require(scenario_id, reacquire_source_key in pending, f"event {index} must bind evidence to an invalidated source gate")
+                _require(scenario_id, signature != evidence[reacquire_source_key]["signature"], f"event {index} must capture changed evidence")
+                reacquired.add(reacquire_source_key)
+            else:
+                _require(scenario_id, "reacquire_source_key" not in event, f"event {index} has no invalidated evidence to reacquire")
+            for existing_key, record in evidence.items():
+                _require(
+                    scenario_id,
+                    record["gate"] != gate or existing_key in invalidated or record["signature"] != signature,
+                    f"event {index} reruns a successful gate without invalidation",
+                )
+            evidence[key] = {"gate": gate, "signature": signature, "artifact_reference": artifact_reference}
+        elif event_type == "evidence_reuse":
+            source_key = _nonempty_string(scenario_id, event.get("source_key"), f"event {index} source_key")
+            _require(scenario_id, source_key in evidence, f"event {index} reuses unknown evidence {source_key}")
+            _require(scenario_id, source_key not in invalidated, f"event {index} reuses invalidated evidence {source_key}")
+            gate = _nonempty_string(scenario_id, event.get("gate"), f"event {index} gate")
+            record = evidence[source_key]
+            _require(scenario_id, record["gate"] == gate, f"event {index} reuses evidence from another gate")
+            closure = _closure(scenario_id, event)
+            conditions = _mapping(scenario_id, event.get("conditions"), "conditions")
+            _require(scenario_id, (_canonical(closure), _canonical(conditions)) == record["signature"], f"event {index} changes closure or conditions during reuse")
+            _require(scenario_id, event.get("artifact_reference") == record["artifact_reference"], f"event {index} changes artifact_reference during reuse")
+            saw_reuse = True
+        elif event_type == "evidence_invalidate":
+            source_key = _nonempty_string(scenario_id, event.get("source_key"), f"event {index} source_key")
+            _require(scenario_id, source_key in evidence, f"event {index} invalidates unknown evidence")
+            _require(scenario_id, source_key not in invalidated, f"event {index} invalidates evidence twice")
+            _nonempty_string(scenario_id, event.get("reason"), f"event {index} invalidation reason")
+            invalidated.add(source_key)
+            reacquired.discard(source_key)
+
+    _require(scenario_id, terminal_review_index is not None, "scenario needs a terminal focused review")
+    _require(scenario_id, len(full_gate_runs) == 1, "scenario needs exactly one final full gate")
+    _require(scenario_id, saw_reuse, "scenario needs successful evidence reuse")
+    _require(scenario_id, invalidated <= reacquired, "scenario leaves invalidated evidence unreacquired")
 
 
 def _validate_resource_scenario(scenario: Mapping[str, Any]) -> None:
@@ -754,6 +1139,8 @@ def validate_scenario(scenario: Mapping[str, Any]) -> None:
         "provisional-after-final-review": _validate_provisional_final_scenario,
         "resource-ownership-cleanup": _validate_resource_scenario,
         "evidence-reuse": _validate_evidence_reuse_scenario,
+        "review-budget": _validate_review_budget_scenario,
+        "review-budget-exception": _validate_review_budget_scenario,
     }
     validator = validators.get(scenario_id)
     if validator is None:
