@@ -33,6 +33,10 @@ from scripts.classify_ui_test_changes import (
             UiTestScope(playwright_smoke=True, playwright_visual=True),
         ),
         (
+            ["apps/frontend/src/content.json"],
+            UiTestScope(playwright_smoke=True, playwright_visual=True),
+        ),
+        (
             ["apps/frontend/src/pages/QuizPage/index.tsx"],
             UiTestScope(playwright_smoke=True, playwright_visual=True),
         ),

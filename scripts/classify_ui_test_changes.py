@@ -54,25 +54,6 @@ NON_PR_GATE_E2E_FILES = {
     "tests/e2e/quiz.spec.ts",
     "tests/e2e/shelves.spec.ts",
 }
-VISUAL_SOURCE_SUFFIXES = {
-    ".avif",
-    ".css",
-    ".gif",
-    ".jpeg",
-    ".jpg",
-    ".less",
-    ".otf",
-    ".png",
-    ".sass",
-    ".scss",
-    ".svg",
-    ".ttf",
-    ".ts",
-    ".tsx",
-    ".webp",
-    ".woff",
-    ".woff2",
-}
 KNOWN_NON_UI_PREFIXES = (
     ".agents/",
     ".claude/",
@@ -165,11 +146,7 @@ def _classify_path(path: str) -> UiTestScope | None:
         return UiTestScope(playwright_smoke=False, playwright_visual=False)
 
     if path.startswith(FRONTEND_SOURCE_PREFIX) and not _is_frontend_test(path):
-        return UiTestScope(
-            playwright_smoke=True,
-            playwright_visual=PurePosixPath(path).suffix.lower()
-            in VISUAL_SOURCE_SUFFIXES,
-        )
+        return UiTestScope(playwright_smoke=True, playwright_visual=True)
 
     if _is_frontend_test(path):
         return UiTestScope(playwright_smoke=False, playwright_visual=False)

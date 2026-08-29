@@ -169,7 +169,7 @@ flowchart LR
 | **Security headers tests** | push / PR | セキュリティヘッダー検証（HSTS, CSP, etc.） |
 | **Frontend tests** | push / PR | `vitest --coverage` によるフロントエンドテストと、lines/statements 80%、branches 70%、functions 66% のカバレッジ閾値チェック（functions は段階的に 70%→75%→80% へ引き上げ予定） |
 | **Playwright smoke** | `pull_request`（主要導線に影響する変更かつBackend / Frontendテスト成功後）/ `main` push | Playwright の主要導線スモークテスト（`auth.spec.ts` / `guest.spec.ts` / `wordpack-server-query.spec.ts` / `wordpack.spec.ts`）。文書やtest-only変更はPRでskipし、mainへのpushではデプロイ前提として常に実行 |
-| **Visual regression** | `pull_request`（描画に影響し得る変更のみ） | frontend runtimeのTS／TSX・style・画像、visual test／snapshot、関連するbuild・依存設定が変わった場合にPlaywrightの視覚回帰 (`tests/e2e/visual.spec.ts`) を実行。frontendのtest-only・型宣言だけの変更はskip |
+| **Visual regression** | `pull_request`（描画に影響し得る変更のみ） | frontend runtime source、visual test／snapshot、関連するbuild・依存設定が変わった場合にPlaywrightの視覚回帰 (`tests/e2e/visual.spec.ts`) を実行。frontendのtest-only・型宣言だけの変更はskip |
 | **UI test selection gate** | push / PR | changed path分類、Backend／Frontend、選択されたPlaywright smokeの結果を集約し、前提失敗によるsmoke skipを成功扱いにしない |
 | **Visual test selection gate** | `pull_request` | changed path分類と選択されたVisual Regressionの結果を集約し、分類失敗や予期しないskipを成功扱いにしない |
 | **Cloud Run config guard** | Security headers 成功後 | デプロイスクリプトの lint と dry-run 検証 |
