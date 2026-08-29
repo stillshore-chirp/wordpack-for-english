@@ -331,6 +331,29 @@ def _review_is_converged(event: Mapping[str, Any]) -> bool:
     )
 
 
+def _new_actionable_threads(scenario_id: str, event: Mapping[str, Any]) -> int:
+    value = event.get("new_actionable_threads", 0)
+    _require(
+        scenario_id,
+        isinstance(value, int) and not isinstance(value, bool) and value >= 0,
+        "new_actionable_threads must be a non-negative integer",
+    )
+    single = event.get("new_actionable_thread")
+    if single is not None:
+        _require(scenario_id, isinstance(single, bool), "new_actionable_thread must be boolean")
+        value = max(value, int(single))
+    if event.get("type") in {"thread", "review_thread"}:
+        actionable = event.get("actionable", event.get("new_actionable", False))
+        _require(scenario_id, isinstance(actionable, bool), "thread actionable must be boolean")
+        value = max(value, int(actionable))
+    return value
+
+
+def _mergeability_state(event: Mapping[str, Any]) -> str:
+    value = event.get("mergeability", event.get("state", event.get("status", "")))
+    return str(value).lower()
+
+
 def _validate_provisional_final_scenario(scenario: Mapping[str, Any]) -> None:
     scenario_id = str(scenario["id"])
     events = _events(scenario)
@@ -350,7 +373,7 @@ def _validate_provisional_final_scenario(scenario: Mapping[str, Any]) -> None:
     final_index: int | None = None
     provisional_count = 0
     final_evidence: Mapping[str, Any] | None = None
-    allowed_event_types = {"dependency", "review", "after", "after_evidence", "evidence"}
+    allowed_event_types = {"dependency", "review", "thread", "review_thread", "mergeability", "after", "after_evidence", "evidence"}
 
     for index, event in enumerate(events):
         _require(scenario_id, final_index is None, f"event {index} occurs after terminal final after evidence")
@@ -362,18 +385,48 @@ def _validate_provisional_final_scenario(scenario: Mapping[str, Any]) -> None:
             phase = _dependency_phase(event)
             _require(scenario_id, phase in {"implementation", "provisional", "review", "final"}, f"invalid dependency update phase: {phase}")
             dependency_phases[dependency_id] = phase
-        elif _review_is_converged(event):
-            _require(scenario_id, review_index is None, "converged review must be unique")
-            _nonempty_string(scenario_id, event.get("head"), "review.head")
-            _require(scenario_id, event.get("latest_head") == event.get("head"), "review latest_head must equal reviewed head")
-            _require(scenario_id, event.get("unresolved_actionable_threads") == 0, "review has unresolved actionable threads")
-            _require(scenario_id, str(event.get("mergeability", "")).lower() == "clean", "review mergeability is not clean")
+        elif event_type == "review":
+            new_actionable_threads = _new_actionable_threads(scenario_id, event)
+            unresolved_actionable_threads = event.get("unresolved_actionable_threads", 0)
             _require(
                 scenario_id,
-                all(value == "final" for value in dependency_phases.values()),
-                "converged review must follow final dependencies",
+                isinstance(unresolved_actionable_threads, int)
+                and not isinstance(unresolved_actionable_threads, bool)
+                and unresolved_actionable_threads >= 0,
+                "unresolved_actionable_threads must be a non-negative integer",
             )
-            review_index = index
+            mergeability = _mergeability_state(event)
+            if review_index is not None:
+                if (
+                    str(event.get("status", event.get("state", ""))).lower() == "changes_requested"
+                    or new_actionable_threads > 0
+                    or unresolved_actionable_threads > 0
+                    or mergeability == "blocked"
+                ):
+                    _fail(scenario_id, f"event {index} makes final after evidence stale after converged review")
+                _fail(scenario_id, f"event {index} updates review after converged review; final evidence is stale")
+            if _review_is_converged(event):
+                _require(scenario_id, review_index is None, "converged review must be unique")
+                _nonempty_string(scenario_id, event.get("head"), "review.head")
+                _require(scenario_id, event.get("latest_head") == event.get("head"), "review latest_head must equal reviewed head")
+                _require(scenario_id, event.get("unresolved_actionable_threads") == 0, "review has unresolved actionable threads")
+                _require(scenario_id, new_actionable_threads == 0, "review has new actionable threads")
+                _require(scenario_id, mergeability == "clean", "review mergeability is not clean")
+                _require(
+                    scenario_id,
+                    all(value == "final" for value in dependency_phases.values()),
+                    "converged review must follow final dependencies",
+                )
+                review_index = index
+        elif event_type in {"thread", "review_thread"}:
+            new_actionable_threads = _new_actionable_threads(scenario_id, event)
+            if review_index is not None and new_actionable_threads > 0:
+                _fail(scenario_id, f"event {index} makes final after evidence stale with a new actionable thread")
+        elif event_type == "mergeability":
+            mergeability = _mergeability_state(event)
+            _nonempty_string(scenario_id, mergeability, f"event {index} mergeability")
+            if review_index is not None and mergeability == "blocked":
+                _fail(scenario_id, f"event {index} makes final after evidence stale with blocked mergeability")
         elif event_type in {"after", "after_evidence", "evidence"}:
             _require(scenario_id, event.get("kind", "after") == "after", f"event {index} has unknown after evidence kind")
             phase = str(event.get("snapshot_phase", "")).lower()
@@ -392,7 +445,16 @@ def _validate_provisional_final_scenario(scenario: Mapping[str, Any]) -> None:
             review_event = events[review_index]
             _require(scenario_id, event.get("head") == review_event.get("head"), "final after head differs from converged review head")
             _require(scenario_id, event.get("review_state") == "converged", "final after evidence must record converged review_state")
-            _require(scenario_id, event.get("unresolved_actionable_threads") == 0, "final after evidence has unresolved threads")
+            _require(scenario_id, _new_actionable_threads(scenario_id, event) == 0, "final after evidence has new actionable threads")
+            unresolved_actionable_threads = event.get("unresolved_actionable_threads")
+            _require(
+                scenario_id,
+                isinstance(unresolved_actionable_threads, int)
+                and not isinstance(unresolved_actionable_threads, bool)
+                and unresolved_actionable_threads >= 0,
+                "final after unresolved_actionable_threads must be a non-negative integer",
+            )
+            _require(scenario_id, unresolved_actionable_threads == 0, "final after evidence has unresolved threads")
             _require(scenario_id, str(event.get("mergeability", "")).lower() == "clean", "final after evidence mergeability is not clean")
             _require(scenario_id, final_index is None, "final after evidence must be unique")
             final_index = index
@@ -444,6 +506,12 @@ def _validate_resource_scenario(scenario: Mapping[str, Any]) -> None:
                 _require(scenario_id, port not in active_ports, f"event {index} duplicates port {port}")
                 active_ports[port] = resource_id
                 had_port_claim = True
+            if resource_type == "port":
+                _require(
+                    scenario_id,
+                    isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535,
+                    f"event {index} port resource needs a numeric port",
+                )
             resource = dict(event)
             resource["owner"] = owner
             resource["resource_key"] = resource_key
@@ -575,27 +643,38 @@ def _validate_evidence_reuse_scenario(scenario: Mapping[str, Any]) -> None:
             }
             pending = sorted(source_key for source_key in invalidated if source_key not in reacquired)
             if pending:
-                closure_paths = [*closure["paths"], *closure["config"], *closure["artifacts"]]
-                _require(scenario_id, bool(closure_paths), f"event {index} current evidence needs a non-empty input closure")
-                covered = [
-                    source_key
-                    for source_key in pending
-                    if all(
-                        _paths_intersect(closure_paths, changed_path)
-                        for changed_path in changed_paths_by_key.get(source_key, set())
-                    )
-                ]
+                reacquire_source_key = _nonempty_string(
+                    scenario_id,
+                    event.get("reacquire_source_key"),
+                    f"event {index} reacquire_source_key",
+                )
                 _require(
                     scenario_id,
-                    covered,
+                    reacquire_source_key in pending,
+                    f"event {index} must bind reacquisition to an invalidated source gate",
+                )
+                closure_paths = [*closure["paths"], *closure["config"], *closure["artifacts"]]
+                _require(scenario_id, bool(closure_paths), f"event {index} current evidence needs a non-empty input closure")
+                _require(
+                    scenario_id,
+                    all(
+                        _paths_intersect(closure_paths, changed_path)
+                        for changed_path in changed_paths_by_key.get(reacquire_source_key, set())
+                    ),
                     f"event {index} current evidence closure must cover the changed path",
                 )
                 _require(
                     scenario_id,
-                    any(signature != evidence[source_key]["signature"] for source_key in covered),
+                    signature != evidence[reacquire_source_key]["signature"],
                     f"event {index} must capture current evidence after invalidation",
                 )
-                reacquired.add(next(source_key for source_key in covered if signature != evidence[source_key]["signature"]))
+                reacquired.add(reacquire_source_key)
+            else:
+                _require(
+                    scenario_id,
+                    "reacquire_source_key" not in event,
+                    f"event {index} has no invalidated source gate to reacquire",
+                )
         elif event_type == "evidence_reuse":
             source_key = _nonempty_string(scenario_id, event.get("source_key"), f"event {index} source_key")
             _require(scenario_id, source_key in evidence, f"event {index} reuses unknown evidence {source_key}")

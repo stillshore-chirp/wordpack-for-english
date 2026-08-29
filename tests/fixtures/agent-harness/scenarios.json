@@ -81,10 +81,13 @@
         {"type": "usable", "resource_id": "frontend", "resource_key": "frontend-runtime", "owner": "lane-a", "usable": true},
         {"type": "acquire", "resource_type": "runtime_resources", "resource_id": "failed-runtime", "resource_key": "failed-runtime", "owner": "lane-a", "pid": 1003, "process_group": "pg-c", "port": 6000},
         {"type": "usable", "resource_id": "failed-runtime", "resource_key": "failed-runtime", "owner": "lane-a", "usable": false},
+        {"type": "acquire", "resource_type": "port", "resource_id": "dev-port", "resource_key": "dev-port", "owner": "lane-a", "port": 9000},
+        {"type": "ready", "resource_id": "dev-port", "resource_key": "dev-port", "owner": "lane-a", "ready": true},
         {"type": "acquire", "resource_type": "temporary_worktree", "resource_id": "frontend-worktree", "resource_key": "frontend-worktree", "owner": "lane-a", "workspace": "tmp/worktrees/frontend"},
         {"type": "ready", "resource_id": "frontend-worktree", "resource_key": "frontend-worktree", "owner": "lane-a", "ready": true},
         {"type": "release", "resource_id": "frontend-worktree", "resource_key": "frontend-worktree", "owner": "lane-a", "cleanup": "complete", "workspace_exists": false},
         {"type": "release", "resource_id": "failed-runtime", "resource_key": "failed-runtime", "owner": "lane-a", "cleanup": "complete", "process_alive": false, "port_open": false},
+        {"type": "release", "resource_id": "dev-port", "resource_key": "dev-port", "owner": "lane-a", "cleanup": "complete", "port_open": false},
         {"type": "release", "resource_id": "frontend", "resource_key": "frontend-runtime", "owner": "lane-a", "cleanup": "complete", "process_alive": false, "port_open": false},
         {"type": "release", "resource_id": "backend", "owner": "lane-a", "cleanup": "complete", "process_alive": false, "port_open": false}
       ]
@@ -137,6 +140,7 @@
             "artifacts": ["verification-summary"]
           },
           "conditions": {"python": "3.14", "runtime": "static"},
+          "reacquire_source_key": "gate-1",
           "artifact_reference": "artifact:gate-2"
         },
         {

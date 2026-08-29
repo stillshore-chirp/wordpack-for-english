@@ -132,6 +132,31 @@ def test_final_after_evidence_is_terminal() -> None:
             validate_scenario(scenario)
 
 
+def test_final_after_rejects_review_stale_state() -> None:
+    stale_events = (
+        {"type": "review", "status": "changes_requested", "head": "head-b", "latest_head": "head-b"},
+        {"type": "review", "status": "commented", "new_actionable_threads": 1},
+        {"type": "thread", "status": "open", "actionable": True},
+        {"type": "mergeability", "status": "blocked"},
+    )
+    for stale_event in stale_events:
+        scenario = deepcopy(_load("scenarios.json")["scenarios"][2])
+        scenario["events"].insert(len(scenario["events"]) - 1, stale_event)
+        with pytest.raises(ScenarioValidationError, match="stale"):
+            validate_scenario(scenario)
+
+    final_after = deepcopy(_load("scenarios.json")["scenarios"][2])
+    final_after["events"][-1]["new_actionable_threads"] = 1
+    with pytest.raises(ScenarioValidationError, match="new actionable threads"):
+        validate_scenario(final_after)
+
+    for invalid_count in (False, 0.0):
+        invalid_type = deepcopy(_load("scenarios.json")["scenarios"][2])
+        invalid_type["events"][-1]["unresolved_actionable_threads"] = invalid_count
+        with pytest.raises(ScenarioValidationError, match="non-negative integer"):
+            validate_scenario(invalid_type)
+
+
 def test_resource_validator_detects_duplicate_port_and_cleanup_leak() -> None:
     duplicate_port = deepcopy(_load("scenarios.json")["scenarios"][3])
     duplicate_port["events"][2]["port"] = 8000
@@ -162,6 +187,28 @@ def test_resource_validator_detects_duplicate_port_and_cleanup_leak() -> None:
     )
     with pytest.raises(ScenarioValidationError, match="duplicates workspace"):
         validate_scenario(duplicate_workspace)
+
+
+def test_port_resource_requires_its_own_numeric_port() -> None:
+    missing_port = deepcopy(_load("scenarios.json")["scenarios"][3])
+    port_acquire = next(
+        event
+        for event in missing_port["events"]
+        if event.get("type") == "acquire" and event.get("resource_type") == "port"
+    )
+    port_acquire.pop("port")
+    with pytest.raises(ScenarioValidationError, match="port resource needs a numeric port"):
+        validate_scenario(missing_port)
+
+    non_numeric_port = deepcopy(_load("scenarios.json")["scenarios"][3])
+    port_acquire = next(
+        event
+        for event in non_numeric_port["events"]
+        if event.get("type") == "acquire" and event.get("resource_type") == "port"
+    )
+    port_acquire["port"] = "9000"
+    with pytest.raises(ScenarioValidationError, match="invalid port"):
+        validate_scenario(non_numeric_port)
 
 
 def test_resource_validator_allows_release_after_failed_readiness() -> None:
@@ -238,6 +285,20 @@ def test_cross_snapshot_reuse_requires_same_base_and_non_intersecting_change() -
     intersecting_change["events"][1]["path"] = "scripts/verify-agent-harness.sh"
     with pytest.raises(ScenarioValidationError, match="reuses invalidated evidence"):
         validate_scenario(intersecting_change)
+
+
+def test_evidence_success_binds_reacquisition_to_invalidated_source() -> None:
+    missing_binding = deepcopy(_load("scenarios.json")["scenarios"][4])
+    gate_two = next(event for event in missing_binding["events"] if event.get("key") == "gate-2")
+    gate_two.pop("reacquire_source_key")
+    with pytest.raises(ScenarioValidationError, match="reacquire_source_key"):
+        validate_scenario(missing_binding)
+
+    wrong_binding = deepcopy(_load("scenarios.json")["scenarios"][4])
+    gate_two = next(event for event in wrong_binding["events"] if event.get("key") == "gate-2")
+    gate_two["reacquire_source_key"] = "gate-2"
+    with pytest.raises(ScenarioValidationError, match="bind reacquisition"):
+        validate_scenario(wrong_binding)
 
 
 def test_validator_cli_accepts_positive_and_rejects_negative_fixture() -> None:

@@ -41,15 +41,18 @@
       "depends_on": [{"id": "schema-contract", "snapshot_phase": "provisional"}],
       "events": [
         {"type": "after", "snapshot_phase": "provisional", "head": "head-a", "latest_head": "head-a", "review_state": "pending"},
-        {"type": "after", "snapshot_phase": "final", "head": "head-a", "latest_head": "head-a", "review_state": "converged", "unresolved_actionable_threads": 0, "mergeability": "clean"},
-        {"type": "unknown"}
+        {"type": "dependency", "id": "schema-contract", "snapshot_phase": "final"},
+        {"type": "review", "status": "converged", "head": "head-b", "latest_head": "head-b", "unresolved_actionable_threads": 0, "mergeability": "clean"},
+        {"type": "review", "status": "changes_requested", "head": "head-b", "latest_head": "head-b", "unresolved_actionable_threads": 1, "mergeability": "blocked"},
+        {"type": "after", "snapshot_phase": "final", "head": "head-b", "latest_head": "head-b", "review_state": "converged", "unresolved_actionable_threads": 0, "mergeability": "clean"}
       ]
     },
     {
       "id": "resource-ownership-cleanup",
       "events": [
         {"type": "acquire", "resource_type": "runtime", "resource_id": "backend", "owner": "lane-a", "pid": 1001, "process_group": "pg-a", "port": 8000},
-        {"type": "acquire", "resource_type": "runtime", "resource_id": "frontend", "owner": "lane-a", "pid": 1002, "process_group": "pg-b", "port": 8000},
+        {"type": "acquire", "resource_type": "port", "resource_id": "unbound-port", "owner": "lane-a"},
+        {"type": "acquire", "resource_type": "runtime", "resource_id": "frontend", "owner": "lane-a", "pid": 1002, "process_group": "pg-b", "port": 8001},
         {"type": "acquire", "resource_type": "temporary_worktree", "resource_id": "frontend-worktree", "owner": "lane-a", "workspace": "tmp/worktrees/frontend"},
         {"type": "ready", "resource_id": "frontend-worktree", "owner": "lane-a", "ready": true},
         {"type": "release", "resource_id": "frontend-worktree", "owner": "lane-b", "cleanup": "complete", "workspace_exists": false},
@@ -72,13 +75,20 @@
         },
         {"type": "path_change", "path": "scripts/verify-agent-harness.sh"},
         {
-          "type": "evidence_reuse",
+          "type": "evidence_invalidate",
           "source_key": "gate-1",
-          "source_snapshot": {"base": "base-a", "head": "head-a", "diff": "diff-a"},
-          "target_snapshot": {"base": "base-a", "head": "head-b", "diff": "diff-b"},
+          "reason": "input closure intersects changed path",
+          "reacquire_scope": "agent-harness verifier"
+        },
+        {
+          "type": "evidence_success",
+          "key": "gate-2",
+          "status": "passed",
+          "snapshot": {"base": "base-a", "head": "head-b", "diff": "diff-b"},
           "input_closure": {"paths": ["scripts/verify-agent-harness.sh"], "config": [], "artifacts": []},
           "conditions": {"runtime": "static"},
-          "artifact_reference": "artifact:gate-1"
+          "reacquire_source_key": "other-gate",
+          "artifact_reference": "artifact:gate-2"
         }
       ]
     }
