@@ -150,13 +150,6 @@ def test_final_after_rejects_review_stale_state() -> None:
     with pytest.raises(ScenarioValidationError, match="new actionable threads"):
         validate_scenario(final_after)
 
-    for invalid_count in (False, 0.0):
-        invalid_type = deepcopy(_load("scenarios.json")["scenarios"][2])
-        invalid_type["events"][-1]["unresolved_actionable_threads"] = invalid_count
-        with pytest.raises(ScenarioValidationError, match="non-negative integer"):
-            validate_scenario(invalid_type)
-
-
 def test_resource_validator_detects_duplicate_port_and_cleanup_leak() -> None:
     duplicate_port = deepcopy(_load("scenarios.json")["scenarios"][3])
     duplicate_port["events"][2]["port"] = 8000

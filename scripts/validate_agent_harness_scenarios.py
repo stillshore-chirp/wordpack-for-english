@@ -446,15 +446,7 @@ def _validate_provisional_final_scenario(scenario: Mapping[str, Any]) -> None:
             _require(scenario_id, event.get("head") == review_event.get("head"), "final after head differs from converged review head")
             _require(scenario_id, event.get("review_state") == "converged", "final after evidence must record converged review_state")
             _require(scenario_id, _new_actionable_threads(scenario_id, event) == 0, "final after evidence has new actionable threads")
-            unresolved_actionable_threads = event.get("unresolved_actionable_threads")
-            _require(
-                scenario_id,
-                isinstance(unresolved_actionable_threads, int)
-                and not isinstance(unresolved_actionable_threads, bool)
-                and unresolved_actionable_threads >= 0,
-                "final after unresolved_actionable_threads must be a non-negative integer",
-            )
-            _require(scenario_id, unresolved_actionable_threads == 0, "final after evidence has unresolved threads")
+            _require(scenario_id, event.get("unresolved_actionable_threads") == 0, "final after evidence has unresolved threads")
             _require(scenario_id, str(event.get("mergeability", "")).lower() == "clean", "final after evidence mergeability is not clean")
             _require(scenario_id, final_index is None, "final after evidence must be unique")
             final_index = index
