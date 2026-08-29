@@ -44,7 +44,7 @@ def test_workflow_change_selects_contract_yaml_classifier_and_actions() -> None:
     plan = classify_paths([".github/workflows/agent-harness.yml"])
 
     assert BACKEND_FULL not in plan.invalidated_gates
-    assert plan.invalidated_gates == (WORKFLOW_CONTRACT,)
+    assert plan.invalidated_gates == (AGENT_HARNESS_FULL, WORKFLOW_CONTRACT)
     assert set(plan.selected_checks) == {
         FOCUSED_CONTRACT,
         YAML_PARSE,
@@ -52,6 +52,27 @@ def test_workflow_change_selects_contract_yaml_classifier_and_actions() -> None:
         LATEST_ACTIONS,
     }
     assert plan.retained_evidence == ()
+
+
+def test_canonical_classifier_and_contract_inputs_invalidate_agent_harness() -> None:
+    plan = classify_paths(
+        [
+            "scripts/classify_ui_test_changes.py",
+            "scripts/classify_verification_inputs.py",
+            "tests/test_github_actions_branch_policy.py",
+            "tests/test_ui_test_change_classifier.py",
+            "tests/test_verification_inputs.py",
+        ]
+    )
+
+    assert BACKEND_FULL not in plan.invalidated_gates
+    assert plan.invalidated_gates == (AGENT_HARNESS_FULL, WORKFLOW_CONTRACT)
+    assert set(plan.selected_checks) == {
+        FOCUSED_CONTRACT,
+        BASE_HEAD_CLASSIFICATION,
+        LATEST_ACTIONS,
+    }
+    assert plan.retained_evidence == (WORKFLOW_YAML_EVIDENCE,)
 
 
 def test_workflow_unmodified_review_fix_retains_yaml_evidence() -> None:

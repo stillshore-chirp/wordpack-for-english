@@ -89,7 +89,13 @@ HARNESS_FILES = {
     "docs/agent-principles.md",
     "docs/testing/index.md",
     "scripts/verify-agent-harness.sh",
+    "scripts/classify_ui_test_changes.py",
+    "scripts/classify_verification_inputs.py",
     "requirements-agent-harness.txt",
+    "tests/test_github_actions_branch_policy.py",
+    "tests/test_ui_test_change_classifier.py",
+    "tests/test_verification_inputs.py",
+    ".github/workflows/agent-harness.yml",
 }
 AI_GOVERNANCE_FILES = {
     "requirements-agent-harness.txt",
