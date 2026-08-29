@@ -422,6 +422,71 @@ describe('WordPackPanel E2E (mocked fetch)', () => {
     expect(within(queue).getByLabelText('生成履歴 0件')).toBeInTheDocument();
   });
 
+  it('keeps copy feedback when the current WordPack data is updated', async () => {
+    const sourceId = 'wp:88888888888888888888888888888888';
+    const fetchMock = setupFetchMocks({ [sourceId]: 'omicron' });
+    const defaultFetch = fetchMock.getMockImplementation();
+    fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : (input as URL).toString();
+      if (url.endsWith(`/api/word/packs/${sourceId}/guest-public`)) {
+        return new Response(JSON.stringify({ guest_public: true }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      return defaultFetch?.(input, init) ?? new Response('not found', { status: 404 });
+    });
+    render(
+      <AppProviders googleClientId="test-client">
+        <WordPackPreviewModal
+          isOpen
+          onClose={vi.fn()}
+          wordPackId={sourceId}
+          wordPacks={[{
+            id: sourceId,
+            lemma: 'omicron',
+            sense_title: 'omicron概説',
+            created_at: '2026-08-29T00:00:00Z',
+            updated_at: '2026-08-29T00:00:00Z',
+            checked_only_count: 0,
+            learned_count: 0,
+          }]}
+        />
+      </AppProviders>,
+    );
+
+    const dialog = await screen.findByRole('dialog', { name: /WordPack プレビュー: omicron/ });
+    const copyButton = await within(dialog).findByRole('button', { name: 'omicronのDev例文1をコピー' });
+    vi.useFakeTimers();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const clipboardWrite = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
+
+    await act(async () => {
+      await user.click(copyButton);
+      await Promise.resolve();
+    });
+    expect(clipboardWrite).toHaveBeenCalledTimes(1);
+    expect(within(dialog).getByRole('status', { name: '例文コピー結果' })).toHaveTextContent('例文をクリップボードにコピーしました');
+
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    await act(async () => {
+      await user.click(within(dialog).getByRole('checkbox', { name: 'ゲスト公開' }));
+      await Promise.resolve();
+    });
+    expect(within(dialog).getByRole('status', { name: '例文コピー結果' })).toHaveTextContent('例文をクリップボードにコピーしました');
+
+    act(() => {
+      vi.advanceTimersByTime(3999);
+    });
+    expect(within(dialog).getByRole('status', { name: '例文コピー結果' })).toHaveTextContent('例文をクリップボードにコピーしました');
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(within(dialog).getByRole('status', { name: '例文コピー結果' })).toHaveClass('is-empty', 'visually-hidden');
+  });
+
   it('uses the legacy clipboard fallback, restores focus, and reports fallback failures', async () => {
     const sourceId = 'wp:55555555555555555555555555555555';
     setupFetchMocks({ [sourceId]: 'iota' });

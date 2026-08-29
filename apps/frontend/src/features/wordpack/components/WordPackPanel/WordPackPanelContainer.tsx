@@ -92,7 +92,6 @@ export const WordPackPanel: React.FC<Props> = ({
   const transientMessageTimerRef = useRef<number | null>(null);
   const transientMessageContextRef = useRef<{
     currentWordPackId: string | null;
-    data: WordPack | null;
     selectedWordPackId: string | null | undefined;
   } | null>(null);
   const panelInstanceId = useId();
@@ -132,8 +131,8 @@ export const WordPackPanel: React.FC<Props> = ({
   } = useWordPack({ model, onWordPackGenerated, onStudyProgressRecorded });
 
   const currentTransientMessageContext = useMemo(
-    () => ({ currentWordPackId, data, selectedWordPackId }),
-    [currentWordPackId, data, selectedWordPackId],
+    () => ({ currentWordPackId, selectedWordPackId }),
+    [currentWordPackId, selectedWordPackId],
   );
   const currentTransientMessageContextRef = useRef(currentTransientMessageContext);
   currentTransientMessageContextRef.current = currentTransientMessageContext;
@@ -141,7 +140,6 @@ export const WordPackPanel: React.FC<Props> = ({
   const isSameTransientMessageContext = useCallback(
     (left: typeof currentTransientMessageContext, right: typeof currentTransientMessageContext) => (
       left.currentWordPackId === right.currentWordPackId
-      && left.data === right.data
       && left.selectedWordPackId === right.selectedWordPackId
     ),
     [],
