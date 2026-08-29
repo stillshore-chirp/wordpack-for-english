@@ -3,6 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 import re
 
+import yaml
+
 
 def _read_text(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
@@ -302,3 +304,35 @@ def test_production_deploy_preflight_checks_prs_without_deploying() -> None:
             "pageSize=1",
         ],
     )
+
+
+def test_agent_harness_workflow_runs_compact_contract_gates() -> None:
+    yml = _read_text(".github/workflows/agent-harness.yml")
+
+    _assert_contains_all(
+        yml,
+        [
+            "fetch-depth: 0",
+            "Parse workflow YAML",
+            "python -m pytest -q --no-cov",
+            "tests/test_verification_inputs.py",
+            "tests/test_github_actions_branch_policy.py",
+            "tests/test_ui_test_change_classifier.py",
+            "if: github.event_name == 'pull_request'",
+            "BASE_SHA: ${{ github.event.pull_request.base.sha }}",
+            "HEAD_SHA: ${{ github.event.pull_request.head.sha }}",
+            "scripts/classify_verification_inputs.py",
+            "scripts/classify_ui_test_changes.py",
+            '--base "${BASE_SHA}" --head "${HEAD_SHA}"',
+            "docs/testing/index.md",
+            "pytest.ini",
+        ],
+    )
+    _assert_contains_none(yml, ["pytest -q tests/test_verification_inputs.py"])
+
+
+def test_all_workflow_yaml_files_parse() -> None:
+    workflows = sorted(Path(".github/workflows").glob("*.y*ml"))
+    assert workflows
+    for path in workflows:
+        assert yaml.safe_load(path.read_text(encoding="utf-8")) is not None

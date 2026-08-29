@@ -79,14 +79,9 @@ AGENTS.md、Skill、docs、tool専用ruleに同じ長文を複製
 ## Review収束
 <!-- agent-harness:review-maintenance:start -->
 
-- ソースコード変更ではlatest meaningful changeに対して対象branchで定義されたpush / pull_request等のCIと、GitHub上で確認可能なコードレビューを必須とする。
-- 包括レビューの回数定義、原則2周、3周目以降の限定条件、P2以下の収束、再レビューの最小文脈は [`docs/agent-harness.md`](../agent-harness.md) のGitHub reviewの収束を正本とする。
-- rootとGitHub配送Skillは短い入口だけを持ち、nested rule、adapterへレビュー周回の詳細本文を複製しない。
-- 運用変更時は、P0 / P1とsecurity等のhard gateを維持しながら、P2以下だけを理由とする包括レビュー反復と、証拠失効理由のないreview / full gate再実行を増やさない。
-- 特定製品のreview名を3製品共通の完了条件へしない。
-- reviewが一つも提供されない場合、自己レビューだけで代替してマージ可能としない。
-- actionableな未解決threadがなく、GitHubのmergeabilityがcleanであることを確認する。
-- merge、closeは別の明示指示がある場合だけ行う。
+- review回数、限定再確認、P2以下の収束、primary ledgerは [`docs/agent-harness.md`](../agent-harness.md)、CI待機、最新snapshot、gate失効は [GitHub配送Skill](../../.agents/skills/github-delivery/SKILL.md) を正本とする。
+- root、nested rule、adapterへその本文を複製せず、特定製品のreview名やtool挙動を共有完了条件にしない。
+- review未提供を自己レビューで代替しないこと、未解決thread・mergeability・merge / close権限のhard gateを、上記正本の変更時に維持する。
 <!-- agent-harness:review-maintenance:end -->
 
 ## サブエージェント運用
@@ -106,7 +101,5 @@ AGENTS.md、Skill、docs、tool専用ruleに同じ長文を複製
 ## 検証
 <!-- agent-harness:maintenance-verification:start -->
 
-開発中とreview修正中は変更pathに対応するfocused testを使います。最終HEADではGitHub配送Skillに従い、変更範囲に必要な包含関係上の最上位full gateをそれぞれ1回実行し、同じsnapshotで内包gateを別途実行しません。
-
-加えて、変更したshellの`bash -n` / `shellcheck`、YAML / frontmatter、link、公開安全性を確認します。ソースコード変更の発動条件、Issue必須、通常配送の権限、reviewとmergeabilityの完了条件、merge等の別権限が機械検査で退行しないことも確認します。検証できない項目は理由と残るリスクを報告します。
+実行コマンドと変更path別のtestは [`docs/testing/index.md`](../testing/index.md)、gate選択・包含・失効はGitHub配送Skillを正本とします。変更したshell、YAML、frontmatter、link、公開安全性と、通常配送・review・権限境界が機械検査で退行しないことを確認し、未確認項目は理由とriskを報告します。
 <!-- agent-harness:maintenance-verification:end -->

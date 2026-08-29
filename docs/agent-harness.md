@@ -142,72 +142,59 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 ## GitHub reviewの収束
 <!-- agent-harness:review-convergence:start -->
 
-- latest meaningful changeに対して対象branchで定義されたpush / pull_request等のCIと、GitHub上で確認可能な自動または人間のコードレビューを確認する。
-- 外部状態の証拠には、HEAD、base、更新時刻、statusなど判断に必要な最小の状態キーと詳細取得時点を記録する。同じHEAD・同じ状態キーでは取得済みのreview本文、thread、check一覧を保持し、状態キーが変化した項目だけ詳細を再取得する。
-- 待機のtimeoutは状態変化や証拠失効を意味しません。timeoutだけを理由に同じAPI・同じpayloadの詳細照会を直ちに繰り返さず、次の確認はevent-drivenな通知またはbackoff後の軽量な状態キーに限定する。
-- 取得・引き渡すtool出力は、判断に必要な差分、失敗箇所、最終結果に限定し、状態が変わらないfull historyを再取得しません。
-- 同一PR・同一HEAD系列の包括レビューは、配送対象の最終HEADに対する初回レビュー1回と、指摘修正後の再レビュー1回までを原則とする。修正によるHEAD更新を含む同じ配送系列への包括レビュー実行回数で数え、review comment、thread、指摘の件数では数えない。
-- 3回目以降の包括レビューは実行しません。次のいずれかで前回証拠が失効した場合だけ、対象risk laneと変更pathを明示した限定再確認を行う。
-  - 未解決のP0またはP1がある。
-  - セキュリティ、秘密情報、データ整合性に関わる未解決事項がある。
-  - 前回レビュー後に新しい変更範囲またはrisk laneが追加された。
-  - 前回のレビュー証拠に具体的な不足または矛盾が見つかった。
-- P2以下の指摘だけが残る場合は、影響とnon-blocking判断をPRへ記録し、必要なら別Issueへ分離して同じPRの包括レビュー周回を終了する。
-- 再レビューまたは限定再確認ではfull historyを渡さず、修正commit、変更path、元の指摘、focused test結果だけを文脈として使う。
-- 成功済みレビューまたはfull gateを再実行する場合は、対象変更、新規risk lane、実行条件変更、証拠期限切れなど、証拠が失効した具体的な理由を記録する。
-- メインエージェントはPRごとにHEAD系列、包括レビュー実行回数、確認済みsnapshot、結果、証拠の失効理由を記録する。
-- 変更のないheadで追加のclean reviewを集めない。
-- ソースコード変更でreviewが提供されない環境では、自己レビューを完了条件の代替にせず、未確認範囲とblockerを報告する。
-- actionableな未解決threadがなく、GitHubのmergeabilityがcleanであることを確認する。
-- mergeまたはcloseは別の明示指示がある場合だけ行う。
+CI watcherとread-only照会の配送順序は [GitHub配送Skill](../.agents/skills/github-delivery/SKILL.md) が所有します。この節は、取得手順を複製せず、収束判断と証拠の保持範囲だけを定めます。
+
+primaryが継続保持するcontrol-plane ledgerは、goal、acceptance、非対象、HEAD / base、changed paths、commit責務、completion-gate summary、CI / review / thread / mergeability、権限、riskだけです。raw log、file全文、PR本文全文、解決済みthread全文は台帳や委任報告へ入れず、必要な場合だけ参照へ退避します。旧HEADはcommit、finding、fix commit、invalidation reasonだけを残します。
+
+- latest meaningful changeのCI・review・thread・mergeabilityは、配送Skillが定める最新snapshotで確認し、台帳には状態の要約と取得時点だけを残す。同じHEAD / baseと状態キーでは既存証拠を再利用する。
+- timeoutは状態変化や証拠失効を意味しない。timeoutだけを理由に同じ照会を繰り返さず、次の確認は通知またはbackoff後の軽量な状態キーに限る。
+- 同一PR・同一HEAD系列の包括レビューは、初回レビュー1回と指摘修正後の再レビュー1回までを原則とする。レビューcomment、thread、指摘の件数ではなく、同じ配送系列のreview実行回数で数える。
+- 3回目以降は、未解決のP0 / P1、security・secret・data integrityの未解決事項、新しい変更範囲またはrisk lane、前回証拠の具体的な不足・矛盾のいずれかがある場合だけ、変更pathとrisk laneを限定して再確認する。
+- P2以下だけが残る場合は、影響とnon-blocking判断を記録し、必要なら別Issueへ分離して包括レビューを終了する。成功済みreviewやfull gateを再実行する場合も、失効理由と対象範囲を台帳へ記録する。
+- 変更path、修正commit、元の指摘、focused test結果だけを再レビューの文脈にする。変更のないheadでclean reviewを追加せず、reviewが提供されない場合は未確認範囲とblockerを報告する。
+- actionableな未解決threadがなく、GitHubのmergeabilityがcleanであることを確認する。mergeまたはcloseは別の明示指示がある場合だけ行う。
+
+### Gate evidence ledger
+
+gate evidenceは、次のcompact ledgerで入力閉包とsnapshotへ束縛します。
+
+| gate | input paths | related config | generated artifacts | execution conditions | snapshot / result | invalidation reason / reacquisition target |
+|---|---|---|---|---|---|---|
+| gateごと | 対象pathと依存path | 関連設定・schema | 生成物とchecksum | runtime、base依存、実行条件 | HEAD / base、pass・fail・skip | 失効理由と再取得対象 |
+
+input closureは、gateが実際に読む対象path、関連設定、生成物、実行条件、必要なbase依存の集合です。証拠にはこの閉包、snapshot、resultを記録します。HEADが変わっただけでは全gateを失効させず、閉包を構成するpath・設定・生成物・条件・base依存が変わったgateだけを失効させ、理由と再取得対象をledgerへ記録します。閉包が不変であるgateは、旧snapshotを参照しつつ新しいHEADへ影響しない根拠を残して再利用できます。
+
+長時間検証のevidence packageは、exit code、pass / fail / skip、coverage総計、warning要約、failure箇所、artifact参照だけにします。成功時はfile別coverageと反復進捗を渡さず、raw outputは必要な場合だけ参照へ置きます。
 <!-- agent-harness:review-convergence:end -->
 
 ## Subagent orchestration
 <!-- agent-harness:subagent-orchestration:start -->
 
-サブエージェントは専門riskを独立して並列化するために使い、同じ証拠を読む担当を増やすために使いません。委任対象は、他の作業から独立して並列化できるbounded laneだけです。単一APIの呼び出し、CIの待機・監視だけを行う作業、短いthread返信、短い競合解消など、handoffの固定費が見合わない作業はprimary agentが担当します。メインエージェントは委任前に、次を満たす重複しないlaneを定義します。
+サブエージェントは、同じ証拠を読む担当を増やすためではなく、専門riskを独立したbounded laneへ分けるために使います。探索、実装、focused verification、review、review fix、docsは、分離可能ならsubagent-default（subagent-first）で委任します。単一API、CI watcher、read-only照会、短いthread返信、短い競合解消などhandoffの固定費が見合わない作業はprimaryが担当します。
 
-- primary agentは、要件・適用ルール、完了条件・非対象、lane設計、担当割当、依存関係、進捗、lane間の競合、ガバナンス、成果受入、Issue・commit・PR・CI・review・mergeabilityの確認、配送判断を担います。
-- subagentは、コードベース・履歴・仕様の探索、実装、focused verification、コード・セキュリティ・公開安全性review、review fix、docs、配送など、分離できる実務を担当できます。subagentを監査専用には限定しません。
-- primary agentの直接実務は、handoffの固定費が見合わない短い作業、lane間の競合解消、証拠矛盾の限定確認、分離不能な統合に限ります。P0/P1や権限境界は受入・配送判断へ反映しますが、通常の探索、実装、検証、ログ解析を同じ根拠として重ねません。
-- この契約は実行環境のモデル、ベンダー、製品固有tool、固有command、config keyを指定せず、実行環境固有の設定はリポジトリ外で管理します。
+委任前に、他作業と重複しないrisk lane、target HEAD / base、target path、確認する具体的な問い、既存報告やprimaryの一次証拠で不足する理由、write ownership、completion、verification、invalidation conditionを定義します。同一PRの各laneは一人のownerが開始からcompletionまで担当し、同一HEAD・同一risk laneの監査は原則1回です。包括監査を複数agentへ同時委任せず、対象変更、新しい実行証拠、明確な証拠不足・矛盾がある場合だけ再監査します。
 
-- そのagentだけが担当するrisk lane。
-- 対象HEAD、対象path、確認する具体的な問い。
-- 既存報告やメインエージェント自身の一次証拠確認では不足する理由。
-- owner、write ownership、completion、verification、invalidation conditionをlaneごとに明示します。
-- 同一PRの各laneは、一人のownerが開始からcompletionまで継続して担当します。lane単位の担当を複数agentで重ねません。
+委任文脈はtarget HEAD / base、target path、acceptanceに限り、製品固有のtool、UI、runtime configを共有契約へ持ち込みません。
 
-この4項目を定義できない委任は行いません。包括監査を複数agentへ同時委任せず、同一HEAD・同一risk laneの独立監査は原則1回とします。再監査を認めるのは、対象コードが変わった、新しい実行証拠が得られた、前回監査に明確な不足がある、または未解決の証拠矛盾がある場合です。修正後に変更pathを対象再検証することと、未変更HEADへ同じ監査を繰り返すことを区別します。
+分離可能な仕事をprimaryが直接行うのはdirect-primary exceptionに限ります。記録にはspecific reason、context-vs-work、primary-only question、target paths、output capを含めます。受入・統合・配送判断はprimaryの固有責務で、監査の矛盾は一次証拠で解決します。
 
-監査結果が矛盾した場合は追加agentの多数決を取りません。メインエージェントがsource code、test設定、実際のcommand結果、commit hashなどの一次証拠を確認して解決します。
+subagent evidence packageは、scope / acceptance、changed paths、conclusion、verification results、unperformed checks、remaining risks、snapshotまたはdiff identifierだけを必要最小限として返します。raw log、file全文、full historyは必須にせず、必要な詳細は参照へ置きます。primaryの最終受入はこのpackageを根拠にし、full fileやfull logを要求しません。
 
-委任時はfull-history forkを既定にしません。必要なHEAD、path、acceptance、既知の指摘だけを短く渡します。報告は変更path、P0 / P1、実行結果、未実行項目と残るriskを中心に簡潔にします。探索・検証・待機で進捗がなく、同じ結果を反復する場合は、同じscopeを無制限に継続しません。`completion`に定めた停止・scope縮小・primaryへの返却条件に従い、安全な部分結果と未確認範囲を返します。`invalidation condition`が成立した場合にだけ再開し、primary agentがscopeを再評価します。
-
-検証は次の段階を守ります。
-
-1. 開発中とreview修正中は、変更によって影響を受けるfocused testを先に実行する。最終HEAD確定前にfull gateを機械的に繰り返しません。
-2. 同じworktreeとHEADで長い検証を始める前に、利用可能なprocess stateをoperatorが確認し、確認済みの実行中processを重複起動しません。これは運用者向けのoperator ruleであり、環境が自動的なlockを保証する仕組みではありません。
-3. 配送対象の最終HEADが確定した時点で、変更範囲に必要な包含関係上の最上位full gateをそれぞれ原則1回実行する。独立領域のgateが相互に包含しない場合は各gateを実行し、選択したgateが別のgateを内包する場合は同じsnapshotで内包gateを別途実行しません。
-4. 成功済み検証を再実行する時は、対象変更、生成物変更、実行条件変更、証拠期限切れなど、証拠が失効した理由を記録する。
-
-メインエージェントは次のrisk lane台帳を保ち、担当scopeと結果を統合して重複を止めます。clean commitを確認した場合はcommit SHAを記録します。未commitの共有worktreeを確認した場合は、base HEADに加えて、確認したpathとdiffを一意に識別できる値を記録し、HEADだけを監査済みsnapshotとして扱いません。各evidenceは対象HEADとbase HEAD、確認済みpath、diff identifierに束縛します。対象snapshotが変わらない限りevidenceを再取得せず、invalidation conditionで失効したevidenceだけを再取得し、その理由と範囲を台帳に記録します。primary agentの受入はevidence packageからscope、acceptance、evidence、unrelated diff、commit responsibility、lane conflict、completion gatesを確認し、laneの完了と配送判断を行います。
-
-各laneは、owner、target HEAD、target path、write ownership、completion、verification、invalidation conditionを持ちます。完了報告は、scope、changed paths、conclusion、verification results、unperformed checks、remaining risks、snapshotまたはdiff identifierをevidence packageとして返します。
+進捗がなく同じ結果を反復するlaneは、`scope shrink → partial result → reassign → primary（必要時のみdirect-primary exception）` の順で止めます。first agent failure alone はdirect-primary exceptionの理由にならず、部分結果と未確認範囲を返してからownerを再割当します。completionに定めた停止・scope縮小・primary返却条件に従い、invalidation conditionが成立した場合だけ再開します。
 
 | Field | Meaning |
 |---|---|
 | risk lane | 重複しない確認責務 |
 | owner | agentまたはメインエージェント |
-| target HEAD | 委任時点で確認対象とするcommitまたはbase HEAD |
+| target HEAD / base | 委任時点で確認対象とするcommitとbase |
 | target path | 調査・変更・検証の対象path |
 | write ownership | laneが編集・生成・公開できるpathと操作の境界 |
 | completion | laneの完了条件と、進捗がない場合の停止・scope縮小・primaryへの返却条件 |
-| verification | 実行する検証と、その結果の証跡 |
+| verification | 実行する検証と、compactな結果の証跡 |
 | verified snapshot | clean commit、またはbase HEADと確認済みdiffの識別子 |
 | status | pending / active / passed / finding / blocked |
 | invalidation condition | 再検証が必要になる対象変更または新証拠 |
-| evidence package | scope、acceptance、changed paths、conclusion、verification results、unperformed checks、remaining risks、unrelated diff、commit responsibility、lane conflict、completion gates、snapshotまたはdiff identifier |
+| evidence package | scope / acceptance、changed paths、conclusion、verification results、unperformed checks、remaining risks、snapshotまたはdiff identifier |
 <!-- agent-harness:subagent-orchestration:end -->
 
 ## ルール変更時の確認
@@ -221,8 +208,8 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 7. instruction budgetを満たした。
 8. 旧正本、循環参照、壊れたリンクを残していない。
 9. 開発中とreview修正中は変更pathに対応するfocused testを実行した。
-10. 最終HEADで変更範囲に必要な包含関係上の最上位full gateをそれぞれ1回実行し、同じsnapshotで内包gateを別途実行していない。
+10. 最終HEADで変更範囲に必要な包含関係上の最上位full gateをそれぞれ1回実行し、gate evidenceの入力閉包・snapshot・失効理由を台帳へ残し、同じsnapshotで内包gateを別途実行していない。
 
 ## 既知の限界
 
-各製品のversion、Remote SSH、sandbox、権限、Skill discoveryの実装差まではリポジトリ内の静的検証だけで保証できません。adapterと正本の構造をCIで固定し、実環境で発見できない場合は製品名、version、実行形態、再現パスをIssueへ残します。
+各製品のversion、Remote SSH、sandbox、権限、Skill discoveryの実装差まではリポジトリ内の静的検証だけで保証できません。adapterと正本の構造をCIで固定し、実環境で発見できない場合は製品名、version、実行形態、再現パスをIssueへ残します。アプリ内部のautomatic routing、token使用量、context pruningは共有契約から検証不能です。

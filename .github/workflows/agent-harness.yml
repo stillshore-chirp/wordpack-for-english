@@ -11,10 +11,13 @@ on:
       - '.claude/**'
       - '.cursor/**'
       - 'docs/agent-harness.md'
+      - 'docs/testing/index.md'
       - 'docs/agent-principles.md'
       - 'docs/ai-governance/**'
       - 'docs/documentation-structure.md'
       - 'scripts/verify-agent-harness.sh'
+      - 'scripts/classify_ui_test_changes.py'
+      - 'scripts/classify_verification_inputs.py'
       - 'scripts/verify_task_skills.py'
       - 'scripts/verify_plugin_eval_outputs.py'
       - 'scripts/validate_plugin_eval_benchmark.py'
@@ -23,6 +26,10 @@ on:
       - 'tests/fixtures/data-analysis/**'
       - 'scripts/validate_agent_frontmatter.py'
       - 'requirements-agent-harness.txt'
+      - 'pytest.ini'
+      - 'tests/test_github_actions_branch_policy.py'
+      - 'tests/test_ui_test_change_classifier.py'
+      - 'tests/test_verification_inputs.py'
       - 'scripts/verify-ai-governance.sh'
       - '.github/ISSUE_TEMPLATE/**'
       - '.github/pull_request_template.md'
@@ -37,10 +44,13 @@ on:
       - '.claude/**'
       - '.cursor/**'
       - 'docs/agent-harness.md'
+      - 'docs/testing/index.md'
       - 'docs/agent-principles.md'
       - 'docs/ai-governance/**'
       - 'docs/documentation-structure.md'
       - 'scripts/verify-agent-harness.sh'
+      - 'scripts/classify_ui_test_changes.py'
+      - 'scripts/classify_verification_inputs.py'
       - 'scripts/verify_task_skills.py'
       - 'scripts/verify_plugin_eval_outputs.py'
       - 'scripts/validate_plugin_eval_benchmark.py'
@@ -49,6 +59,10 @@ on:
       - 'tests/fixtures/data-analysis/**'
       - 'scripts/validate_agent_frontmatter.py'
       - 'requirements-agent-harness.txt'
+      - 'pytest.ini'
+      - 'tests/test_github_actions_branch_policy.py'
+      - 'tests/test_ui_test_change_classifier.py'
+      - 'tests/test_verification_inputs.py'
       - 'scripts/verify-ai-governance.sh'
       - '.github/ISSUE_TEMPLATE/**'
       - '.github/pull_request_template.md'
@@ -70,6 +84,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Python
@@ -85,6 +100,7 @@ jobs:
           bash -n scripts/verify-agent-harness.sh scripts/verify-ai-governance.sh
           python -m py_compile \
             scripts/validate_agent_frontmatter.py \
+            scripts/classify_verification_inputs.py \
             scripts/verify_task_skills.py \
             scripts/verify_plugin_eval_outputs.py \
             scripts/validate_plugin_eval_benchmark.py \
@@ -92,6 +108,31 @@ jobs:
           python scripts/verify_task_skills.py --self-test
           python scripts/validate_plugin_eval_benchmark.py --self-test
           python scripts/verify_data_analysis_pilot.py --self-test
+
+      - name: Parse workflow YAML
+        run: >-
+          python -c 'import pathlib, yaml;
+          [yaml.safe_load(path.read_text(encoding="utf-8"))
+          for path in pathlib.Path(".github/workflows").glob("*.y*ml")]'
+
+      - name: Run focused workflow and classifier contracts
+        run: >-
+          PYTHONPATH=apps/backend:.
+          python -m pytest -q --no-cov
+          tests/test_verification_inputs.py
+          tests/test_github_actions_branch_policy.py
+          tests/test_ui_test_change_classifier.py
+
+      - name: Classify PR verification inputs
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          python scripts/classify_verification_inputs.py \
+            --base "${BASE_SHA}" --head "${HEAD_SHA}"
+          python scripts/classify_ui_test_changes.py \
+            --base "${BASE_SHA}" --head "${HEAD_SHA}"
 
       - name: Install shellcheck
         run: |

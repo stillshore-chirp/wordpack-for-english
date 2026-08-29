@@ -82,7 +82,7 @@ from scripts.classify_ui_test_changes import (
         ),
         (
             ["scripts/classify_ui_test_changes.py"],
-            UiTestScope(playwright_smoke=True, playwright_visual=True),
+            UiTestScope(playwright_smoke=False, playwright_visual=False),
         ),
         (
             ["new-runtime-surface/config.toml"],
@@ -113,7 +113,9 @@ def test_issue_619_governance_only_paths_skip_ui_tests() -> None:
             "AGENTS.md",
             "docs/agent-harness.md",
             "docs/ai-governance/13-maintenance-policy.md",
+            "scripts/classify_verification_inputs.py",
             "scripts/verify-agent-harness.sh",
+            "tests/test_verification_inputs.py",
         ]
     ) == UiTestScope(playwright_smoke=False, playwright_visual=False)
 
@@ -130,6 +132,21 @@ def test_changed_paths_keeps_both_sides_of_renames(monkeypatch: pytest.MonkeyPat
     assert changed_paths("base", "head") == ["old/path.tsx", "new/path.tsx"]
     assert "--no-renames" in recorded_command
     assert "base...head" in recorded_command
+
+
+def test_changed_paths_captures_raw_git_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    recorded: dict[str, object] = {}
+
+    def fake_run(_: list[str], **kwargs: object) -> object:
+        recorded.update(kwargs)
+        return type("Completed", (), {"stdout": b""})()
+
+    monkeypatch.setattr("scripts.classify_ui_test_changes.subprocess.run", fake_run)
+
+    assert changed_paths("base", "head") == []
+    assert recorded["stderr"] is subprocess.PIPE
 
 
 def test_main_runs_both_gates_when_diff_classification_fails(

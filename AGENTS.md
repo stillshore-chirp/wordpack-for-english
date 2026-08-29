@@ -30,15 +30,13 @@
 
 限定されたタスクは、調査だけ、実装だけ、PR作成だけで恣意的に分断しません。権限、秘密情報、外部サービス障害などの真の blocker がある場合だけ、安全な整合点で止め、確認済み事実、未完了範囲、次の最短アクションを示します。
 
-サブエージェントは独立して並行実行でき、handoffの固定費に見合うbounded work laneへ使います。primary agentは要件・計画・割当・進捗・競合・ガバナンス・受入・配送判断を担います。配送対象の最終HEADでは、変更範囲に必要な包含関係上の最上位full gateをそれぞれ原則1回実行し、各gateが内包するgateを同じsnapshotで別途実行しません。包括レビューは同一PR・同一HEAD系列で原則2周までとし、P2以下だけなら影響とnon-blocking判断を記録して収束します。委任、短い作業のprimary担当、lane owner、長い検証前のprocess状態、HEAD/baseに束縛したevidenceの詳細は [`docs/agent-harness.md`](docs/agent-harness.md) のGitHub reviewの収束とSubagent orchestrationを正本とします。
+委任、control plane、evidence package、review収束は [`docs/agent-harness.md`](docs/agent-harness.md)、配送順序、gate選択、証跡失効は [GitHub配送Skill](.agents/skills/github-delivery/SKILL.md) を正本とし、ここへ詳細を複製しません。
 <!-- agent-harness:workflow:end -->
 
 ## ソースコード変更の配送契約
 
 - 製品コード、test、script、workflow、schema、挙動を変える設定の追加・変更・削除は、大小を問わずすべてソースコード変更です。
-- ユーザーからのソースコード変更依頼そのものを、GitHub配送Skillが定義する通常配送を行う権限として扱います。包括的な再確認を求めず、GitHub上でCIとコードレビュー対応が完了し、マージ可能な状態になるまで継続します。
-- 通常配送の実行順序と権限範囲は [`.agents/skills/github-delivery/SKILL.md`](.agents/skills/github-delivery/SKILL.md)、観測可能な完了条件は [`docs/ai-governance/03-evidence-and-completion-gates.md`](docs/ai-governance/03-evidence-and-completion-gates.md) を正本とします。満たせない条件があれば未完了です。
-- 複数工程のソースコード変更では、独立した責務を未commitのまま蓄積せず、各責務の完了時に時系列でcommitへ回収します。commit計画とサブエージェント差分の扱いはGitHub配送Skillを正本とします。
+- ユーザーからの変更依頼はGitHub配送Skillが定義する通常配送の権限を含み、GitHub上でCIとコードレビュー対応が完了し、マージ可能な状態まで継続します。実行順序は [GitHub配送Skill](.agents/skills/github-delivery/SKILL.md)、観測可能な完了条件は [evidence and completion gates](docs/ai-governance/03-evidence-and-completion-gates.md) を正本とします。
 - merge、Issue / PRのclose、release、production deploy、破壊的操作は通常配送に含めず、対象を特定した別の明示指示がある場合だけ行います。
 
 ## タスク別ルーティング
@@ -97,6 +95,4 @@ DRY、KISS、SRP、SoC、YAGNI、OCP、POLA、テストピラミッドなどは�
 
 ## エージェントハーネス保守
 
-ルールを追加・変更する場合は、Codex・Claude Code・Cursor の3製品について、常時読込量、path scope、Skill 発見、正本の重複、tool 固有命令の漏出を確認します。詳細手順をルートへ戻さず、まず nested `AGENTS.md`、task Skill、機械検証のいずれかへ配置します。
-
-変更pathに対応するfocused testと、最終HEADでのfull gateの選択・再実行条件はGitHub配送Skillを正本とします。
+ルールを追加・変更する場合は [`docs/agent-harness.md`](docs/agent-harness.md) と [maintenance policy](docs/ai-governance/13-maintenance-policy.md) に従い、3製品の到達性、instruction budget、正本重複、製品固有命令の漏出を確認します。詳細手順をこの常時読込へ戻しません。
