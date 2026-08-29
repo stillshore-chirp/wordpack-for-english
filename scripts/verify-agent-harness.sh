@@ -1075,7 +1075,7 @@ require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "scope shrink → partial result → reassign → primary"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "first agent failure alone はdirect-primary exceptionの理由にならず"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "停止・scope縮小・primary返却条件"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "compactな部分結果と未確認範囲"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "部分結果と未確認範囲を返してからownerを再割当します"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "invalidation conditionが成立した場合だけ再開"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| target HEAD / base |"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| evidence package | scope / acceptance、changed paths、conclusion、verification results、unperformed checks、remaining risks、snapshotまたはdiff identifier |"
