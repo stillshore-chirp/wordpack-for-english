@@ -52,7 +52,7 @@ description: "大小を問わないすべてのソースコード変更と、Iss
 
 - latest headに紐づき、対象branchで定義されたpush / pull_request等のCIを確認する。失敗時はログから原因を特定し、修正、commit、push、再確認する。
 - 開発中とreview修正中は変更pathに対応するfocused testを使い、最終HEAD確定前にfull gateを機械的に繰り返さない。
-- 配送対象の最終HEADでは、変更範囲を包含する最上位full gateだけを原則1回実行する。UIガバナンス変更は `scripts/verify-ai-governance.sh`、agent-harnessだけの変更は `scripts/verify-agent-harness.sh` を選ぶ。前者は後者を内包するため、同じsnapshotで後者を別途実行しない。stacked PRでは、親merge後のbase統合・最上位full gate・latest HEAD reviewをそれぞれ原則1回確認する。
+- 配送対象の最終HEADでは、変更範囲に必要な包含関係上の最上位full gateをそれぞれ原則1回実行する。相互に包含しない独立領域のgateはそれぞれ実行する。UIガバナンス変更は `scripts/verify-ai-governance.sh`、agent-harnessだけの変更は `scripts/verify-agent-harness.sh` を選ぶ。前者は後者を内包するため、同じsnapshotで後者を別途実行しない。stacked PRでは、親merge後のbase統合・最上位full gate・latest HEAD reviewをそれぞれ原則1回確認する。
 - 包括レビューの周回上限、3周目以降の限定条件、P2以下の収束、再レビュー文脈は [`docs/agent-harness.md`](../../../docs/agent-harness.md) のGitHub reviewの収束を正本とする。
 - CI成功後、GitHub上で確認可能な自動または人間のコードレビュー、review thread、review commentをlatest headで確認する。
 - 外部状態の確認では、HEAD、base、更新時刻、statusなどの軽量な状態キーと取得済み証拠を記録する。同じHEAD・同じ状態キーでは詳細を再利用し、変化した項目だけreview本文、thread、check一覧を再取得する。待機timeoutだけでは証拠を失効させず、同じAPI・同じpayloadの詳細照会を直ちに繰り返さない。

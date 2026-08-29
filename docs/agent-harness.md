@@ -188,7 +188,7 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 
 1. 開発中とreview修正中は、変更によって影響を受けるfocused testを先に実行する。最終HEAD確定前にfull gateを機械的に繰り返しません。
 2. 同じworktreeとHEADで長い検証を始める前に、利用可能なprocess stateをoperatorが確認し、確認済みの実行中processを重複起動しません。これは運用者向けのoperator ruleであり、環境が自動的なlockを保証する仕組みではありません。
-3. 配送対象の最終HEADが確定した時点で、変更範囲を包含する最上位full gateだけを原則1回実行する。選択したgateが別のgateを内包する場合、同じsnapshotで内包gateを別途実行しません。
+3. 配送対象の最終HEADが確定した時点で、変更範囲に必要な包含関係上の最上位full gateをそれぞれ原則1回実行する。独立領域のgateが相互に包含しない場合は各gateを実行し、選択したgateが別のgateを内包する場合は同じsnapshotで内包gateを別途実行しません。
 4. 成功済み検証を再実行する時は、対象変更、生成物変更、実行条件変更、証拠期限切れなど、証拠が失効した理由を記録する。
 
 メインエージェントは次のrisk lane台帳を保ち、担当scopeと結果を統合して重複を止めます。clean commitを確認した場合はcommit SHAを記録します。未commitの共有worktreeを確認した場合は、base HEADに加えて、確認したpathとdiffを一意に識別できる値を記録し、HEADだけを監査済みsnapshotとして扱いません。各evidenceは対象HEADとbase HEAD、確認済みpath、diff identifierに束縛します。対象snapshotが変わらない限りevidenceを再取得せず、invalidation conditionで失効したevidenceだけを再取得し、その理由と範囲を台帳に記録します。primary agentの受入はevidence packageからscope、acceptance、evidence、unrelated diff、commit responsibility、lane conflict、completion gatesを確認し、laneの完了と配送判断を行います。
@@ -221,7 +221,7 @@ heuristicを「常に」「必ず」と書く場合は、例外が成立しな�
 7. instruction budgetを満たした。
 8. 旧正本、循環参照、壊れたリンクを残していない。
 9. 開発中とreview修正中は変更pathに対応するfocused testを実行した。
-10. 最終HEADで変更範囲を包含する最上位full gateだけを1回実行し、同じsnapshotで内包gateを別途実行していない。
+10. 最終HEADで変更範囲に必要な包含関係上の最上位full gateをそれぞれ1回実行し、同じsnapshotで内包gateを別途実行していない。
 
 ## 既知の限界
 

@@ -903,15 +903,16 @@ require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "サブエー�
 require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "primary agentは要件・計画・割当・進捗・競合・ガバナンス・受入・配送判断を担います"
 require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "委任、短い作業のprimary担当、lane owner、長い検証前のprocess状態、HEAD/baseに束縛したevidenceの詳細は"
 require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "docs/agent-harness.md"
-require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "変更範囲を包含する最上位full gateだけを原則1回実行し"
-require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "内包gateを同じsnapshotで別途実行しません"
+require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "変更範囲に必要な包含関係上の最上位full gateをそれぞれ原則1回実行し"
+require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "各gateが内包するgateを同じsnapshotで別途実行しません"
 require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "包括レビューは同一PR・同一HEAD系列で原則2周まで"
 require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "P2以下だけなら影響とnon-blocking判断を記録して収束"
 reject_text "AGENTS.md" "同じworktreeとHEADで長い検証を始める前に"
 reject_text "AGENTS.md" "各evidenceは対象HEADとbase HEAD、確認済みpath、diff identifierに束縛します"
 require_block_text ".agents/skills/github-delivery/SKILL.md" "## 3. Branch、実装、commit" "delivery-stack" "stacked PRでは、親PR・子PRのbaseと依存順を記録"
 require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "開発中とreview修正中は変更pathに対応するfocused testを使い"
-require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "変更範囲を包含する最上位full gateだけを原則1回実行する"
+require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "変更範囲に必要な包含関係上の最上位full gateをそれぞれ原則1回実行する"
+require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "相互に包含しない独立領域のgateはそれぞれ実行する"
 require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "UIガバナンス変更は scripts/verify-ai-governance.sh、agent-harnessだけの変更は scripts/verify-agent-harness.sh を選ぶ"
 require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "前者は後者を内包するため、同じsnapshotで後者を別途実行しない"
 require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "親merge後のbase統合・最上位full gate・latest HEAD reviewをそれぞれ原則1回"
@@ -925,6 +926,31 @@ require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview"
 require_block_text ".agents/skills/github-delivery/SKILL.md" "## 5. CIとreview" "delivery-review" "scripts/verify-agent-harness.sh"
 require_block_text ".agents/skills/github-delivery/SKILL.md" "## 6. 権限境界と終了" "delivery-exit" "merge直前には、必要な再確認を終えた同一時点の単一snapshotへ"
 [[ "$(grep -Fxc -- 'bash scripts/verify-agent-harness.sh' scripts/verify-ai-governance.sh)" -eq 1 ]] || fail "scripts/verify-ai-governance.sh must invoke verify-agent-harness.sh exactly once"
+python3 - ".github/workflows/agent-harness.yml" <<'PY'
+import sys
+
+import yaml
+
+path = sys.argv[1]
+workflow = yaml.safe_load(open(path, encoding="utf-8"))
+steps = workflow["jobs"]["verify"]["steps"]
+matches = [
+    step for step in steps if step.get("name") == "Verify agent harness and AI governance"
+]
+if len(matches) != 1:
+    raise SystemExit("agent-harness workflow must have one governance verification step")
+commands = [
+    line.strip()
+    for line in matches[0].get("run", "").splitlines()
+    if line.strip() and not line.lstrip().startswith("#")
+]
+if commands.count("bash scripts/verify-ai-governance.sh") != 1:
+    raise SystemExit("agent-harness workflow must run the containing gate exactly once")
+if "bash scripts/verify-agent-harness.sh" in commands:
+    raise SystemExit("agent-harness workflow must not separately run the contained gate")
+if commands.count("python scripts/verify_task_skills.py") != 1:
+    raise SystemExit("agent-harness workflow must preserve task-skill verification")
+PY
 require_block_text ".agents/skills/ui-ux-review/SKILL.md" "## 2. レビュー経路を選ぶ" "uiux-review-routing" "UI変更レビュー: 変更した画面、component、状態、文言、操作を確認する。単一画面の局所変更だけならフロー監査を追加しない。"
 require_block_text ".agents/skills/ui-ux-review/SKILL.md" "## 2. レビュー経路を選ぶ" "uiux-review-routing" "フロー監査: 既存画面または複数ステップの体験を監査する依頼、または画面遷移を追わなければタスク達成を評価できない場合に使う。"
 require_block_text ".agents/skills/ui-ux-review/SKILL.md" "## 2. レビュー経路を選ぶ" "uiux-review-routing" "併用: UI変更が複数ステップの主要タスクへ影響する場合、取得可能な変更前フローを基準にし、変更レビュー後に同じタスクの変更後フローを監査する。片方の証跡で他方を代用しない。"
@@ -1006,7 +1032,8 @@ require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "owner、write ownership、completion、verification、invalidation condition"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "開発中とreview修正中は、変更によって影響を受けるfocused test"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "最終HEAD確定前にfull gateを機械的に繰り返しません"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "変更範囲を包含する最上位full gateだけを原則1回実行する"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "変更範囲に必要な包含関係上の最上位full gateをそれぞれ原則1回実行する"
+require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "独立領域のgateが相互に包含しない場合は各gateを実行し"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "同じsnapshotで内包gateを別途実行しません"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "成功済み検証を再実行する時は、対象変更、生成物変更、実行条件変更、証拠期限切れなど、証拠が失効した理由を記録する"
 require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "completionに定めた停止・scope縮小・primaryへの返却条件に従い"
@@ -1029,7 +1056,7 @@ require_block_text "docs/ai-governance/13-maintenance-policy.md" "## サブエ�
 require_block_text "docs/ai-governance/13-maintenance-policy.md" "## Review収束" "review-maintenance" "docs/agent-harness.md"
 require_block_text "docs/ai-governance/13-maintenance-policy.md" "## Review収束" "review-maintenance" "P2以下だけを理由とする包括レビュー反復"
 require_block_text "docs/ai-governance/13-maintenance-policy.md" "## 検証" "maintenance-verification" "開発中とreview修正中は変更pathに対応するfocused testを使います"
-require_block_text "docs/ai-governance/13-maintenance-policy.md" "## 検証" "maintenance-verification" "変更範囲を包含する最上位full gateだけを1回実行し"
+require_block_text "docs/ai-governance/13-maintenance-policy.md" "## 検証" "maintenance-verification" "変更範囲に必要な包含関係上の最上位full gateをそれぞれ1回実行し"
 require_block_text "docs/ai-governance/13-maintenance-policy.md" "## 検証" "maintenance-verification" "同じsnapshotで内包gateを別途実行しません"
 require_text ".agents/skills/github-delivery/SKILL.md" "docs/agent-harness.md"
 require_text "docs/agent-principles.md" "重複回数だけで抽象化を強制しない"
