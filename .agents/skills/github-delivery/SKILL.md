@@ -33,7 +33,7 @@ description: "ソースコード変更とIssue、branch、commit、push、PR、C
 - stacked PRでは、親PR・子PRのbaseと依存順を記録し、親PRの最終HEADをmerge前に確定して、そのmergeを検証の境界として扱う。親merge前の子PRは変更に対応するfocused testに留め、親merge後に子PRを更新されたbaseへ統合する。
 - commitは独立してreview・revertできる一つの論理的責務または受け入れ条件の単位にする。関連するtest、文書、schema・client等の生成物は同じcommitへ含める。
 - 一つの責務の実装・関連test・文書・検証が完了したら、次の独立責務を編集する前にstage確認とcommitを完了する。複数責務を共有作業ツリーへ蓄積し、最後に全差分を再読して後付け分解しない。
-- サブエージェントの完了報告を受けたら、メインが担当fileと差分をreviewし、その責務だけを上記の時点でcommitへ回収する。他担当の未完了差分はstageしない。
+- サブエージェントの完了報告を受けたら、実装・focused verification・review fixはsubagent-firstで担当する。メインは担当fileと差分をreviewし、責務単位でcommitへ回収する。他担当の差分はstageしない。
 - 作業時間、行数、担当者だけを理由にcommitを分割または一括化しない。
 - `git add .`と`git add -A`を使わず、stage対象のpathを明示する。commit前にstaged file名、staged diff、`git diff --cached --check`、working treeの`git diff --check`、secret・実データ・無関係差分の不在を確認する。
 - commit messageは変更の責務を短く表す日本語にする。
@@ -69,7 +69,7 @@ description: "ソースコード変更とIssue、branch、commit、push、PR、C
 ## 6. 権限境界と終了
 <!-- agent-harness:delivery-exit:start -->
 
-- merge直前は再確認済みの単一snapshotへlatest HEAD、base（親merge含む）、CI、latest-head review、未解決thread、mergeabilityを記録する。snapshot後にHEAD・base・CI・review状態が変わった場合は、該当証拠を失効して更新する。
+- merge直前は再確認済みの単一snapshotへlatest HEAD、base（親merge含む）、CI、latest-head review、未解決thread、mergeabilityを記録する。snapshot後にHEAD・base・CI・review状態が変わった場合は、該当証拠を失効して更新する。最終delivery judgmentはprimaryがacceptance、CI、review、thread、mergeabilityを照合して行う。
 - merge、Issue / PRのclose、release、production deploy、破壊的変更は、対象を特定した別の明示指示がある場合だけ行う。
 - blocker報告には、失敗しているcheckまたは操作、証跡、試した対応、未完了範囲、次の最短アクションを含める。
 - 最終報告には、Issue、branch、commit、PR、local verification、CI、review、remaining risksのうち今回に関係するものを示す。

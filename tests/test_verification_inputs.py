@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 import subprocess
 
 from scripts.classify_verification_inputs import (
@@ -140,3 +141,21 @@ def test_diff_failure_returns_compact_fallback_without_paths(monkeypatch, capsys
     assert payload["fallback_reason"] == "git diff failed with status 128"
     assert "changed_paths" not in payload
     assert "unknown_paths" not in payload
+
+
+def test_subagent_scenario_contract_uses_existing_marker() -> None:
+    source = Path("docs/agent-harness.md").read_text(encoding="utf-8")
+    block = source.split("<!-- agent-harness:subagent-orchestration:start -->", 1)[1]
+    block = block.split("<!-- agent-harness:subagent-orchestration:end -->", 1)[0]
+    for term in (
+        "subagent-default（subagent-first）",
+        "direct-primary exception",
+        "specific reason",
+        "target paths",
+        "full fileやfull logを要求しません",
+        "scope shrink → partial result → reassign → primary",
+        "first agent failure alone",
+        "製品固有のtool、UI、runtime config",
+    ):
+        assert term in block
+    assert "ここへ詳細を複製しません" in Path("AGENTS.md").read_text(encoding="utf-8")

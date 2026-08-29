@@ -170,17 +170,17 @@ input closureは、gateが実際に読む対象path、関連設定、生成物�
 ## Subagent orchestration
 <!-- agent-harness:subagent-orchestration:start -->
 
-サブエージェントは、同じ証拠を読む担当を増やすためではなく、専門riskを独立したbounded laneへ分けるために使います。単一API、CI watcher、read-only照会、短いthread返信、短い競合解消などhandoffの固定費が見合わない作業はprimaryが担当します。
-
-primaryのcontrol-plane ledgerは、前節で定めた goal、acceptance、非対象、HEAD / base、changed paths、commit責務、gate要約、CI / review / thread / mergeability、権限、riskだけです。laneごとのownerや実行状況は委任メタデータとして分離し、raw log、file全文、full history、解決済みthread全文を継続保持しません。
+サブエージェントは、同じ証拠を読む担当を増やすためではなく、専門riskを独立したbounded laneへ分けるために使います。探索、実装、focused verification、review、review fix、docsは、分離可能ならsubagent-default（subagent-first）で委任します。単一API、CI watcher、read-only照会、短いthread返信、短い競合解消などhandoffの固定費が見合わない作業はprimaryが担当します。
 
 委任前に、他作業と重複しないrisk lane、target HEAD / base、target path、確認する具体的な問い、既存報告やprimaryの一次証拠で不足する理由、write ownership、completion、verification、invalidation conditionを定義します。同一PRの各laneは一人のownerが開始からcompletionまで担当し、同一HEAD・同一risk laneの監査は原則1回です。包括監査を複数agentへ同時委任せず、対象変更、新しい実行証拠、明確な証拠不足・矛盾がある場合だけ再監査します。
 
-subagentは探索、実装、focused verification、review、review fix、docsなど分離できる実務を担当できます。委任文脈はtarget HEAD / base、target path、acceptance、既知の指摘に限り、製品固有のtool、UI、runtime configを共有契約へ持ち込みません。監査結果が矛盾した場合は多数決を取らず、primaryが一次証拠で解決します。
+委任文脈はtarget HEAD / base、target path、acceptanceに限り、製品固有のtool、UI、runtime configを共有契約へ持ち込みません。
 
-subagent evidence packageは、scope / acceptance、changed paths、conclusion、verification results、unperformed checks、remaining risks、snapshotまたはdiff identifierだけを必要最小限として返します。raw log、file全文、full historyは必須にせず、必要な詳細は参照へ置きます。進捗がなく同じ結果を反復するlaneは、completionに定めた停止・scope縮小・primary返却条件で止め、compactな部分結果と未確認範囲を返します。invalidation conditionが成立した場合だけ再開します。
+分離可能な仕事をprimaryが直接行うのはdirect-primary exceptionに限ります。記録にはspecific reason、context-vs-work、primary-only question、target paths、output capを含めます。受入・統合・配送判断はprimaryの固有責務で、監査の矛盾は一次証拠で解決します。
 
-検証gateの選択、包含、再実行条件はGitHub配送Skillを正本とします。laneは、同じworktreeとsnapshotで長時間検証を始める前に実行中processを確認し、結果を前節のgate ledgerとevidence packageへ接続します。
+subagent evidence packageは、scope / acceptance、changed paths、conclusion、verification results、unperformed checks、remaining risks、snapshotまたはdiff identifierだけを必要最小限として返します。raw log、file全文、full historyは必須にせず、必要な詳細は参照へ置きます。primaryの最終受入はこのpackageを根拠にし、full fileやfull logを要求しません。
+
+進捗がなく同じ結果を反復するlaneは、`scope shrink → partial result → reassign → primary（必要時のみdirect-primary exception）` の順で止めます。first agent failure alone はdirect-primary exceptionの理由にならず、部分結果と未確認範囲を返してからownerを再割当します。completionに定めた停止・scope縮小・primary返却条件に従い、invalidation conditionが成立した場合だけ再開します。
 
 | Field | Meaning |
 |---|---|
@@ -212,4 +212,4 @@ subagent evidence packageは、scope / acceptance、changed paths、conclusion�
 
 ## 既知の限界
 
-各製品のversion、Remote SSH、sandbox、権限、Skill discoveryの実装差まではリポジトリ内の静的検証だけで保証できません。adapterと正本の構造をCIで固定し、実環境で発見できない場合は製品名、version、実行形態、再現パスをIssueへ残します。
+各製品のversion、Remote SSH、sandbox、権限、Skill discoveryの実装差まではリポジトリ内の静的検証だけで保証できません。adapterと正本の構造をCIで固定し、実環境で発見できない場合は製品名、version、実行形態、再現パスをIssueへ残します。アプリ内部のautomatic routing、token使用量、context pruningは共有契約から検証不能です。
