@@ -170,6 +170,8 @@ flowchart LR
 | **Frontend tests** | push / PR | `vitest --coverage` によるフロントエンドテストと、lines/statements 80%、branches 70%、functions 66% のカバレッジ閾値チェック（functions は段階的に 70%→75%→80% へ引き上げ予定） |
 | **Playwright smoke** | `pull_request`（主要導線に影響する変更かつBackend / Frontendテスト成功後）/ `main` push | Playwright の主要導線スモークテスト（`auth.spec.ts` / `guest.spec.ts` / `wordpack-server-query.spec.ts` / `wordpack.spec.ts`）。文書やtest-only変更はPRでskipし、mainへのpushではデプロイ前提として常に実行 |
 | **Visual regression** | `pull_request`（描画に影響し得る変更のみ） | frontend runtimeのTS／TSX・style・画像、visual test／snapshot、関連するbuild・依存設定が変わった場合にPlaywrightの視覚回帰 (`tests/e2e/visual.spec.ts`) を実行。frontendのtest-only・型宣言だけの変更はskip |
+| **UI test selection gate** | push / PR | changed path分類、Backend／Frontend、選択されたPlaywright smokeの結果を集約し、前提失敗によるsmoke skipを成功扱いにしない |
+| **Visual test selection gate** | `pull_request` | changed path分類と選択されたVisual Regressionの結果を集約し、分類失敗や予期しないskipを成功扱いにしない |
 | **Cloud Run config guard** | Security headers 成功後 | デプロイスクリプトの lint と dry-run 検証 |
 | **Production deploy preflight** | `pull_request` / `pull_request_target` / 手動実行 | PR コードでは secrets なしの frontend build、Cloud Run dry-run、Hosting API plan を実行し、secrets を使う read-only probe は base branch の信頼済みコードだけで実行 |
 | **Cloud Run dry-run** | `main` push | `CD / Cloud Run dry-run` として main に取り込まれた commit のチェック一覧に表示し、`make release-cloud-run` の dry-run モードを実行 |
@@ -192,6 +194,8 @@ Playwright の E2E は実行レイヤごとにスコープとブラウザを分�
 各レイヤの実行前に `npx playwright install --with-deps` を実行してブラウザを取得する。成果物は GitHub Actions の Artifacts として 90 日保持する。ビジュアル回帰の差分画像や HTML レポートは対象ワークフローの実行画面から `playwright-report/` と `test-results/` をダウンロードして確認する。
 
 PRの変更path分類は `scripts/classify_ui_test_changes.py` を正本とする。Playwright workflow自体は全PRで起動し、対象外の重いjobだけをjob条件でskipするため、required checkに設定された場合もworkflow-level path filterによるpendingを残さない。文書、ガバナンス、test-onlyなど既知の非UI pathだけを明示的にskipし、未分類pathは見逃しを避けてsmokeとvisualの両方を起動する。runtime source、user-visible backend、E2E本体、依存・build設定は保守的に対象へ含める。
+
+branch rulesでUIテストをrequiredにする場合は、条件付きのPlaywright job単体ではなく `UI test selection gate` と `Visual test selection gate` を対象にする。各selection gateは、テスト対象外の明示的skipだけを許容し、classifier・依存job・選択されたPlaywright jobの失敗を集約して失敗として報告する。
 
 ---
 

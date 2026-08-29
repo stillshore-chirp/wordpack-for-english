@@ -95,3 +95,29 @@ jobs:
             test-results/
           retention-days: 90
           if-no-files-found: ignore
+
+  visual_test_gate:
+    name: Visual test selection gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ always() }}
+    needs:
+      - playwright_visual
+      - ui_test_scope
+    steps:
+      - name: Validate selected visual test result
+        env:
+          PLAYWRIGHT_VISUAL: ${{ needs.ui_test_scope.outputs.playwright_visual }}
+          SCOPE_RESULT: ${{ needs.ui_test_scope.result }}
+          VISUAL_RESULT: ${{ needs.playwright_visual.result }}
+        run: |
+          if [ "${SCOPE_RESULT}" != "success" ]; then
+            echo "Visual test scope classification did not succeed" >&2
+            exit 1
+          fi
+
+          if [ "${PLAYWRIGHT_VISUAL}" = "true" ]; then
+            test "${VISUAL_RESULT}" = "success"
+          else
+            test "${VISUAL_RESULT}" = "skipped"
+          fi

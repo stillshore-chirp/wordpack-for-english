@@ -57,6 +57,10 @@ def test_playwright_pr_jobs_use_changed_path_classification() -> None:
             'GIT_REF: ${{ github.ref }}',
             'elif [ "${GIT_REF}" = "refs/heads/main" ]; then',
             'echo "playwright_smoke=false" >> "${GITHUB_OUTPUT}"',
+            "ui_test_gate:",
+            "name: UI test selection gate",
+            'test "${SMOKE_RESULT}" = "success"',
+            'test "${SMOKE_RESULT}" = "skipped"',
         ],
     )
     _assert_contains_all(
@@ -66,6 +70,10 @@ def test_playwright_pr_jobs_use_changed_path_classification() -> None:
             "scripts/classify_ui_test_changes.py",
             "needs.ui_test_scope.outputs.playwright_visual == 'true'",
             "needs.ui_test_scope.result == 'success'",
+            "visual_test_gate:",
+            "name: Visual test selection gate",
+            'test "${VISUAL_RESULT}" = "success"',
+            'test "${VISUAL_RESULT}" = "skipped"',
         ],
     )
     _assert_contains_none(visual_on_block, ["paths:", "paths-ignore:"])

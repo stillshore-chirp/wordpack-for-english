@@ -336,6 +336,38 @@ jobs:
           retention-days: 90
           if-no-files-found: ignore
 
+  ui_test_gate:
+    name: UI test selection gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ always() }}
+    needs:
+      - backend
+      - frontend
+      - playwright_smoke
+      - ui_test_scope
+    steps:
+      - name: Validate selected UI test result
+        env:
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          PLAYWRIGHT_SMOKE: ${{ needs.ui_test_scope.outputs.playwright_smoke }}
+          SCOPE_RESULT: ${{ needs.ui_test_scope.result }}
+          SMOKE_RESULT: ${{ needs.playwright_smoke.result }}
+        run: |
+          if [ "${SCOPE_RESULT}" != "success" ] || \
+             [ "${BACKEND_RESULT}" != "success" ] || \
+             [ "${FRONTEND_RESULT}" != "success" ]; then
+            echo "UI test prerequisites did not succeed" >&2
+            exit 1
+          fi
+
+          if [ "${PLAYWRIGHT_SMOKE}" = "true" ]; then
+            test "${SMOKE_RESULT}" = "success"
+          else
+            test "${SMOKE_RESULT}" = "skipped"
+          fi
+
   cloud_run_guard:
     name: Cloud Run config guard
     runs-on: ubuntu-latest
