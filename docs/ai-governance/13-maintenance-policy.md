@@ -15,9 +15,9 @@
 
 `CLAUDE.md` は `@AGENTS.md` だけを原則とします。tool adapterは正本を参照するだけで、新しい判断基準を持ちません。
 
-### 正本参照とeffective instruction budget
+### 正本参照とeffective instruction budget（唯一正本）
 
-実効instruction budgetは、`global / user-level`、repository root、nested rule、activated Skill、条件成立時のconditional hook contextを合算して評価します。portableなexplicit-input計測（対象revision、適用path、発動条件、入力資料を明示）を使い、推定値（estimate）と実行で得た値（observed usage）を分離して記録します。Hookが未発動または実測できない場合は、実効量を推定値として扱い、runtime enforcementの証拠にしません。
+実効instruction budgetの定義と計測手順はこの節を唯一の正本とします。`global / user-level`、repository root、nested rule、activated Skill、条件成立時のconditional hook contextを合算して評価し、portableなexplicit-input計測（対象revision、適用path、発動条件、入力資料を明示）を使います。推定値（estimate）と実行で得た値（observed usage）を分離して記録し、Hookが未発動または実測できない場合は実効量を推定値として扱い、runtime enforcementの証拠にしません。
 
 ## 変更時の3製品確認
 

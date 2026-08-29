@@ -146,9 +146,9 @@ CI watcherとread-only照会の配送順序は [GitHub配送Skill](../.agents/sk
 
 primaryが継続保持するcontrol-plane ledgerは、goal、acceptance、非対象、HEAD / base、changed paths、commit責務、completion-gate summary、CI / review / thread / mergeability、権限、riskだけです。raw log、file全文、PR本文全文、解決済みthread全文は台帳や委任報告へ入れず、必要な場合だけ参照へ退避します。旧HEADはcommit、finding、fix commit、invalidation reasonだけを残します。
 
-- latest meaningful changeのCI・review・thread・mergeabilityは、配送Skillが定める最新snapshotで確認し、台帳には状態の要約と取得時点だけを残す。同じHEAD / base、input closure、execution conditions、状態キーでは既存証拠を再利用する。
+- latest meaningful changeのCI・review・thread・mergeabilityは、配送Skillが定める最新snapshotで確認し、台帳には状態の要約と取得時点だけを残す。同一snapshot・input closure・execution conditionsなら既存証拠をそのまま再利用し、snapshotが異なる場合はsource snapshotとtarget snapshotを記録し、between-diffがinput closureと交差せず、baseとexecution conditionsが不変であることを確認できる場合に限り再利用する。
 - timeoutは状態変化や証拠失効を意味しない。timeout後は通知またはbackoff付きre-waitを優先し、状態照会は`new signal`または具体的な`diagnostic reason`がある場合だけ行う。
-- 完了したlaneの長文結果を再取得しない。bounded evidence packageと`artifact_reference`を使い、必要な詳細は限定された参照先から一度だけ取得する。
+- 完了したlaneの長文結果を再取得しない。`artifact_reference` fieldを含むbounded evidence packageを使い、必要な詳細は限定された参照先から一度だけ取得する。
 - 同一PR・同一HEAD系列の包括レビューは、初回レビュー1回と指摘修正後の再レビュー1回までを原則とする。レビューcomment、thread、指摘の件数ではなく、同じ配送系列のreview実行回数で数える。
 - 3回目以降は、未解決のP0 / P1、security・secret・data integrityの未解決事項、新しい変更範囲またはrisk lane、前回証拠の具体的な不足・矛盾のいずれかがある場合だけ、変更pathとrisk laneを限定して再確認する。
 - P2以下だけが残る場合は、影響とnon-blocking判断を記録し、必要なら別Issueへ分離して包括レビューを終了する。成功済みreviewやfull gateを再実行する場合も、失効理由と対象範囲を台帳へ記録する。
@@ -159,13 +159,13 @@ primaryが継続保持するcontrol-plane ledgerは、goal、acceptance、非対
 
 gate evidenceは、次のcompact ledgerで入力閉包とsnapshotへ束縛します。
 
-| gate | input paths | related config | generated artifacts | execution conditions | snapshot / result / artifact_reference | invalidation reason / reacquisition target |
+| gate | input paths | related config | generated artifacts | execution conditions | snapshot / result / evidence package | invalidation reason / reacquisition target |
 |---|---|---|---|---|---|---|
-| gateごと | 対象pathと依存path | 関連設定・schema | 生成物とchecksum | runtime、base依存、実行条件 | HEAD / base、pass・fail・skip、`artifact_reference` | 失効理由と再取得対象 |
+| gateごと | 対象pathと依存path | 関連設定・schema | 生成物とchecksum | runtime、base依存、実行条件 | HEAD / base、pass・fail・skip、evidence package内の`artifact_reference` field | 失効理由と再取得対象 |
 
-input closureは、gateが実際に読む対象path、関連設定、生成物、実行条件、必要なbase依存の集合です。証拠にはこの閉包、snapshot、result、`artifact_reference`を記録します。`reuse_evidence`は同一snapshot・input closure・execution conditionsの成功証跡だけを参照します。HEADが変わっただけでは全gateを失効させず、閉包を構成するpath・設定・生成物・条件・base依存が変わったgateだけを失効させ、`invalidation_condition`、理由、再取得対象をledgerへ記録します。閉包が不変であるgateは、旧snapshotを参照しつつ新しいHEADへ影響しない根拠を残して再利用できます。
+input closureは、gateが実際に読む対象path、関連設定、生成物、実行条件、必要なbase依存の集合です。証拠にはこの閉包、snapshot、result、`artifact_reference` fieldを含むevidence packageを記録します。`reuse_evidence`は、同一snapshot・input closure・execution conditionsならそのまま再利用し、snapshotが異なる場合はsource snapshotとtarget snapshot、between-diffがinput closureと交差しないこと、baseとexecution conditionsが不変であることを記録して再利用します。HEADが変わっただけでは全gateを失効させず、閉包を構成するpath・設定・生成物・条件・base依存が変わったgateだけを失効させ、`invalidation_condition`、理由、再取得対象をledgerへ記録します。閉包が不変であるgateは、target snapshotへ影響しない根拠を残して再利用できます。
 
-長時間検証のevidence packageは、exit code、pass / fail / skip、coverage総計、warning要約、failure箇所、artifact参照だけにします。成功時はfile別coverageと反復進捗を渡さず、raw outputは必要な場合だけ参照へ置きます。
+長時間検証のevidence packageは、exit code、pass / fail / skip、coverage総計、warning要約、failure箇所、`artifact_reference` fieldだけにします。成功時はfile別coverageと反復進捗を渡さず、raw outputは必要な場合だけ参照へ置きます。
 <!-- agent-harness:review-convergence:end -->
 
 ## Subagent orchestration
@@ -177,7 +177,7 @@ input closureは、gateが実際に読む対象path、関連設定、生成物�
 
 分離可能な仕事をprimaryが直接行うのはdirect-primary exceptionに限ります。例外の記録は、`specific_reason`、`evidence_subagent_cannot_continue`、`scope_shrink_history`、`reassignment_history`、`primary_only_question`、`target_paths`、`output_cap`の7 fieldだけを持ちます。受入・統合・配送判断はprimaryの固有責務で、監査の矛盾は一次証拠で解決します。
 
-subagent evidence packageは、scope / acceptance、changed paths、conclusion、verification results、unperformed checks、remaining risks、`snapshot_phase`、snapshotまたはdiff identifier、input closure、execution conditions、`artifact_reference`だけを必要最小限として返します。raw log、file全文、full historyは必須にせず、必要な詳細は参照へ置きます。primaryの最終受入はこのpackageを根拠にし、full fileやfull logを要求しません。
+subagent evidence packageは、scope / acceptance、changed paths、conclusion、verification results、unperformed checks、remaining risks、`snapshot_phase`、snapshotまたはdiff identifier、input closure、execution conditions、`artifact_reference` fieldを含む必要最小限として返します。raw log、file全文、full historyは必須にせず、必要な詳細は参照へ置きます。primaryの最終受入はこのpackageを根拠にし、full fileやfull logを要求しません。
 
 進捗がなく同じ結果を反復するlaneは、`scope shrink → partial result → reassign → primary（必要時のみdirect-primary exception）` の順で止めます。first agent failure alone はdirect-primary exceptionの理由にならず、部分結果と未確認範囲を返してからownerを再割当します。completionに定めた停止・scope縮小・primary返却条件に従い、invalidation conditionが成立した場合だけ再開します。
 
@@ -198,11 +198,11 @@ subagent evidence packageは、scope / acceptance、changed paths、conclusion�
 | verification | 実行する検証と、compactな結果の証跡 |
 | verified snapshot | clean commit、またはbase HEADと確認済みdiffの識別子 |
 | status | pending / active / passed / finding / blocked |
-| reuse_evidence | 同一snapshot・input closure・execution conditionsで取得済みの成功証跡へのreference |
+| reuse_evidence | 同一snapshot・input closure・execution conditionsならそのまま再利用。snapshotが異なる場合はsource snapshotとtarget snapshot、between-diffがinput closureと交差しないこと、baseとexecution conditionsが不変であることを確認した成功証跡へのreference |
 | invalidation_condition | 再検証が必要になる対象変更または新証拠、失効理由、再取得範囲 |
-| artifact_reference | bounded evidence packageまたは必要時のartifactを指す公開安全なreference |
+| artifact_reference | evidence package内のfield。bounded evidence packageまたは必要時のartifactを指す公開安全なreference |
 | evidence package | scope / acceptance、changed paths、conclusion、verification results、unperformed checks、remaining risks、snapshotまたはdiff identifier |
-| evidence package extensions | `snapshot_phase`、input closure、execution conditions、`artifact_reference` |
+| evidence package extensions | `snapshot_phase`、input closure、execution conditions、evidence package内の`artifact_reference` field |
 <!-- agent-harness:subagent-orchestration:end -->
 
 ## ルール変更時の確認

@@ -108,7 +108,7 @@ indexや全詳細文書を機械的に読み直さず、変更範囲から必要
 
 ### 証跡の時点とruntime
 
-before / afterの採否、base / headへの束縛、`provisional`から`final`への遷移、失効と再取得の条件は `03-evidence-and-completion-gates.md` を正本とします。latest HEAD、対象path、base、review state、finding / fix、またはruntime条件が変わったafterは失効させ、review中は`provisional`、包括review収束後だけlatest HEADで再取得して`final`にします。
+before / afterの採否、base / headへの束縛、`provisional`から`final`への遷移、失効と再取得の条件は [`03-evidence-and-completion-gates.md`](../../../docs/ai-governance/03-evidence-and-completion-gates.md) を正本とします。latest HEAD、対象path、base、review state、finding / fix、またはruntime条件が変わったafterは失効させ、review中は`provisional`、包括review収束後だけlatest HEADで再取得して`final`にします。
 
 runtimeまたはdev serverを使った証跡は、起動前にownerを確定し、PID、process group、port、readiness確認、cleanup結果を記録します。owner不明、readiness未確認、cleanup未確認のプロセスはcurrent-run証跡へ採用せず、未確認範囲またはblockerとして報告します。記録の詳細はbounded artifactへ置き、公開報告には必要最小限だけを残します。
 

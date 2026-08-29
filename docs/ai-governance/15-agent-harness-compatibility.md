@@ -18,7 +18,7 @@
 - **Skill**: 特定作業でだけ読む実行手順。常時ルールにはしない。
 - **hard gate**: 違反した状態で完了または公開してはいけない条件。
 - **heuristic**: 文脈に応じて採否を判断する設計・実装上の目安。
-- **instruction budget**: エージェントが常時または対象scopeで読む指示量。
+- **instruction budget**: 詳細は [`13-maintenance-policy.md`](13-maintenance-policy.md) の「正本参照とeffective instruction budget」を参照する指示量。
 
 ## 3. 3エージェントの適用構造
 
@@ -67,7 +67,7 @@
 
 ### 5.4 effective instruction budget
 
-3製品で比較する実効instruction budgetは、`global / user-level`、repository root、nested rule、activated Skill、条件成立時のconditional hook contextの合算です。計測条件をexplicit input（revision、path、発動条件、入力資料）としてportableに固定し、estimateとobserved usageを別欄で報告します。製品固有のtoken telemetryや、未発動Hookの注入量を観測済みとは扱いません。
+定義と計測手順は [`13-maintenance-policy.md`](13-maintenance-policy.md) の「正本参照とeffective instruction budget」を唯一の正本とします。互換性レビューでは、各adapterが同正本の合算対象へ到達できること、portableなexplicit-input計測とestimate / observed usageの分離が保たれることだけを確認します。製品固有のtoken telemetryや、未発動Hookの注入量は互換性の証拠にしません。
 
 ## 6. tool中立性
 
