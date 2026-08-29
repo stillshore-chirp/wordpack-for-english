@@ -39,6 +39,38 @@ def test_ci_runs_on_develop_and_prs_to_develop() -> None:
     assert "develop" in on_block, "CI must include develop in its triggers"
 
 
+def test_playwright_pr_jobs_use_changed_path_classification() -> None:
+    """Contract: heavy UI tests use job-level scope gates instead of broad PR triggers."""
+    ci = _read_text(".github/workflows/ci.yml")
+    visual = _read_text(".github/workflows/playwright-visual.yml")
+    visual_on_block = _extract_on_block(visual)
+
+    _assert_contains_all(
+        ci,
+        [
+            "ui_test_scope:",
+            "scripts/classify_ui_test_changes.py",
+            "needs.ui_test_scope.outputs.playwright_smoke == 'true'",
+            "always() &&",
+            "needs.backend.result == 'success'",
+            "needs.frontend.result == 'success'",
+            'GIT_REF: ${{ github.ref }}',
+            'elif [ "${GIT_REF}" = "refs/heads/main" ]; then',
+            'echo "playwright_smoke=false" >> "${GITHUB_OUTPUT}"',
+        ],
+    )
+    _assert_contains_all(
+        visual,
+        [
+            "ui_test_scope:",
+            "scripts/classify_ui_test_changes.py",
+            "needs.ui_test_scope.outputs.playwright_visual == 'true'",
+            "needs.ui_test_scope.result == 'success'",
+        ],
+    )
+    _assert_contains_none(visual_on_block, ["paths:", "paths-ignore:"])
+
+
 def test_deploy_dry_run_is_main_only() -> None:
     """
     Contract: main is the production deployment branch.

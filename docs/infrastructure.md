@@ -128,7 +128,9 @@ flowchart LR
         BackendTest["Backend tests<br/>(pytest)"]
         SecurityTest["Security headers tests"]
         FrontendTest["Frontend tests<br/>(vitest)"]
+        UiTestScope["UI test scope<br/>(changed path classifier)"]
         PlaywrightSmoke["Playwright smoke<br/>(PR critical flows)"]
+        VisualRegression["Playwright visual<br/>(rendering changes)"]
         CloudRunGuard["Cloud Run config guard<br/>(dry-run)"]
         DeployPreflight["Production deploy preflight<br/>(no deploy)"]
     end
@@ -145,8 +147,11 @@ flowchart LR
     Actions --> BackendTest
     Actions --> SecurityTest
     Actions --> FrontendTest
+    Actions --> UiTestScope
     BackendTest --> PlaywrightSmoke
     FrontendTest --> PlaywrightSmoke
+    UiTestScope --> PlaywrightSmoke
+    UiTestScope --> VisualRegression
     SecurityTest --> CloudRunGuard
     Actions -->|PR| DeployPreflight
     Actions -->|main push| DryRun
@@ -163,8 +168,8 @@ flowchart LR
 | **Backend tests** | push / PR | `PYTHONPATH=apps/backend` で `pytest` を実行し、`pytest.ini` の `addopts` に揃えた `apps/backend/backend` のカバレッジが 60% 以上であることを検証 |
 | **Security headers tests** | push / PR | セキュリティヘッダー検証（HSTS, CSP, etc.） |
 | **Frontend tests** | push / PR | `vitest --coverage` によるフロントエンドテストと、lines/statements 80%、branches 70%、functions 66% のカバレッジ閾値チェック（functions は段階的に 70%→75%→80% へ引き上げ予定） |
-| **Playwright smoke** | `pull_request`（Backend / Frontend テスト成功後） | Playwright の主要導線スモークテスト（`auth.spec.ts` / `guest.spec.ts` / `wordpack-server-query.spec.ts` / `wordpack.spec.ts`） |
-| **Visual regression** | `pull_request`（UI 変更のみ） | UI 変更が検知された場合に Playwright の視覚回帰 (`tests/e2e/visual.spec.ts`) を実行 |
+| **Playwright smoke** | `pull_request`（主要導線に影響する変更かつBackend / Frontendテスト成功後）/ `main` push | Playwright の主要導線スモークテスト（`auth.spec.ts` / `guest.spec.ts` / `wordpack-server-query.spec.ts` / `wordpack.spec.ts`）。文書やtest-only変更はPRでskipし、mainへのpushではデプロイ前提として常に実行 |
+| **Visual regression** | `pull_request`（描画に影響する変更のみ） | runtimeのTSX・style・画像、visual test／snapshot、関連するbuild・依存設定が変わった場合にPlaywrightの視覚回帰 (`tests/e2e/visual.spec.ts`) を実行。frontendのtest-only・非描画TS変更はskip |
 | **Cloud Run config guard** | Security headers 成功後 | デプロイスクリプトの lint と dry-run 検証 |
 | **Production deploy preflight** | `pull_request` / `pull_request_target` / 手動実行 | PR コードでは secrets なしの frontend build、Cloud Run dry-run、Hosting API plan を実行し、secrets を使う read-only probe は base branch の信頼済みコードだけで実行 |
 | **Cloud Run dry-run** | `main` push | `CD / Cloud Run dry-run` として main に取り込まれた commit のチェック一覧に表示し、`make release-cloud-run` の dry-run モードを実行 |
@@ -180,11 +185,13 @@ Playwright の E2E は実行レイヤごとにスコープとブラウザを分�
 
 | レイヤ | トリガー | ブラウザ | 実行コマンド | 成果物 |
 |---|---|---|---|---|
-| PR スモーク | `pull_request` | Chromium | `npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/auth.spec.ts tests/e2e/guest.spec.ts tests/e2e/wordpack.spec.ts` | `playwright-report/`, `test-results/` |
-| PR ビジュアル回帰 | `pull_request`（`apps/frontend/src/**`, `apps/frontend/**/*.css`, `apps/frontend/**/*.tsx` の変更時） | Chromium | `npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/visual.spec.ts` | `playwright-report/`, `test-results/` |
+| PR スモーク | `pull_request`（主要導線に影響する変更時） | Chromium | `npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/auth.spec.ts tests/e2e/guest.spec.ts tests/e2e/wordpack-server-query.spec.ts tests/e2e/wordpack.spec.ts` | `playwright-report/`, `test-results/` |
+| PR ビジュアル回帰 | `pull_request`（描画に影響する変更時） | Chromium | `npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/visual.spec.ts` | `playwright-report/`, `test-results/` |
 | 手動回帰 | `workflow_dispatch` | Chromium | `npx playwright test -c tests/e2e/playwright.config.ts --browser=chromium` | `playwright-report/`, `test-results/` |
 
 各レイヤの実行前に `npx playwright install --with-deps` を実行してブラウザを取得する。成果物は GitHub Actions の Artifacts として 90 日保持する。ビジュアル回帰の差分画像や HTML レポートは対象ワークフローの実行画面から `playwright-report/` と `test-results/` をダウンロードして確認する。
+
+PRの変更path分類は `scripts/classify_ui_test_changes.py` を正本とする。Playwright workflow自体は全PRで起動し、対象外の重いjobだけをjob条件でskipするため、required checkに設定された場合もworkflow-level path filterによるpendingを残さない。文書、ガバナンス、test-onlyなど既知の非UI pathだけを明示的にskipし、未分類pathは見逃しを避けてsmokeとvisualの両方を起動する。runtime source、user-visible backend、E2E本体、依存・build設定は保守的に対象へ含める。
 
 ---
 
