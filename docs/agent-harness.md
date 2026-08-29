@@ -155,6 +155,12 @@ primaryが継続保持するcontrol-plane ledgerは、goal、acceptance、非対
 - 変更path、修正commit、元の指摘、focused test結果だけを再レビューの文脈にする。変更のないheadでclean reviewを追加せず、reviewが提供されない場合は未確認範囲とblockerを報告する。
 - actionableな未解決threadがなく、GitHubのmergeabilityがcleanであることを確認する。mergeまたはcloseは別の明示指示がある場合だけ行う。
 
+### Focused review terminal
+
+focused reviewは開始時に`reviewed_paths`と確認する`questions`を固定し、P0 / P1、security、secret、data integrity、現在の受入証跡が誤りと分かる具体的な矛盾を確認します。指定scopeを完了した時点でterminalにでき、P2-onlyは`action=track`としてterminalにします。一般的な改善探索やcomprehensive scopeへの拡張はfocused reviewでは禁止します。
+
+focused reviewのterminal evidenceは`reviewed_paths`、`finding_severity`、`unverified_scope`、`remaining_risk`、`artifact_reference`の5 fieldだけに限定し、long resultを含めません。focused review terminalを確定する前にfull gateをfinalizeせず、同一closure・conditionsの成功証跡はreuseします。
+
 ### Review decision record
 
 既存`review` eventは、既存のstatus、head、latest head、actionable thread、mergeabilityを保持したまま、boundedな`decision_record` objectを含めます。decision recordのfieldは次の6つだけです。`review_round`は同一delivery系列の包括reviewの序数とし、focused reviewはそのround内のterminal確認として扱います。`scope`（focused / comprehensive）と`terminal`はevent metadataであり、decision recordのfieldには数えません。
@@ -198,7 +204,7 @@ input closureは、gateが実際に読む対象path、関連設定、生成物�
 
 subagent evidence packageは、scope / acceptance、changed paths、conclusion、verification results、unperformed checks、remaining risks、`snapshot_phase`、snapshotまたはdiff identifier、input closure、execution conditions、`artifact_reference` fieldを含む必要最小限として返します。raw log、file全文、full historyは必須にせず、必要な詳細は参照へ置きます。primaryの最終受入はこのpackageを根拠にし、full fileやfull logを要求しません。
 
-進捗がなく同じ結果を反復するlaneは、`scope shrink → partial result → reassign → primary（必要時のみdirect-primary exception）` の順で止めます。first agent failure alone はdirect-primary exceptionの理由にならず、部分結果と未確認範囲を返してからownerを再割当します。completionに定めた停止・scope縮小・primary返却条件に従い、invalidation conditionが成立した場合だけ再開します。
+進捗がなく同じ結果を反復するlaneは、固定timeout回数ではなくlogical `checkpoint` eventでdeterministicに判定し、`checkpoint miss → partial result（同じownerへ1回） → no progress / continuation unknownならscope shrink → 縮小scope後もno progressならreassign` の順で進めます。timeoutがcheckpoint前に発生した場合は状態変化やstallとみなさず、backoff付きre-waitを優先し、status-listを取得せずownerを維持します。partialに進展があれば`progress_revision`を更新し、次のcheckpointとownerを維持します。first agent failure alone はdirect-primary exceptionの理由にならず、partial resultと未確認範囲を返してから縮小scopeでも進展がない場合だけownerを再割当します。completionに定めた停止・scope縮小・primary返却条件に従い、invalidation conditionが成立した場合だけ再開します。completed laneはcompact terminal receiptとartifactだけを返し、long resultを再取得しません。固定timeout countだけでstallまたはfailureを判定しません。
 
 | Field | Meaning |
 |---|---|
@@ -217,6 +223,14 @@ subagent evidence packageは、scope / acceptance、changed paths、conclusion�
 | verification | 実行する検証と、compactな結果の証跡 |
 | verified snapshot | clean commit、またはbase HEADと確認済みdiffの識別子 |
 | status | pending / active / passed / finding / blocked |
+| progress_revision | logical checkpoint eventで更新する進捗revision。timeout countやcommentaryだけでは更新しない |
+| checkpoint_condition | 進捗またはterminalを確定するdeterministicなcheckpoint条件 |
+| expected_next_signal | 次のcheckpointまでに期待する具体的な進捗・完了signal |
+| partial_result_cap | checkpoint miss時に同じownerへ一度だけ求めるbounded receipt。findings有無、unverified_scope、remaining_work、terminal_possible、artifact_referenceだけを含む |
+| on_checkpoint_miss | timeout前後のre-wait、status-list抑止、owner維持、partial要求の順序 |
+| scope_shrink_condition | revision不変で進展または継続が不明な場合に縮小するscopeと停止条件 |
+| reassignment_condition | 縮小scopeでも進展がない場合だけownerを再割当する条件 |
+| terminal_reason | completed、blocked、scope完了などをcompact terminal receiptへ記録する理由 |
 | reuse_evidence | 同一snapshot・input closure・execution conditionsならそのまま再利用。snapshotが異なる場合はsource snapshotとtarget snapshot、between-diffがinput closureと交差しないこと、baseとexecution conditionsが不変であることを確認した成功証跡へのreference |
 | invalidation_condition | 再検証が必要になる対象変更または新証拠、失効理由、再取得範囲 |
 | artifact_reference | evidence package内のfield。bounded evidence packageまたは必要時のartifactを指す公開安全なreference |

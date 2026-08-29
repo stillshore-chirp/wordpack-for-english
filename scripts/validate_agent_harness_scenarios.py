@@ -25,6 +25,8 @@ REQUIRED_SCENARIOS = {
     "evidence-reuse",
     "review-budget",
     "review-budget-exception",
+    "lane-liveness",
+    "focused-terminal",
 }
 FORBIDDEN_OUTPUT_KEYS = {
     "final_output",
@@ -66,6 +68,14 @@ SECRET_LIKE_PATTERNS = (
     re.compile(r"\b(?:sk|ghp|github_pat|xox[baprs]-)[A-Za-z0-9_-]{8,}\b"),
     re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
 )
+PII_EMAIL_PATTERN = re.compile(r"(?i)\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b")
+TRACKING_ID_ASSIGNMENT_PATTERN = re.compile(
+    r"(?i)\b(?:request|trace|job|session)(?:[\s_-]+)?id\s*[:=]\s*[A-Za-z0-9][A-Za-z0-9._-]{2,}\b"
+)
+TRACKING_ID_VALUE_PATTERN = re.compile(
+    r"(?i)\b(?:request|trace|job|session)(?:[\s_-]+)(?:id(?:[\s_-]+))?[A-Za-z0-9][A-Za-z0-9_-]{3,}\b"
+)
+TRACKING_ID_KEY_NAMES = {"requestid", "traceid", "jobid", "sessionid"}
 DECISION_RECORD_FIELDS = {
     "review_round",
     "highest_severity",
@@ -85,6 +95,33 @@ HARD_RISK_EXCEPTION_CATEGORIES = {
     "acceptance_contradiction",
     "evidence_contradiction",
 }
+LANE_RECORD_FIELDS = {
+    "progress_revision",
+    "checkpoint_condition",
+    "expected_next_signal",
+    "partial_result_cap",
+    "on_checkpoint_miss",
+    "scope_shrink_condition",
+    "reassignment_condition",
+    "terminal_reason",
+}
+PARTIAL_RECEIPT_FIELDS = {
+    "findings",
+    "unverified_scope",
+    "remaining_work",
+    "terminal_possible",
+    "artifact_reference",
+}
+TERMINAL_RECEIPT_FIELDS = {"terminal_reason", "artifact_reference"}
+FOCUSED_REVIEW_FIELDS = {"reviewed_paths", "questions"}
+FOCUSED_TERMINAL_FIELDS = {
+    "reviewed_paths",
+    "finding_severity",
+    "unverified_scope",
+    "remaining_risk",
+    "artifact_reference",
+}
+FOCUSED_RISK_CHECKS = set(HARD_RISK_EXCEPTION_CATEGORIES)
 
 
 class ScenarioValidationError(ValueError):
@@ -128,6 +165,15 @@ def _public_bounded_string(scenario_id: str, value: Any, label: str, *, allow_em
         _require(scenario_id, bool(value.strip()), f"{label} must be non-empty")
     _require(scenario_id, len(value) <= MAX_REVIEW_STRING_CHARS, f"{label} exceeds the public string limit")
     _require(scenario_id, "\n" not in value and "\r" not in value, f"{label} contains a newline")
+    _require(scenario_id, not PII_EMAIL_PATTERN.search(value), f"{label} contains a PII email")
+    _require(
+        scenario_id,
+        not TRACKING_ID_ASSIGNMENT_PATTERN.search(value) and not TRACKING_ID_VALUE_PATTERN.search(value),
+        f"{label} contains a tracking identifier",
+    )
+    if label.endswith("field name"):
+        compact_key = re.sub(r"[^a-z0-9]", "", value.lower())
+        _require(scenario_id, compact_key not in TRACKING_ID_KEY_NAMES, f"{label} must not expose a tracking identifier field")
     normalized = value.replace("\\", "/")
     local_absolute = (
         normalized.startswith(("/", "~/", "//"))
@@ -842,6 +888,405 @@ def _validate_review_budget_scenario(scenario: Mapping[str, Any]) -> None:
     _require(scenario_id, invalidated <= reacquired, "scenario leaves invalidated evidence unreacquired")
 
 
+def _bounded_public_string_list(
+    scenario_id: str,
+    value: Any,
+    label: str,
+    *,
+    allow_empty: bool = False,
+) -> list[str]:
+    _require(scenario_id, isinstance(value, list), f"{label} must be a list")
+    if not allow_empty:
+        _require(scenario_id, bool(value), f"{label} must be non-empty")
+    _require(scenario_id, len(value) <= MAX_REVIEW_EVENT_ITEMS, f"{label} has too many items")
+    result: list[str] = []
+    for index, item in enumerate(value):
+        result.append(_public_bounded_string(scenario_id, item, f"{label}[{index}]"))
+    _require(scenario_id, len(set(result)) == len(result), f"{label} must be unique")
+    return result
+
+
+def _normalize_timeout_control(scenario_id: str, value: Any, label: str) -> str:
+    raw = _public_bounded_string(scenario_id, value, label)
+    normalized = re.sub(r"[\s-]+", "_", raw.strip().lower())
+    _require(
+        scenario_id,
+        normalized in {"wait", "re_wait"},
+        f"{label} is not an allowed timeout control",
+    )
+    return normalized
+
+
+def _validate_lane_record(scenario_id: str, value: Any) -> dict[str, Any]:
+    record = _mapping(scenario_id, value, "lane_record")
+    _require(
+        scenario_id,
+        set(record) == LANE_RECORD_FIELDS,
+        "lane_record must contain exactly the eight required fields",
+    )
+    progress_revision = record.get("progress_revision")
+    _require(
+        scenario_id,
+        isinstance(progress_revision, int) and not isinstance(progress_revision, bool) and progress_revision > 0,
+        "lane_record.progress_revision must be a positive integer",
+    )
+    for field in (
+        "checkpoint_condition",
+        "expected_next_signal",
+        "on_checkpoint_miss",
+        "scope_shrink_condition",
+        "reassignment_condition",
+        "terminal_reason",
+    ):
+        _public_bounded_string(scenario_id, record.get(field), f"lane_record.{field}")
+    cap = _mapping(scenario_id, record.get("partial_result_cap"), "lane_record.partial_result_cap")
+    _require(
+        scenario_id,
+        set(cap) == {"unit", "max_bytes", "max_items"},
+        "lane_record.partial_result_cap must contain unit, max_bytes, and max_items",
+    )
+    _require(
+        scenario_id,
+        cap.get("unit") in {"bytes", "utf8_bytes"},
+        "lane_record.partial_result_cap.unit must be utf8_bytes",
+    )
+    for field in ("max_bytes", "max_items"):
+        value = cap.get(field)
+        _require(
+            scenario_id,
+            isinstance(value, int) and not isinstance(value, bool) and value > 0,
+            f"lane_record.partial_result_cap.{field} must be positive",
+        )
+    return record
+
+
+def _validate_partial_receipt(scenario_id: str, value: Any, cap: Mapping[str, Any]) -> dict[str, Any]:
+    receipt = _mapping(scenario_id, value, "partial_receipt")
+    _require(
+        scenario_id,
+        set(receipt) == PARTIAL_RECEIPT_FIELDS,
+        "partial_receipt must contain exactly the five bounded fields",
+    )
+    _validate_public_bounded_value(scenario_id, receipt, "partial_receipt")
+    _validate_bounded_value(scenario_id, receipt, "partial_receipt")
+    _bounded_public_string_list(scenario_id, receipt.get("findings"), "partial_receipt.findings", allow_empty=True)
+    _bounded_public_string_list(
+        scenario_id,
+        receipt.get("unverified_scope"),
+        "partial_receipt.unverified_scope",
+        allow_empty=True,
+    )
+    _bounded_public_string_list(
+        scenario_id,
+        receipt.get("remaining_work"),
+        "partial_receipt.remaining_work",
+        allow_empty=True,
+    )
+    _require(scenario_id, isinstance(receipt.get("terminal_possible"), bool), "partial_receipt.terminal_possible must be boolean")
+    _public_bounded_string(scenario_id, receipt.get("artifact_reference"), "partial_receipt.artifact_reference")
+    try:
+        serialized_size = len(json.dumps(receipt, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8"))
+    except (TypeError, ValueError) as exc:
+        _fail(scenario_id, f"partial_receipt is not serializable: {exc}")
+    _require(
+        scenario_id,
+        serialized_size <= int(cap["max_bytes"]),
+        f"partial_receipt exceeds partial_result_cap ({serialized_size}>{cap['max_bytes']})",
+    )
+    _require(
+        scenario_id,
+        len(receipt["findings"]) <= int(cap["max_items"]),
+        "partial_receipt.findings exceeds partial_result_cap.max_items",
+    )
+    return receipt
+
+
+def _validate_terminal_receipt(scenario_id: str, value: Any, terminal_reason: str) -> str:
+    receipt = _mapping(scenario_id, value, "terminal_receipt")
+    _require(scenario_id, set(receipt) == TERMINAL_RECEIPT_FIELDS, "terminal_receipt must contain only terminal_reason and artifact_reference")
+    _validate_public_bounded_value(scenario_id, receipt, "terminal_receipt")
+    _validate_bounded_value(scenario_id, receipt, "terminal_receipt")
+    _require(scenario_id, receipt.get("terminal_reason") == terminal_reason, "terminal_receipt has an unexpected terminal_reason")
+    return _public_bounded_string(scenario_id, receipt.get("artifact_reference"), "terminal_receipt.artifact_reference")
+
+
+def _validate_lane_liveness_scenario(scenario: Mapping[str, Any]) -> None:
+    scenario_id = str(scenario["id"])
+    events = _events(scenario)
+    record = _validate_lane_record(scenario_id, scenario.get("lane_record"))
+    cap = record["partial_result_cap"]
+    allowed_event_types = {
+        "lane_start",
+        "timeout",
+        "checkpoint",
+        "checkpoint_miss",
+        "partial_request",
+        "partial_receipt",
+        "scope_shrink",
+        "reassign",
+        "completed",
+        "read",
+    }
+    owner: str | None = None
+    scope: str | None = None
+    current_revision = int(record["progress_revision"])
+    expected_signal = str(record["expected_next_signal"])
+    started = False
+    checkpoint_seen = False
+    saw_wait = False
+    saw_rewait = False
+    last_backoff: float | None = None
+    miss_pending = False
+    pending_miss_revision: int | None = None
+    partial_requested = False
+    partial_receipt_seen = False
+    partial_receipt_revision: int | None = None
+    scope_shrink_eligible = False
+    scope_shrunk = False
+    no_progress_after_shrink = False
+    reassigned = False
+    terminal_index: int | None = None
+    artifact_reference: str | None = None
+    artifact_read = False
+
+    for index, event in enumerate(events):
+        _validate_public_bounded_value(scenario_id, event, f"event {index}")
+        _require(scenario_id, _has_forbidden_output(event) is None, f"event {index} exposes long output")
+        event_type = str(event["type"])
+        _require(scenario_id, event_type in allowed_event_types, f"event {index} has unknown lane-liveness event: {event_type}")
+        if terminal_index is not None:
+            _require(scenario_id, event_type == "read", f"event {index} occurs after compact terminal receipt")
+
+        if event_type == "lane_start":
+            _require(scenario_id, index == 0 and not started, f"event {index} lane_start must be first and unique")
+            owner = _public_bounded_string(scenario_id, event.get("owner"), f"event {index} owner")
+            scope = _public_bounded_string(scenario_id, event.get("scope"), f"event {index} scope")
+            _require(scenario_id, event.get("progress_revision") == current_revision, f"event {index} lane_start revision differs from lane_record")
+            started = True
+        elif event_type == "timeout":
+            _require(scenario_id, started and owner is not None, f"event {index} timeout needs an active owner")
+            _require(scenario_id, not checkpoint_seen, f"event {index} timeout must precede the first checkpoint")
+            _require(scenario_id, event.get("owner") == owner, f"event {index} timeout changes owner")
+            _require(scenario_id, event.get("phase") == "before_checkpoint", f"event {index} timeout has an invalid phase")
+            _require(
+                scenario_id,
+                event.get("query") not in {"status", "list"}
+                and "status" not in event
+                and "list" not in event
+                and "status_query" not in event
+                and "list_query" not in event,
+                f"event {index} timeout cannot poll status/list before checkpoint",
+            )
+            _require(
+                scenario_id,
+                set(event) <= {"type", "owner", "phase", "operation", "query", "action", "backoff_seconds"},
+                f"event {index} has an unknown timeout field",
+            )
+            operation = _normalize_timeout_control(scenario_id, event.get("operation"), f"event {index} operation")
+            for control in ("query", "action"):
+                if control in event:
+                    normalized_control = _normalize_timeout_control(scenario_id, event.get(control), f"event {index} {control}")
+                    _require(
+                        scenario_id,
+                        normalized_control == operation,
+                        f"event {index} {control} does not match operation",
+                    )
+            backoff = event.get("backoff_seconds")
+            _require(
+                scenario_id,
+                isinstance(backoff, (int, float)) and not isinstance(backoff, bool) and backoff > 0,
+                f"event {index} timeout needs a positive backoff_seconds",
+            )
+            if last_backoff is None:
+                _require(scenario_id, operation == "wait", f"event {index} first timeout must use wait")
+                saw_wait = True
+            else:
+                _require(scenario_id, operation == "re_wait", f"event {index} repeated timeout must use re_wait")
+                _require(scenario_id, float(backoff) > last_backoff, f"event {index} timeout backoff must increase")
+                saw_rewait = True
+            last_backoff = float(backoff)
+        elif event_type == "checkpoint":
+            _require(scenario_id, started and owner is not None and scope is not None, f"event {index} checkpoint needs an active lane")
+            _require(scenario_id, not miss_pending and not partial_requested, f"event {index} checkpoint cannot skip a checkpoint-miss response")
+            _require(scenario_id, event.get("owner") == owner, f"event {index} checkpoint changes owner")
+            _require(scenario_id, event.get("condition") == record["checkpoint_condition"], f"event {index} checkpoint condition is not the lane condition")
+            _require(scenario_id, event.get("signal") == expected_signal, f"event {index} checkpoint has an unexpected signal")
+            revision = event.get("progress_revision")
+            _require(
+                scenario_id,
+                isinstance(revision, int) and not isinstance(revision, bool) and revision > current_revision,
+                f"event {index} checkpoint must update progress_revision",
+            )
+            next_signal = _public_bounded_string(scenario_id, event.get("next_signal"), f"event {index} next_signal")
+            current_revision = revision
+            expected_signal = next_signal
+            checkpoint_seen = True
+            last_backoff = None
+            scope_shrink_eligible = False
+            pending_miss_revision = None
+        elif event_type == "checkpoint_miss":
+            _require(scenario_id, checkpoint_seen and owner is not None and scope is not None, f"event {index} checkpoint miss needs a prior checkpoint")
+            _require(scenario_id, event.get("owner") == owner, f"event {index} checkpoint miss changes owner")
+            _require(scenario_id, event.get("progress_revision") == current_revision, f"event {index} checkpoint miss must keep progress_revision")
+            _require(scenario_id, event.get("continuation") == "unknown", f"event {index} checkpoint miss needs unknown continuation")
+            if scope_shrunk:
+                _require(scenario_id, partial_receipt_seen and not no_progress_after_shrink, f"event {index} shrunken-scope miss must be the first no-progress signal")
+                _require(scenario_id, event.get("phase") == "shrunken_scope", f"event {index} shrunken-scope miss has an invalid phase")
+                no_progress_after_shrink = True
+            else:
+                _require(scenario_id, not miss_pending and not partial_requested, f"event {index} repeats checkpoint miss before partial response")
+                _require(scenario_id, event.get("phase") == "checkpoint", f"event {index} checkpoint miss has an invalid phase")
+                miss_pending = True
+                pending_miss_revision = current_revision
+                scope_shrink_eligible = False
+        elif event_type == "partial_request":
+            _require(scenario_id, miss_pending and owner is not None, f"event {index} partial request needs a checkpoint miss")
+            _require(scenario_id, not partial_requested, f"event {index} repeats the same-owner partial request")
+            _require(scenario_id, event.get("owner") == owner, f"event {index} partial request changes owner")
+            _require(scenario_id, event.get("request") == "partial_result", f"event {index} partial request has an invalid request kind")
+            partial_requested = True
+        elif event_type == "partial_receipt":
+            _require(scenario_id, partial_requested and owner is not None, f"event {index} partial receipt needs the partial request")
+            _require(scenario_id, pending_miss_revision is not None, f"event {index} partial receipt has no pending checkpoint miss")
+            _require(scenario_id, event.get("owner") == owner, f"event {index} partial receipt changes owner")
+            _require(scenario_id, event.get("progress_revision") == pending_miss_revision, f"event {index} partial receipt changes progress_revision")
+            _validate_partial_receipt(scenario_id, event.get("receipt"), cap)
+            partial_receipt_seen = True
+            partial_receipt_revision = pending_miss_revision
+            miss_pending = False
+            partial_requested = False
+            pending_miss_revision = None
+            scope_shrink_eligible = True
+        elif event_type == "scope_shrink":
+            _require(scenario_id, scope_shrink_eligible and owner is not None and scope is not None, f"event {index} scope shrink needs the latest checkpoint-miss partial receipt")
+            _require(scenario_id, not scope_shrunk, f"event {index} duplicates scope shrink")
+            _require(scenario_id, event.get("owner") == owner, f"event {index} scope shrink changes owner")
+            _require(scenario_id, event.get("from_scope") == scope, f"event {index} scope shrink has the wrong source scope")
+            new_scope = _public_bounded_string(scenario_id, event.get("to_scope"), f"event {index} to_scope")
+            _require(scenario_id, new_scope != scope, f"event {index} scope shrink must change scope")
+            _require(scenario_id, event.get("condition") == record["scope_shrink_condition"], f"event {index} scope shrink has the wrong condition")
+            _require(scenario_id, event.get("progress_revision") == current_revision == partial_receipt_revision, f"event {index} scope shrink changes progress_revision")
+            scope = new_scope
+            scope_shrunk = True
+            scope_shrink_eligible = False
+        elif event_type == "reassign":
+            _require(scenario_id, scope_shrunk and no_progress_after_shrink and owner is not None and scope is not None, f"event {index} reassignment needs shrunken-scope no progress")
+            _require(scenario_id, not reassigned, f"event {index} duplicates reassignment")
+            _require(scenario_id, event.get("from_owner") == owner, f"event {index} reassignment has the wrong source owner")
+            new_owner = _public_bounded_string(scenario_id, event.get("to_owner"), f"event {index} to_owner")
+            _require(scenario_id, new_owner != owner, f"event {index} reassignment must change owner")
+            _require(scenario_id, event.get("scope") == scope, f"event {index} reassignment changes scope")
+            _require(scenario_id, event.get("condition") == record["reassignment_condition"], f"event {index} reassignment has the wrong condition")
+            owner = new_owner
+            reassigned = True
+        elif event_type == "completed":
+            _require(scenario_id, checkpoint_seen and owner is not None, f"event {index} completion needs a checkpoint")
+            _require(scenario_id, scope_shrunk and reassigned, f"event {index} completion needs the scoped handoff path")
+            _require(scenario_id, current_revision > int(record["progress_revision"]), f"event {index} completion lacks progress after the initial revision")
+            _require(scenario_id, event.get("owner") == owner, f"event {index} completion changes owner")
+            _require(scenario_id, event.get("progress_revision") == current_revision, f"event {index} completion has the wrong progress_revision")
+            _require(scenario_id, terminal_index is None, f"event {index} duplicates compact terminal receipt")
+            _require(scenario_id, "artifact_reference" not in event, f"event {index} artifact_reference must be inside terminal_receipt")
+            artifact_reference = _validate_terminal_receipt(scenario_id, event.get("terminal_receipt"), str(record["terminal_reason"]))
+            terminal_index = index
+        elif event_type == "read":
+            _require(scenario_id, terminal_index is not None, f"event {index} reads before compact terminal receipt")
+            target = str(event.get("target", "")).lower()
+            _require(scenario_id, target in {"artifact", "artifact_reference", "terminal_receipt"}, f"event {index} refetches long final output ({target})")
+            if target in {"artifact", "artifact_reference"}:
+                artifact_read = True
+            _require(scenario_id, target != "final_output", f"event {index} refetches long final output ({target})")
+
+    _require(scenario_id, started, "scenario needs lane_start")
+    _require(scenario_id, saw_wait and saw_rewait, "scenario needs checkpoint-before timeout backoff/re_wait")
+    _require(scenario_id, checkpoint_seen, "scenario needs a progress checkpoint")
+    _require(scenario_id, partial_receipt_seen, "scenario needs one bounded partial receipt")
+    _require(scenario_id, scope_shrunk, "scenario needs a no-progress scope shrink")
+    _require(scenario_id, reassigned, "scenario needs reassignment after shrunken-scope no progress")
+    _require(scenario_id, terminal_index is not None and artifact_reference is not None, "scenario needs a compact completed terminal receipt")
+    _require(scenario_id, artifact_read, "completed lane must read artifact evidence only")
+
+
+def _validate_focused_terminal_scenario(scenario: Mapping[str, Any]) -> None:
+    scenario_id = str(scenario["id"])
+    events = _events(scenario)
+    review_record = _mapping(scenario_id, scenario.get("review_record"), "review_record")
+    _require(scenario_id, set(review_record) == FOCUSED_REVIEW_FIELDS, "review_record must contain exactly reviewed_paths and questions")
+    reviewed_paths = _bounded_public_string_list(scenario_id, review_record.get("reviewed_paths"), "review_record.reviewed_paths")
+    questions = _bounded_public_string_list(scenario_id, review_record.get("questions"), "review_record.questions")
+    allowed_event_types = {"review_start", "risk_check", "finding", "scope_complete", "review_terminal", "full_gate"}
+    started = False
+    risk_checked = False
+    p2_tracked = False
+    scope_complete = False
+    terminal_index: int | None = None
+    full_gate_runs = 0
+
+    for index, event in enumerate(events):
+        _validate_public_bounded_value(scenario_id, event, f"event {index}")
+        _require(scenario_id, _has_forbidden_output(event) is None, f"event {index} exposes long review output")
+        event_type = str(event["type"])
+        _require(scenario_id, event_type in allowed_event_types, f"event {index} has unknown focused-terminal event: {event_type}")
+        if terminal_index is not None:
+            _require(scenario_id, event_type == "full_gate", f"event {index} expands or re-requests focused review after terminal")
+
+        if event_type == "review_start":
+            _require(scenario_id, index == 0 and not started, f"event {index} review_start must be first and unique")
+            _require(scenario_id, event.get("scope") == "focused", f"event {index} review_start must be focused")
+            _require(scenario_id, event.get("reviewed_paths") == reviewed_paths, f"event {index} review_start changes reviewed_paths")
+            _require(scenario_id, event.get("questions") == questions, f"event {index} review_start changes questions")
+            started = True
+        elif event_type == "risk_check":
+            _require(scenario_id, started and not risk_checked and not scope_complete, f"event {index} risk_check is out of order")
+            checks = _mapping(scenario_id, event.get("checks"), f"event {index} checks")
+            _require(scenario_id, set(checks) == FOCUSED_RISK_CHECKS, f"event {index} risk_check must cover P0/P1/security/secret/data integrity/acceptance contradiction")
+            for check, value in checks.items():
+                _require(scenario_id, isinstance(value, bool) and value is True, f"event {index} risk check {check} is not confirmed")
+            risk_checked = True
+        elif event_type == "finding":
+            _require(scenario_id, started and risk_checked and not scope_complete, f"event {index} finding is out of order")
+            severity = event.get("severity")
+            _require(scenario_id, severity == "P2", f"event {index} focused review cannot defer a P0/P1 or hard-risk finding")
+            _require(scenario_id, event.get("action") == "track", f"event {index} P2 finding must be tracked")
+            _public_bounded_string(scenario_id, event.get("follow_up_reference"), f"event {index} follow_up_reference")
+            p2_tracked = True
+        elif event_type == "scope_complete":
+            _require(scenario_id, started and risk_checked and not scope_complete, f"event {index} scope_complete is out of order")
+            _require(scenario_id, event.get("reviewed_paths") == reviewed_paths, f"event {index} scope_complete changes reviewed_paths")
+            _require(scenario_id, event.get("questions") == questions, f"event {index} scope_complete changes questions")
+            scope_complete = True
+        elif event_type == "review_terminal":
+            _require(scenario_id, started and risk_checked and scope_complete, f"event {index} terminal review needs completed scope")
+            _require(scenario_id, terminal_index is None, f"event {index} duplicates focused terminal")
+            _require(scenario_id, event.get("terminal") is True, f"event {index} focused terminal must be true")
+            evidence = _mapping(scenario_id, event.get("evidence"), f"event {index} terminal evidence")
+            _require(scenario_id, set(evidence) == FOCUSED_TERMINAL_FIELDS, f"event {index} terminal evidence must contain exactly five fields")
+            _validate_public_bounded_value(scenario_id, evidence, f"event {index} terminal evidence")
+            _validate_bounded_value(scenario_id, evidence, f"event {index} terminal evidence")
+            _require(scenario_id, evidence.get("reviewed_paths") == reviewed_paths, f"event {index} terminal evidence changes reviewed_paths")
+            finding_severity = evidence.get("finding_severity")
+            _require(scenario_id, finding_severity in {"none", "P2"}, f"event {index} terminal evidence has an unsupported finding severity")
+            _require(scenario_id, (finding_severity == "P2") == p2_tracked, f"event {index} terminal evidence disagrees with tracked findings")
+            _bounded_public_string_list(scenario_id, evidence.get("unverified_scope"), f"event {index} unverified_scope", allow_empty=True)
+            _bounded_public_string_list(scenario_id, evidence.get("remaining_risk"), f"event {index} remaining_risk", allow_empty=True)
+            _public_bounded_string(scenario_id, evidence.get("artifact_reference"), f"event {index} artifact_reference")
+            terminal_index = index
+        elif event_type == "full_gate":
+            _require(scenario_id, terminal_index is not None and terminal_index < index, f"event {index} full gate requires focused terminal")
+            _require(scenario_id, full_gate_runs == 0, f"event {index} repeats final full gate")
+            _require(scenario_id, str(event.get("phase", "")).lower() == "final", f"event {index} full gate must be final")
+            _require(scenario_id, str(event.get("status", "")).lower() in {"passed", "success"}, f"event {index} full gate is not successful")
+            _nonempty_string(scenario_id, event.get("gate"), f"event {index} gate")
+            _closure(scenario_id, event)
+            _mapping(scenario_id, event.get("conditions"), f"event {index} conditions")
+            full_gate_runs += 1
+
+    _require(scenario_id, started and risk_checked, "scenario needs fixed focused review start and risk checks")
+    _require(scenario_id, scope_complete, "scenario needs focused scope completion")
+    _require(scenario_id, terminal_index is not None, "scenario needs focused terminal evidence")
+    _require(scenario_id, full_gate_runs == 1, "scenario needs exactly one final full gate after focused terminal")
+
+
 def _validate_resource_scenario(scenario: Mapping[str, Any]) -> None:
     scenario_id = str(scenario["id"])
     events = _events(scenario)
@@ -1141,6 +1586,8 @@ def validate_scenario(scenario: Mapping[str, Any]) -> None:
         "evidence-reuse": _validate_evidence_reuse_scenario,
         "review-budget": _validate_review_budget_scenario,
         "review-budget-exception": _validate_review_budget_scenario,
+        "lane-liveness": _validate_lane_liveness_scenario,
+        "focused-terminal": _validate_focused_terminal_scenario,
     }
     validator = validators.get(scenario_id)
     if validator is None:

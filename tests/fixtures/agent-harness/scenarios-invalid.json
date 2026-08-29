@@ -136,6 +136,35 @@
           }
         }
       ]
+    },
+    {
+      "id": "lane-liveness",
+      "lane_record": {
+        "progress_revision": 1,
+        "checkpoint_condition": "new progress revision is observed",
+        "expected_next_signal": "checkpoint:2",
+        "partial_result_cap": {"unit": "utf8_bytes", "max_bytes": 1024, "max_items": 4},
+        "on_checkpoint_miss": "rewait then one partial request",
+        "scope_shrink_condition": "revision unchanged and continuation unknown",
+        "reassignment_condition": "shrunken scope has no progress",
+        "terminal_reason": "scoped work completed"
+      },
+      "events": [
+        {"type": "lane_start", "owner": "lane-a", "scope": "verifier lane", "progress_revision": 1},
+        {"type": "timeout", "owner": "lane-a", "phase": "before_checkpoint", "operation": "wait", "backoff_seconds": 10},
+        {"type": "timeout", "owner": "lane-a", "phase": "before_checkpoint", "operation": "wait", "backoff_seconds": 10}
+      ]
+    },
+    {
+      "id": "focused-terminal",
+      "review_record": {
+        "reviewed_paths": ["scripts/validate_agent_harness_scenarios.py"],
+        "questions": ["fixed paths are reviewed"]
+      },
+      "events": [
+        {"type": "review_start", "scope": "focused", "reviewed_paths": ["scripts/validate_agent_harness_scenarios.py"], "questions": ["fixed paths are reviewed"]},
+        {"type": "full_gate", "gate": "agent-harness-final", "phase": "final", "status": "passed", "input_closure": {"paths": ["scripts/validate_agent_harness_scenarios.py"], "config": [], "artifacts": []}, "conditions": {"runtime": "static"}}
+      ]
     }
   ]
 }

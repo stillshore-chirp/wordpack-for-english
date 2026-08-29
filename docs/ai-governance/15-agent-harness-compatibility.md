@@ -111,7 +111,7 @@ heuristicを採用しないこと自体を失敗にせず、品質・保守性�
 
 エージェントルール、Skill、adapter、検証scriptを変更するPRでは、次を確認します。
 
-review decision recordと停止条件は [`docs/agent-harness.md`](../agent-harness.md) を正本とし、3製品のadapterとrepository verifierが同じmarkerへ到達できることだけを互換性観点で確認します。field定義やレビュー回数の本文は複製しません。
+review decision record、lane liveness、focused review terminal、停止条件は [`docs/agent-harness.md`](../agent-harness.md) を正本とし、3製品のadapterとrepository verifierが同じmarkerへ到達できることだけを互換性観点で確認します。field定義やレビュー回数の本文は複製せず、app-onlyのstatus surfaceとrole不明Hookの挙動を共有契約へ持ち込みません。
 
 | 観点 | Codex | Claude Code | Cursor |
 |---|---|---|---|

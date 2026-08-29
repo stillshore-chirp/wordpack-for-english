@@ -34,10 +34,10 @@ canonical lane schema、evidence package、snapshot phase、待機・再照会�
 
 ### 期待仕様
 
-- app status surfaceは、lane状態、`snapshot_phase`、依存状態、resource / portの所有要約、cleanup状態、`output_cap`、evidence / artifact referenceをboundedに返す。
-- timeout後はbackoff re-waitを予約し、new signalまたはdiagnostic reasonがない限り同じstatus queryを発行しない。
+- app status surfaceはactive laneだけを対象にし、lane状態、`snapshot_phase`、`last_activity`、phase、`expected signal`、compactな`progress_revision`、依存状態、resource / portの所有要約、cleanup状態、`output_cap`、evidence / artifact referenceをboundedに返す。completed laneをstatus listへ再掲しない。
+- `progress_revision`を指定するevent-driven waitを使い、timeout後はbackoff re-waitを予約する。new signalまたはdiagnostic reasonがない限り同じstatus queryを発行しない。
 - progress commentaryはstatus queryと独立し、cadenceのためだけに同一状態を再取得しない。
-- 完了laneは長文本文を自動再送せず、bounded evidence packageと参照だけを返す。
+- 完了laneはfinal outputを自動再送せず、final outputなしのcompactな`terminal receipt`とbounded evidence package、artifact referenceだけを返す。
 - `list_agents` のcompact表示形式はこのapp-only proposalの対象とし、共有正本の必須APIや他toolの共通挙動にしない。
 
 ### 実挙動と影響
@@ -53,6 +53,8 @@ canonical lane schema、evidence package、snapshot phase、待機・再照会�
 - progress event contract: commentaryをstatus queryから分離し、`new signal`の有無を明示する。
 - evidence reuse contract: 共有正本のsnapshot、input closure、`invalidation_condition`を参照する。
 - resource lifecycle contract: resource、port、cleanupのownerと完了状態を返す。
+
+追加のapp-only API候補は、未実装のrevision指定event-driven wait、active-only status read、`last_activity` / phase / `expected signal`を含むcompact progress event、final outputを持たないterminal receiptです。これらはCodexアプリ側の改善提案であり、repositoryの実装済み契約やruntime enforcementの証拠として扱いません。
 
 これらはCodexアプリの改善候補であり、repositoryの共有正本へ`list_agents`、特定SDK、特定CLI、アプリ内部イベント名を持ち込む変更ではない。
 

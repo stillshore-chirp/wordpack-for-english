@@ -34,6 +34,8 @@ def test_positive_fixture_covers_all_relationship_scenarios() -> None:
         "evidence-reuse",
         "review-budget",
         "review-budget-exception",
+        "lane-liveness",
+        "focused-terminal",
     }
 
 
@@ -565,6 +567,246 @@ def test_review_budget_rejects_unbounded_or_private_event_strings() -> None:
         with pytest.raises(ScenarioValidationError, match=message):
             validate_scenario(scenario)
 
+    email_value = "reviewer" + "@" + "example.invalid"
+    email_scenario = _scenario("review-budget")
+    email_review = next(event for event in email_scenario["events"] if event.get("type") == "review")
+    email_review["decision_record"]["follow_up_reference"] = email_value
+    with pytest.raises(ScenarioValidationError, match="PII email"):
+        validate_scenario(email_scenario)
+
+    tracking_value = "trace" + "_id" + "=" + "synthetic-123456"
+    tracking_scenario = _scenario("review-budget")
+    tracking_review = next(event for event in tracking_scenario["events"] if event.get("type") == "review")
+    tracking_review["decision_record"]["follow_up_reference"] = tracking_value
+    with pytest.raises(ScenarioValidationError, match="tracking identifier"):
+        validate_scenario(tracking_scenario)
+
+    tracking_key_scenario = _scenario("review-budget")
+    tracking_review = next(event for event in tracking_key_scenario["events"] if event.get("type") == "review")
+    tracking_review["trace" + "_id"] = "synthetic-reference"
+    with pytest.raises(ScenarioValidationError, match="tracking identifier field"):
+        validate_scenario(tracking_key_scenario)
+
+
+def test_lane_liveness_validates_logical_checkpoints_and_compact_completion() -> None:
+    scenario = _scenario("lane-liveness")
+    validate_scenario(scenario)
+
+    status_poll = _scenario("lane-liveness")
+    status_poll["events"][1]["query"] = "status"
+    with pytest.raises(ScenarioValidationError, match="cannot poll status/list"):
+        validate_scenario(status_poll)
+
+    normalized_status_poll = _scenario("lane-liveness")
+    normalized_status_poll["events"][1]["query"] = " STATUS "
+    with pytest.raises(ScenarioValidationError, match="allowed timeout control"):
+        validate_scenario(normalized_status_poll)
+
+    unknown_timeout_query = _scenario("lane-liveness")
+    unknown_timeout_query["events"][1]["query"] = "status-poll"
+    with pytest.raises(ScenarioValidationError, match="allowed timeout control"):
+        validate_scenario(unknown_timeout_query)
+
+    unknown_timeout_action = _scenario("lane-liveness")
+    unknown_timeout_action["events"][2]["action"] = "list"
+    with pytest.raises(ScenarioValidationError, match="allowed timeout control"):
+        validate_scenario(unknown_timeout_action)
+
+    status_field = _scenario("lane-liveness")
+    status_field["events"][1]["status"] = "pending"
+    with pytest.raises(ScenarioValidationError, match="cannot poll status/list"):
+        validate_scenario(status_field)
+
+    alternate_status_field = _scenario("lane-liveness")
+    alternate_status_field["events"][1]["Status"] = "pending"
+    with pytest.raises(ScenarioValidationError, match="unknown timeout field"):
+        validate_scenario(alternate_status_field)
+
+    owner_change = _scenario("lane-liveness")
+    owner_change["events"][3]["owner"] = "lane-b"
+    with pytest.raises(ScenarioValidationError, match="checkpoint changes owner"):
+        validate_scenario(owner_change)
+
+    repeated_request = _scenario("lane-liveness")
+    repeated_request["events"].insert(6, deepcopy(repeated_request["events"][5]))
+    with pytest.raises(ScenarioValidationError, match="repeats the same-owner partial request"):
+        validate_scenario(repeated_request)
+
+    extra_partial_field = _scenario("lane-liveness")
+    extra_partial_field["events"][6]["receipt"]["diagnostic"] = "not part of the partial receipt"
+    with pytest.raises(ScenarioValidationError, match="exactly the five bounded fields"):
+        validate_scenario(extra_partial_field)
+
+    over_partial_cap = _scenario("lane-liveness")
+    over_partial_cap["lane_record"]["partial_result_cap"]["max_bytes"] = 1
+    with pytest.raises(ScenarioValidationError, match="exceeds partial_result_cap"):
+        validate_scenario(over_partial_cap)
+
+    post_miss_rewait = _scenario("lane-liveness")
+    post_miss_rewait["events"].insert(
+        5,
+        {"type": "timeout", "owner": "lane-a", "phase": "after_checkpoint_miss", "operation": "re_wait", "backoff_seconds": 30},
+    )
+    with pytest.raises(ScenarioValidationError, match="must precede the first checkpoint"):
+        validate_scenario(post_miss_rewait)
+
+    no_progress = _scenario("lane-liveness")
+    no_progress["events"][8]["continuation"] = "known"
+    with pytest.raises(ScenarioValidationError, match="unknown continuation"):
+        validate_scenario(no_progress)
+
+    stale_scope_shrink = _scenario("lane-liveness")
+    events = stale_scope_shrink["events"]
+    latest_partial_request_index = max(index for index, event in enumerate(events) if event.get("type") == "partial_request")
+    latest_partial_indices = [
+        index
+        for index, event in enumerate(events)
+        if event.get("progress_revision") == 3
+        and event.get("type") in {"checkpoint_miss", "partial_receipt"}
+        and event.get("phase") != "shrunken_scope"
+    ]
+    latest_partial_indices.append(latest_partial_request_index)
+    for index in sorted(set(latest_partial_indices), reverse=True):
+        del events[index]
+    with pytest.raises(ScenarioValidationError, match="latest checkpoint-miss partial receipt"):
+        validate_scenario(stale_scope_shrink)
+
+    direct_reassign = _scenario("lane-liveness")
+    direct_reassign["events"] = [
+        event
+        for event in direct_reassign["events"]
+        if not (
+            event.get("type") == "scope_shrink"
+            or event.get("phase") == "shrunken_scope"
+        )
+    ]
+    with pytest.raises(ScenarioValidationError, match="shrunken-scope no progress"):
+        validate_scenario(direct_reassign)
+
+    no_shrunken_progress = _scenario("lane-liveness")
+    no_shrunken_progress["events"] = [
+        event for event in no_shrunken_progress["events"] if event.get("phase") != "shrunken_scope"
+    ]
+    with pytest.raises(ScenarioValidationError, match="shrunken-scope no progress"):
+        validate_scenario(no_shrunken_progress)
+
+    long_refetch = _scenario("lane-liveness")
+    long_refetch["events"].append({"type": "read", "target": "final_output"})
+    with pytest.raises(ScenarioValidationError, match="refetches long final output"):
+        validate_scenario(long_refetch)
+
+    nested_long_receipt = _scenario("lane-liveness")
+    completed = next(event for event in nested_long_receipt["events"] if event.get("type") == "completed")
+    completed["terminal_receipt"]["full_output"] = "not a compact receipt"
+    with pytest.raises(ScenarioValidationError, match="only terminal_reason and artifact_reference"):
+        validate_scenario(nested_long_receipt)
+
+    sibling_artifact = _scenario("lane-liveness")
+    completed = next(event for event in sibling_artifact["events"] if event.get("type") == "completed")
+    completed["artifact_reference"] = "artifact:lane-complete"
+    with pytest.raises(ScenarioValidationError, match="inside terminal_receipt"):
+        validate_scenario(sibling_artifact)
+
+
+def test_lane_liveness_requires_backoff_progress_and_owner_scoped_reassignment() -> None:
+    backoff = _scenario("lane-liveness")
+    backoff["events"][2]["backoff_seconds"] = 10
+    with pytest.raises(ScenarioValidationError, match="backoff must increase"):
+        validate_scenario(backoff)
+
+    wrong_revision = _scenario("lane-liveness")
+    wrong_revision["events"][3]["progress_revision"] = 1
+    with pytest.raises(ScenarioValidationError, match="update progress_revision"):
+        validate_scenario(wrong_revision)
+
+    wrong_next_signal = _scenario("lane-liveness")
+    checkpoints = [event for event in wrong_next_signal["events"] if event.get("type") == "checkpoint"]
+    checkpoints[-1]["signal"] = "checkpoint:wrong"
+    with pytest.raises(ScenarioValidationError, match="unexpected signal"):
+        validate_scenario(wrong_next_signal)
+
+    second_owner_change = _scenario("lane-liveness")
+    checkpoints = [event for event in second_owner_change["events"] if event.get("type") == "checkpoint"]
+    checkpoints[1]["owner"] = "lane-b"
+    with pytest.raises(ScenarioValidationError, match="checkpoint changes owner"):
+        validate_scenario(second_owner_change)
+
+    owner_mismatch = _scenario("lane-liveness")
+    reassign = next(event for event in owner_mismatch["events"] if event.get("type") == "reassign")
+    reassign["from_owner"] = "lane-b"
+    with pytest.raises(ScenarioValidationError, match="wrong source owner"):
+        validate_scenario(owner_mismatch)
+
+
+def test_focused_terminal_fixes_scope_and_terminal_evidence() -> None:
+    scenario = _scenario("focused-terminal")
+    validate_scenario(scenario)
+
+    changed_paths = _scenario("focused-terminal")
+    changed_paths["events"][0]["reviewed_paths"].append("tests/test_agent_harness_scenarios.py")
+    with pytest.raises(ScenarioValidationError, match="changes reviewed_paths"):
+        validate_scenario(changed_paths)
+
+    changed_questions = _scenario("focused-terminal")
+    changed_questions["events"][0]["questions"].append("expanded review")
+    with pytest.raises(ScenarioValidationError, match="changes questions"):
+        validate_scenario(changed_questions)
+
+    missing_risk_check = _scenario("focused-terminal")
+    missing_risk_check["events"][1]["checks"].pop("evidence_contradiction")
+    with pytest.raises(ScenarioValidationError, match="must cover"):
+        validate_scenario(missing_risk_check)
+
+    unconfirmed_risk = _scenario("focused-terminal")
+    unconfirmed_risk["events"][1]["checks"]["p1"] = False
+    with pytest.raises(ScenarioValidationError, match="is not confirmed"):
+        validate_scenario(unconfirmed_risk)
+
+    unconfirmed_evidence_contradiction = _scenario("focused-terminal")
+    unconfirmed_evidence_contradiction["events"][1]["checks"]["evidence_contradiction"] = False
+    with pytest.raises(ScenarioValidationError, match="is not confirmed"):
+        validate_scenario(unconfirmed_evidence_contradiction)
+
+    p2_fix = _scenario("focused-terminal")
+    p2_fix["events"][2]["action"] = "fix"
+    with pytest.raises(ScenarioValidationError, match="P2 finding must be tracked"):
+        validate_scenario(p2_fix)
+
+    expanded_scope = _scenario("focused-terminal")
+    expanded_scope["events"][3]["reviewed_paths"].append("tests/test_agent_harness_scenarios.py")
+    with pytest.raises(ScenarioValidationError, match="changes reviewed_paths"):
+        validate_scenario(expanded_scope)
+
+    extra_terminal_field = _scenario("focused-terminal")
+    extra_terminal_field["events"][4]["evidence"]["detail"] = "long review result"
+    with pytest.raises(ScenarioValidationError, match="exactly five fields"):
+        validate_scenario(extra_terminal_field)
+
+    unsupported_terminal_severity = _scenario("focused-terminal")
+    unsupported_terminal_severity["events"][4]["evidence"]["finding_severity"] = "P1"
+    with pytest.raises(ScenarioValidationError, match="unsupported finding severity"):
+        validate_scenario(unsupported_terminal_severity)
+
+    terminal_before_gate = _scenario("focused-terminal")
+    terminal_before_gate["events"].insert(1, deepcopy(terminal_before_gate["events"][-1]))
+    with pytest.raises(ScenarioValidationError, match="requires focused terminal"):
+        validate_scenario(terminal_before_gate)
+
+    comprehensive_request = _scenario("focused-terminal")
+    comprehensive_request["events"].insert(3, {"type": "comprehensive_review"})
+    with pytest.raises(ScenarioValidationError, match="unknown focused-terminal event"):
+        validate_scenario(comprehensive_request)
+
+    re_request = _scenario("focused-terminal")
+    re_request["events"].insert(5, {"type": "review_request"})
+    with pytest.raises(ScenarioValidationError, match="unknown focused-terminal event"):
+        validate_scenario(re_request)
+
+    duplicate_gate = _scenario("focused-terminal")
+    duplicate_gate["events"].append(deepcopy(duplicate_gate["events"][-1]))
+    with pytest.raises(ScenarioValidationError, match="repeats final full gate"):
+        validate_scenario(duplicate_gate)
+
 
 def test_validator_cli_accepts_positive_and_rejects_negative_fixture() -> None:
     script = Path("scripts/validate_agent_harness_scenarios.py")
@@ -582,6 +824,6 @@ def test_validator_cli_accepts_positive_and_rejects_negative_fixture() -> None:
     )
 
     assert positive.returncode == 0
-    assert "PASS (7 scenarios)" in positive.stdout
+    assert "PASS (9 scenarios)" in positive.stdout
     assert negative.returncode != 0
     assert "ERROR:" in negative.stderr

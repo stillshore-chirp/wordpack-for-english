@@ -174,8 +174,11 @@ def test_subagent_scenario_contract_uses_existing_marker() -> None:
         "specific reason",
         "target paths",
         "full fileやfull logを要求しません",
-        "scope shrink → partial result → reassign → primary",
+        "checkpoint miss → partial result（同じownerへ1回）",
+        "no progress / continuation unknownならscope shrink",
+        "縮小scope後もno progressならreassign",
         "first agent failure alone",
+        "partial resultと未確認範囲を返してから縮小scopeでも進展がない場合だけownerを再割当します",
         "製品固有のtool、UI、runtime config",
     ):
         assert term in block

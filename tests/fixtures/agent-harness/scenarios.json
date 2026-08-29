@@ -337,6 +337,104 @@
           "artifact_reference": "artifact:review-gate-round-2"
         }
       ]
+    },
+    {
+      "id": "lane-liveness",
+      "lane_record": {
+        "progress_revision": 1,
+        "checkpoint_condition": "new progress revision is observed",
+        "expected_next_signal": "checkpoint:2",
+        "partial_result_cap": {"unit": "utf8_bytes", "max_bytes": 1024, "max_items": 4},
+        "on_checkpoint_miss": "rewait then one partial request",
+        "scope_shrink_condition": "revision unchanged and continuation unknown",
+        "reassignment_condition": "shrunken scope has no progress",
+        "terminal_reason": "scoped work completed"
+      },
+      "events": [
+        {"type": "lane_start", "owner": "lane-a", "scope": "verifier lane", "progress_revision": 1},
+        {"type": "timeout", "owner": "lane-a", "phase": "before_checkpoint", "operation": "wait", "backoff_seconds": 10},
+        {"type": "timeout", "owner": "lane-a", "phase": "before_checkpoint", "operation": "re_wait", "backoff_seconds": 20},
+        {"type": "checkpoint", "owner": "lane-a", "condition": "new progress revision is observed", "signal": "checkpoint:2", "next_signal": "checkpoint:3", "progress_revision": 2},
+        {"type": "checkpoint_miss", "owner": "lane-a", "phase": "checkpoint", "continuation": "unknown", "progress_revision": 2},
+        {"type": "partial_request", "owner": "lane-a", "request": "partial_result"},
+        {
+          "type": "partial_receipt",
+          "owner": "lane-a",
+          "progress_revision": 2,
+          "receipt": {
+            "findings": ["checkpoint miss"],
+            "unverified_scope": ["live agent runtime"],
+            "remaining_work": ["scoped handoff"],
+            "terminal_possible": false,
+            "artifact_reference": "artifact:lane-partial"
+          }
+        },
+        {"type": "checkpoint", "owner": "lane-a", "condition": "new progress revision is observed", "signal": "checkpoint:3", "next_signal": "checkpoint:4", "progress_revision": 3},
+        {"type": "checkpoint_miss", "owner": "lane-a", "phase": "checkpoint", "continuation": "unknown", "progress_revision": 3},
+        {"type": "partial_request", "owner": "lane-a", "request": "partial_result"},
+        {
+          "type": "partial_receipt",
+          "owner": "lane-a",
+          "progress_revision": 3,
+          "receipt": {
+            "findings": ["checkpoint miss after progress"],
+            "unverified_scope": ["live agent runtime"],
+            "remaining_work": ["scoped handoff"],
+            "terminal_possible": false,
+            "artifact_reference": "artifact:lane-partial-latest"
+          }
+        },
+        {"type": "scope_shrink", "owner": "lane-a", "from_scope": "verifier lane", "to_scope": "scenario validator", "condition": "revision unchanged and continuation unknown", "progress_revision": 3},
+        {"type": "checkpoint_miss", "owner": "lane-a", "phase": "shrunken_scope", "continuation": "unknown", "progress_revision": 3},
+        {"type": "reassign", "from_owner": "lane-a", "to_owner": "lane-b", "scope": "scenario validator", "condition": "shrunken scope has no progress"},
+        {"type": "checkpoint", "owner": "lane-b", "condition": "new progress revision is observed", "signal": "checkpoint:4", "next_signal": "checkpoint:5", "progress_revision": 4},
+        {"type": "completed", "owner": "lane-b", "progress_revision": 4, "terminal_receipt": {"terminal_reason": "scoped work completed", "artifact_reference": "artifact:lane-complete"}},
+        {"type": "read", "target": "artifact_reference"}
+      ]
+    },
+    {
+      "id": "focused-terminal",
+      "review_record": {
+        "reviewed_paths": ["scripts/validate_agent_harness_scenarios.py", "tests/fixtures/agent-harness/scenarios.json"],
+        "questions": ["fixed paths are reviewed", "hard-risk checks are explicit"]
+      },
+      "events": [
+        {
+          "type": "review_start",
+          "scope": "focused",
+          "reviewed_paths": ["scripts/validate_agent_harness_scenarios.py", "tests/fixtures/agent-harness/scenarios.json"],
+          "questions": ["fixed paths are reviewed", "hard-risk checks are explicit"]
+        },
+        {
+          "type": "risk_check",
+          "checks": {"p0": true, "p1": true, "security": true, "secret": true, "data_integrity": true, "acceptance_contradiction": true, "evidence_contradiction": true}
+        },
+        {"type": "finding", "severity": "P2", "action": "track", "follow_up_reference": "issue:628/p2-follow-up"},
+        {
+          "type": "scope_complete",
+          "reviewed_paths": ["scripts/validate_agent_harness_scenarios.py", "tests/fixtures/agent-harness/scenarios.json"],
+          "questions": ["fixed paths are reviewed", "hard-risk checks are explicit"]
+        },
+        {
+          "type": "review_terminal",
+          "terminal": true,
+          "evidence": {
+            "reviewed_paths": ["scripts/validate_agent_harness_scenarios.py", "tests/fixtures/agent-harness/scenarios.json"],
+            "finding_severity": "P2",
+            "unverified_scope": ["live runtime"],
+            "remaining_risk": ["P2 tracked in issue"],
+            "artifact_reference": "artifact:focused-terminal"
+          }
+        },
+        {
+          "type": "full_gate",
+          "gate": "agent-harness-final",
+          "phase": "final",
+          "status": "passed",
+          "input_closure": {"paths": ["scripts/validate_agent_harness_scenarios.py"], "config": ["requirements-agent-harness.txt"], "artifacts": ["verification-summary"]},
+          "conditions": {"runtime": "static", "python": "3.14"}
+        }
+      ]
     }
   ]
 }
