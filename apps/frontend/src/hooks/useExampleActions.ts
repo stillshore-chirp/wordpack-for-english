@@ -64,8 +64,8 @@ export const useExampleActions = ({
   const [examplesLoading, setExamplesLoading] = useState(false);
   const mountedRef = useRef(true);
   const copyOperationIdRef = useRef(0);
-  const copyContextRef = useRef({ currentWordPackId, data });
-  copyContextRef.current = { currentWordPackId, data };
+  const copyContextRef = useRef({ currentWordPackId });
+  copyContextRef.current = { currentWordPackId };
 
   useEffect(() => {
     mountedRef.current = true;
@@ -77,7 +77,7 @@ export const useExampleActions = ({
 
   useEffect(() => {
     copyOperationIdRef.current += 1;
-  }, [currentWordPackId, data]);
+  }, [currentWordPackId]);
 
   const ensureSavedWordPack = useCallback(() => {
     if (!currentWordPackId) {
@@ -403,12 +403,10 @@ export const useExampleActions = ({
       const operationId = copyOperationIdRef.current + 1;
       copyOperationIdRef.current = operationId;
       const sourceWordPackId = currentWordPackId;
-      const sourceData = data;
       const isCurrentOperation = () => (
         mountedRef.current
         && copyOperationIdRef.current === operationId
         && copyContextRef.current.currentWordPackId === sourceWordPackId
-        && copyContextRef.current.data === sourceData
       );
       const ex = getExample(category, index);
       if (!ex) return;
@@ -455,7 +453,7 @@ export const useExampleActions = ({
         }
       }
     },
-    [currentWordPackId, data, getExample, onTransientMessage, resolveErrorMessage, setStatusMessage],
+    [currentWordPackId, getExample, onTransientMessage, resolveErrorMessage, setStatusMessage],
   );
 
   return {

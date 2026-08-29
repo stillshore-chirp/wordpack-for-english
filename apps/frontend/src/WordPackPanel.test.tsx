@@ -459,26 +459,39 @@ describe('WordPackPanel E2E (mocked fetch)', () => {
     const copyButton = await within(dialog).findByRole('button', { name: 'omicronのDev例文1をコピー' });
     vi.useFakeTimers();
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
-    const clipboardWrite = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
+    let resolveCopy: (() => void) | undefined;
+    const clipboardWrite = vi.spyOn(navigator.clipboard, 'writeText').mockImplementation(
+      () => new Promise<void>((resolve) => {
+        resolveCopy = resolve;
+      }),
+    );
 
     await act(async () => {
       await user.click(copyButton);
       await Promise.resolve();
     });
     expect(clipboardWrite).toHaveBeenCalledTimes(1);
-    expect(within(dialog).getByRole('status', { name: '例文コピー結果' })).toHaveTextContent('例文をクリップボードにコピーしました');
+    expect(resolveCopy).toBeDefined();
 
     act(() => {
       vi.advanceTimersByTime(1000);
     });
+    const guestPublicToggle = within(dialog).getByRole('checkbox', { name: 'ゲスト公開' });
     await act(async () => {
-      await user.click(within(dialog).getByRole('checkbox', { name: 'ゲスト公開' }));
+      await user.click(guestPublicToggle);
+      await Promise.resolve();
+    });
+    expect(guestPublicToggle).toBeChecked();
+
+    await act(async () => {
+      resolveCopy?.();
+      await Promise.resolve();
       await Promise.resolve();
     });
     expect(within(dialog).getByRole('status', { name: '例文コピー結果' })).toHaveTextContent('例文をクリップボードにコピーしました');
 
     act(() => {
-      vi.advanceTimersByTime(3999);
+      vi.advanceTimersByTime(4999);
     });
     expect(within(dialog).getByRole('status', { name: '例文コピー結果' })).toHaveTextContent('例文をクリップボードにコピーしました');
     act(() => {
