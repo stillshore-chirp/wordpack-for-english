@@ -63,6 +63,11 @@ def test_timeout_needs_fresh_signal_for_the_same_state_after_last_timeout() -> N
     with pytest.raises(ScenarioValidationError, match="without new signal"):
         validate_scenario(other_state)
 
+    unknown_event = deepcopy(_load("scenarios.json")["scenarios"][0])
+    unknown_event["events"][4]["type"] = "bogus"
+    with pytest.raises(ScenarioValidationError, match="unknown timeout event"):
+        validate_scenario(unknown_event)
+
 
 def test_completed_agent_only_reuses_evidence_and_artifact() -> None:
     scenario = deepcopy(_load("scenarios.json")["scenarios"][1])
@@ -104,7 +109,7 @@ def test_final_after_requires_converged_review_on_latest_head() -> None:
 
 def test_provisional_validator_rejects_unknown_event_and_unfinal_dependency() -> None:
     unknown_event = deepcopy(_load("scenarios.json")["scenarios"][2])
-    unknown_event["events"].append({"type": "unknown"})
+    unknown_event["events"].insert(3, {"type": "unknown"})
     with pytest.raises(ScenarioValidationError, match="unknown review/after event"):
         validate_scenario(unknown_event)
 
@@ -112,6 +117,19 @@ def test_provisional_validator_rejects_unknown_event_and_unfinal_dependency() ->
     unfinal_dependency["events"][2]["snapshot_phase"] = "review"
     with pytest.raises(ScenarioValidationError, match="final dependencies"):
         validate_scenario(unfinal_dependency)
+
+
+def test_final_after_evidence_is_terminal() -> None:
+    for event in (
+        {"type": "dependency", "id": "schema-contract", "snapshot_phase": "final"},
+        {"type": "review", "status": "converged", "head": "head-b", "latest_head": "head-b", "unresolved_actionable_threads": 0, "mergeability": "clean"},
+        {"type": "after", "snapshot_phase": "provisional"},
+        {"type": "after", "snapshot_phase": "final"},
+    ):
+        scenario = deepcopy(_load("scenarios.json")["scenarios"][2])
+        scenario["events"].append(event)
+        with pytest.raises(ScenarioValidationError, match="terminal final"):
+            validate_scenario(scenario)
 
 
 def test_resource_validator_detects_duplicate_port_and_cleanup_leak() -> None:
@@ -158,6 +176,16 @@ def test_evidence_reuse_invalidates_only_after_intersecting_change() -> None:
     unchanged_reacquire["events"][6]["artifact_reference"] = "artifact:gate-2"
     with pytest.raises(ScenarioValidationError, match="current evidence"):
         validate_scenario(unchanged_reacquire)
+
+    empty_reacquire = deepcopy(_load("scenarios.json")["scenarios"][4])
+    empty_reacquire["events"][6]["input_closure"] = {"paths": [], "config": [], "artifacts": []}
+    with pytest.raises(ScenarioValidationError, match="non-empty input closure"):
+        validate_scenario(empty_reacquire)
+
+    unrelated_reacquire = deepcopy(_load("scenarios.json")["scenarios"][4])
+    unrelated_reacquire["events"][6]["input_closure"]["paths"] = ["docs/unrelated.md"]
+    with pytest.raises(ScenarioValidationError, match="cover the changed path"):
+        validate_scenario(unrelated_reacquire)
 
 
 def test_validator_cli_accepts_positive_and_rejects_negative_fixture() -> None:

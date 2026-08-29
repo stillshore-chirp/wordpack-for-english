@@ -131,16 +131,20 @@ def _validate_timeout_scenario(scenario: Mapping[str, Any]) -> None:
     run_state: str | None = None
     run_length = 0
     longest_run = 0
+    allowed_event_types = {"status", "list", "wait", "re_wait", "timeout", "signal", "diagnostic"}
 
     for index, event in enumerate(events):
         event_type = str(event["type"])
+        _require(scenario_id, event_type in allowed_event_types, f"event {index} has unknown timeout event: {event_type}")
         state_key = str(event.get("state_key", ""))
         is_timeout = event_type == "timeout" or (
             event_type in {"wait", "re_wait"} and event.get("outcome") == "timeout"
         )
         diagnostic_reason = event.get("diagnostic_reason")
-        fresh = event.get("new_signal") is True or (
-            isinstance(diagnostic_reason, str) and bool(diagnostic_reason.strip())
+        fresh = event_type in {"signal", "diagnostic"} and (
+            event.get("new_signal") is True or (
+                isinstance(diagnostic_reason, str) and bool(diagnostic_reason.strip())
+            )
         )
         if fresh:
             _require(scenario_id, bool(state_key), f"event {index} signal is missing state_key")
@@ -350,6 +354,7 @@ def _validate_provisional_final_scenario(scenario: Mapping[str, Any]) -> None:
     allowed_event_types = {"dependency", "review", "after", "after_evidence", "evidence"}
 
     for index, event in enumerate(events):
+        _require(scenario_id, final_index is None, f"event {index} occurs after terminal final after evidence")
         event_type = str(event["type"])
         _require(scenario_id, event_type in allowed_event_types, f"event {index} has unknown review/after event: {event_type}")
         if event_type == "dependency":
@@ -533,6 +538,7 @@ def _validate_evidence_reuse_scenario(scenario: Mapping[str, Any]) -> None:
     stale: set[str] = set()
     invalidated: set[str] = set()
     reacquired: set[str] = set()
+    changed_paths_by_key: dict[str, set[str]] = {}
     saw_reuse = False
     saw_non_intersecting_change = False
     saw_intersecting_invalidation = False
@@ -544,16 +550,32 @@ def _validate_evidence_reuse_scenario(scenario: Mapping[str, Any]) -> None:
             _require(scenario_id, key not in evidence, f"event {index} duplicates evidence key {key}")
             _require(scenario_id, str(event.get("status", "")).lower() in {"passed", "success"}, f"event {index} is not a successful evidence result")
             _nonempty_string(scenario_id, event.get("artifact_reference"), f"event {index} artifact_reference")
+            closure = _closure(scenario_id, event)
             signature = _evidence_signature(scenario_id, event)
             evidence[key] = {"signature": signature, "closure": event["input_closure"], "artifact_reference": event["artifact_reference"]}
             pending = sorted(source_key for source_key in invalidated if source_key not in reacquired)
             if pending:
+                closure_paths = [*closure["paths"], *closure["config"], *closure["artifacts"]]
+                _require(scenario_id, bool(closure_paths), f"event {index} current evidence needs a non-empty input closure")
+                covered = [
+                    source_key
+                    for source_key in pending
+                    if all(
+                        _paths_intersect(closure_paths, changed_path)
+                        for changed_path in changed_paths_by_key.get(source_key, set())
+                    )
+                ]
                 _require(
                     scenario_id,
-                    any(signature != evidence[source_key]["signature"] for source_key in pending),
+                    covered,
+                    f"event {index} current evidence closure must cover the changed path",
+                )
+                _require(
+                    scenario_id,
+                    any(signature != evidence[source_key]["signature"] for source_key in covered),
                     f"event {index} must capture current evidence after invalidation",
                 )
-                reacquired.add(next(source_key for source_key in pending if signature != evidence[source_key]["signature"]))
+                reacquired.add(next(source_key for source_key in covered if signature != evidence[source_key]["signature"]))
         elif event_type == "evidence_reuse":
             source_key = _nonempty_string(scenario_id, event.get("source_key"), f"event {index} source_key")
             _require(scenario_id, source_key in evidence, f"event {index} reuses unknown evidence {source_key}")
@@ -570,6 +592,7 @@ def _validate_evidence_reuse_scenario(scenario: Mapping[str, Any]) -> None:
                 all_patterns = [*closure.get("paths", []), *closure.get("config", []), *closure.get("artifacts", [])]
                 if _paths_intersect(all_patterns, changed_path):
                     stale.add(key)
+                    changed_paths_by_key.setdefault(key, set()).add(changed_path)
                     intersected = True
             saw_non_intersecting_change |= not intersected
         elif event_type == "evidence_invalidate":

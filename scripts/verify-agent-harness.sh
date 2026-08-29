@@ -853,12 +853,16 @@ contents = {
         "skill": "synthetic activated skill\n",
         "conditional": "synthetic conditional hook\n",
     },
+    "synthetic-current": {
+        "global": "synthetic global current\n",
+        "root": "synthetic root current\ncurrent delta\n",
+        "nested": "synthetic nested current\n",
+        "skill": "synthetic activated skill current\n",
+        "conditional": "synthetic conditional hook current\ncurrent delta\n",
+    },
     "current": {
-        "global": "synthetic global\n",
-        "root": "synthetic root\ncurrent delta\n",
-        "nested": "synthetic nested\n",
-        "skill": "synthetic activated skill\n",
-        "conditional": "synthetic conditional hook\ncurrent delta\n",
+        "global-placeholder": "CI placeholder: user-level global AGENTS is unavailable.\n",
+        "hook-placeholder": "CI placeholder: user-level SessionStart/SubagentStart hook context is unavailable.\n",
     },
 }
 for revision, files in contents.items():
@@ -867,24 +871,43 @@ for revision, files in contents.items():
     for name, text in files.items():
         (revision_dir / f"{name}.txt").write_text(text, encoding="utf-8")
 PY
-for revision in baseline current; do
-  python3 scripts/measure_effective_instruction_budget.py \
-    --revision "$revision" \
-    --apply-path "scripts/verify-agent-harness.sh" \
-    --activation-condition "synthetic agent-harness verifier" \
-    --global "$budget_dir/$revision/global.txt" \
-    --root "$budget_dir/$revision/root.txt" \
-    --nested "$budget_dir/$revision/nested.txt" \
-    --activated-skill "$budget_dir/$revision/skill.txt" \
-    --conditional-hook-context "$budget_dir/$revision/conditional.txt" \
-    > "$budget_dir/$revision.json"
+for revision in baseline synthetic-current; do
+  budget_args=(
+    --revision "$revision"
+    --apply-path "scripts/verify-agent-harness.sh"
+  )
+  budget_args+=(
+    --activation-condition "synthetic before/current budget comparison"
+    --global "$budget_dir/$revision/global.txt"
+    --root "$budget_dir/$revision/root.txt"
+    --nested "$budget_dir/$revision/nested.txt"
+    --activated-skill "$budget_dir/$revision/skill.txt"
+    --conditional-hook-context "$budget_dir/$revision/conditional.txt"
+  )
+  python3 scripts/measure_effective_instruction_budget.py "${budget_args[@]}" > "$budget_dir/$revision.json"
 done
-python3 - "$budget_dir/baseline.json" "$budget_dir/current.json" "$budget_dir/comparison.json" <<'PY'
+budget_args=(
+  --revision "current"
+  --apply-path "scripts/verify-agent-harness.sh"
+  --activation-condition "actual repository inputs with synthetic CI placeholders"
+  --activation-condition "global placeholder: user-level AGENTS unavailable in CI"
+  --activation-condition "hook placeholder: SessionStart/SubagentStart context unavailable in CI"
+  --global "$budget_dir/current/global-placeholder.txt"
+  --root "AGENTS.md"
+  --nested "apps/frontend/AGENTS.md"
+  --activated-skill ".agents/skills/github-delivery/SKILL.md"
+  --activated-skill ".agents/skills/ui-ux-review/SKILL.md"
+  --activated-skill ".agents/skills/skill-evaluation/SKILL.md"
+  --activated-skill ".agents/skills/security-publication/SKILL.md"
+  --conditional-hook-context "$budget_dir/current/hook-placeholder.txt"
+)
+python3 scripts/measure_effective_instruction_budget.py "${budget_args[@]}" > "$budget_dir/current.json"
+python3 - "$budget_dir/baseline.json" "$budget_dir/synthetic-current.json" "$budget_dir/current.json" "$budget_dir/comparison.json" <<'PY'
 import json
 from pathlib import Path
 import sys
 
-baseline_path, current_path, comparison_path = map(Path, sys.argv[1:])
+baseline_path, synthetic_current_path, current_path, comparison_path = map(Path, sys.argv[1:])
 groups = ("global", "root", "nested", "activated_skills", "conditional_hook_contexts")
 fields = ("lines", "utf8_bytes", "estimated_tokens")
 local_markers = ("/Users/", "/home/", "/private/var/", "worktrees/")
@@ -904,14 +927,43 @@ def load_report(path: Path) -> dict:
         section = report["groups"][group]
         if not section.get("files") or any(field not in section for field in fields):
             raise SystemExit(f"budget report missing bounded shape for {group}")
+        if any(not isinstance(section[field], int) for field in fields):
+            raise SystemExit(f"budget report has non-integer totals for {group}")
         for record in section["files"]:
             if any(field not in record for field in ("path", *fields)):
                 raise SystemExit(f"budget report missing file record fields for {group}")
     return report
 
 baseline = load_report(baseline_path)
+synthetic_current = load_report(synthetic_current_path)
 current = load_report(current_path)
-delta = {field: current["totals"][field] - baseline["totals"][field] for field in fields}
+current_paths = {
+    group: {record["path"] for record in current["groups"][group]["files"]}
+    for group in groups
+}
+expected_actual = {
+    "root": {"AGENTS.md"},
+    "nested": {"apps/frontend/AGENTS.md"},
+    "activated_skills": {
+        ".agents/skills/github-delivery/SKILL.md",
+        ".agents/skills/ui-ux-review/SKILL.md",
+        ".agents/skills/skill-evaluation/SKILL.md",
+        ".agents/skills/security-publication/SKILL.md",
+    },
+}
+for group, paths in expected_actual.items():
+    if not paths <= current_paths[group]:
+        raise SystemExit(f"current budget report is missing actual repository inputs for {group}")
+if "<external>/global-placeholder.txt" not in current_paths["global"]:
+    raise SystemExit("current budget report is missing the CI global placeholder")
+if "<external>/hook-placeholder.txt" not in current_paths["conditional_hook_contexts"]:
+    raise SystemExit("current budget report is missing the CI hook placeholder")
+conditions = current["conditions"]["activation_conditions"]
+if not any("global placeholder" in value for value in conditions):
+    raise SystemExit("current budget report must label the global placeholder")
+if not any("hook placeholder" in value for value in conditions):
+    raise SystemExit("current budget report must label the hook placeholder")
+delta = {field: synthetic_current["totals"][field] - baseline["totals"][field] for field in fields}
 if not any(value != 0 for value in delta.values()):
     raise SystemExit("synthetic baseline/current budget delta must be non-zero")
 comparison = {
@@ -919,15 +971,18 @@ comparison = {
     "measurement": "effective-instruction-budget-comparison",
     "baseline": {"revision": baseline["conditions"]["revision"], "totals": baseline["totals"]},
     "current": {"revision": current["conditions"]["revision"], "totals": current["totals"]},
+    "synthetic_current": {"revision": synthetic_current["conditions"]["revision"], "totals": synthetic_current["totals"]},
     "delta": delta,
     "estimate": {"observed_usage": None},
 }
 comparison_path.write_text(json.dumps(comparison, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
 checked = json.loads(comparison_path.read_text(encoding="utf-8"))
-if set(checked) != {"schema_version", "measurement", "baseline", "current", "delta", "estimate"}:
+if set(checked) != {"schema_version", "measurement", "baseline", "current", "synthetic_current", "delta", "estimate"}:
     raise SystemExit("budget comparison artifact has an unexpected shape")
 if checked["delta"] != delta or not any(value != 0 for value in checked["delta"].values()):
     raise SystemExit("budget comparison artifact lost the baseline/current delta")
+if checked["current"]["totals"] != current["totals"]:
+    raise SystemExit("budget comparison artifact lost actual current totals")
 if any(marker in comparison_path.read_text(encoding="utf-8") for marker in local_markers):
     raise SystemExit("budget comparison artifact contains a local path")
 PY
