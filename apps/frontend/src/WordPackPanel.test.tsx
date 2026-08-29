@@ -335,6 +335,241 @@ describe('WordPackPanel E2E (mocked fetch)', () => {
     await waitFor(() => expect(screen.queryByRole('button', { name: /セルフチェックを表示する/ })).not.toBeInTheDocument());
   });
 
+  it('shows copy feedback at the top for five seconds without adding generation history', async () => {
+    const sourceId = 'wp:44444444444444444444444444444444';
+    setupFetchMocks({ [sourceId]: 'theta' });
+    render(
+      <AppProviders googleClientId="test-client">
+        <WordPackPreviewModal
+          isOpen
+          onClose={vi.fn()}
+          wordPackId={sourceId}
+          wordPacks={[{
+            id: sourceId,
+            lemma: 'theta',
+            sense_title: 'theta概説',
+            created_at: '2026-08-29T00:00:00Z',
+            updated_at: '2026-08-29T00:00:00Z',
+            checked_only_count: 0,
+            learned_count: 0,
+          }]}
+        />
+        <GenerationQueuePanel />
+      </AppProviders>,
+    );
+
+    const dialog = await screen.findByRole('dialog', { name: /WordPack プレビュー: theta/ });
+    const queue = await screen.findByRole('region', { name: '生成キュー', hidden: true });
+    expect(within(queue).getByLabelText('生成履歴 0件')).toBeInTheDocument();
+    const emptyStatus = within(dialog).getByRole('status', { name: '例文コピー結果' });
+    const emptyAlert = within(dialog).getByRole('alert', { name: '例文コピーエラー' });
+    expect(emptyStatus).toHaveAttribute('aria-label', '例文コピー結果');
+    expect(emptyStatus).toHaveClass('is-empty', 'visually-hidden');
+    expect(emptyAlert).toHaveAttribute('aria-label', '例文コピーエラー');
+    expect(emptyAlert).toHaveClass('is-empty', 'visually-hidden');
+
+    vi.useFakeTimers();
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+    const clipboardWrite = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
+    const copyButton = within(dialog).getByRole('button', { name: 'thetaのDev例文1をコピー' });
+    copyButton.focus();
+    expect(copyButton).toHaveFocus();
+    expect(copyButton).not.toBeDisabled();
+
+    await act(async () => {
+      await user.keyboard('{Enter}');
+      await Promise.resolve();
+    });
+
+    expect(clipboardWrite).toHaveBeenCalledTimes(1);
+    expect(clipboardWrite).toHaveBeenCalledWith('theta dev example one with around twenty five tokens total.');
+    const successFeedback = within(dialog).getByRole('status', { name: '例文コピー結果' });
+    const firstSuccessText = successFeedback.lastElementChild;
+    expect(successFeedback).toHaveTextContent('例文をクリップボードにコピーしました');
+    expect(successFeedback).toHaveAttribute('aria-live', 'polite');
+    expect(within(queue).getByLabelText('生成履歴 0件')).toBeInTheDocument();
+
+    act(() => {
+      vi.advanceTimersByTime(4000);
+    });
+    await act(async () => {
+      fireEvent.click(copyButton);
+      await Promise.resolve();
+    });
+    act(() => {
+      vi.advanceTimersByTime(4999);
+    });
+    const refreshedSuccessFeedback = within(dialog).getByRole('status', { name: '例文コピー結果' });
+    expect(refreshedSuccessFeedback).toBe(successFeedback);
+    expect(refreshedSuccessFeedback.lastElementChild).not.toBe(firstSuccessText);
+    expect(refreshedSuccessFeedback).toHaveTextContent('例文をクリップボードにコピーしました');
+
+    act(() => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(within(dialog).getByRole('status', { name: '例文コピー結果' })).toHaveClass('is-empty', 'visually-hidden');
+    expect(within(queue).getByLabelText('生成履歴 0件')).toBeInTheDocument();
+
+    clipboardWrite.mockRejectedValueOnce(new Error('clipboard unavailable'));
+    await act(async () => {
+      fireEvent.click(copyButton);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    const errorFeedback = within(dialog).getByRole('alert', { name: '例文コピーエラー' });
+    expect(errorFeedback).toHaveTextContent('コピーに失敗しました');
+    expect(errorFeedback).toHaveAttribute('aria-live', 'assertive');
+    expect(within(queue).getByLabelText('生成履歴 0件')).toBeInTheDocument();
+  });
+
+  it('uses the legacy clipboard fallback, restores focus, and reports fallback failures', async () => {
+    const sourceId = 'wp:55555555555555555555555555555555';
+    setupFetchMocks({ [sourceId]: 'iota' });
+    const { unmount } = render(
+      <AppProviders googleClientId="test-client">
+        <WordPackPreviewModal
+          isOpen
+          onClose={vi.fn()}
+          wordPackId={sourceId}
+          wordPacks={[{
+            id: sourceId,
+            lemma: 'iota',
+            sense_title: 'iota概説',
+            created_at: '2026-08-29T00:00:00Z',
+            updated_at: '2026-08-29T00:00:00Z',
+            checked_only_count: 0,
+            learned_count: 0,
+          }]}
+        />
+      </AppProviders>,
+    );
+
+    const dialog = await screen.findByRole('dialog', { name: /WordPack プレビュー: iota/ });
+    const copyButton = await within(dialog).findByRole('button', { name: 'iotaのDev例文1をコピー' });
+    const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    const execCommandDescriptor = Object.getOwnPropertyDescriptor(document, 'execCommand');
+    const execCommand = vi.fn().mockReturnValueOnce(true).mockReturnValueOnce(false);
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, writable: true, value: undefined });
+    Object.defineProperty(document, 'execCommand', { configurable: true, writable: true, value: execCommand });
+
+    try {
+      copyButton.focus();
+      fireEvent.click(copyButton);
+      expect(execCommand).toHaveBeenNthCalledWith(1, 'copy');
+      expect(copyButton).toHaveFocus();
+      expect(within(dialog).getByRole('status', { name: '例文コピー結果' })).toHaveTextContent('例文をクリップボードにコピーしました');
+
+      fireEvent.click(copyButton);
+      expect(execCommand).toHaveBeenNthCalledWith(2, 'copy');
+      expect(within(dialog).getByRole('alert', { name: '例文コピーエラー' })).toHaveTextContent('コピーに失敗しました');
+      expect(copyButton).toHaveFocus();
+    } finally {
+      if (clipboardDescriptor) {
+        Object.defineProperty(navigator, 'clipboard', clipboardDescriptor);
+      } else {
+        Reflect.deleteProperty(navigator, 'clipboard');
+      }
+      if (execCommandDescriptor) {
+        Object.defineProperty(document, 'execCommand', execCommandDescriptor);
+      } else {
+        Reflect.deleteProperty(document, 'execCommand');
+      }
+      unmount();
+    }
+  });
+
+  it('ignores reverse-order copy completions and clears pending feedback on preview switch', async () => {
+    const firstId = 'wp:66666666666666666666666666666666';
+    const secondId = 'wp:77777777777777777777777777777777';
+    setupFetchMocks({ [firstId]: 'kappa', [secondId]: 'lambda' });
+    const PreviewSwitchHarness = () => {
+      const [wordPackId, setWordPackId] = useState(firstId);
+      return (
+        <>
+          <button type="button" onClick={() => setWordPackId(secondId)}>別のWordPackを表示</button>
+          <WordPackPreviewModal
+            isOpen
+            onClose={vi.fn()}
+            wordPackId={wordPackId}
+            wordPacks={[
+              { id: firstId, lemma: 'kappa', sense_title: 'kappa概説', created_at: '2026-08-29T00:00:00Z', updated_at: '2026-08-29T00:00:00Z', checked_only_count: 0, learned_count: 0 },
+              { id: secondId, lemma: 'lambda', sense_title: 'lambda概説', created_at: '2026-08-29T00:00:00Z', updated_at: '2026-08-29T00:00:00Z', checked_only_count: 0, learned_count: 0 },
+            ]}
+          />
+        </>
+      );
+    };
+    const { unmount } = render(
+      <AppProviders googleClientId="test-client">
+        <PreviewSwitchHarness />
+      </AppProviders>,
+    );
+
+    const firstDialog = await screen.findByRole('dialog', { name: /WordPack プレビュー: kappa/ });
+    const pendingWrites: Array<{ text: string; resolve: () => void }> = [];
+    const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator, 'clipboard');
+    const clipboardWrite = vi.fn((text: string) => new Promise<void>((resolve) => {
+      pendingWrites.push({ text, resolve });
+    }));
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      writable: true,
+      value: { writeText: clipboardWrite },
+    });
+    const firstCopyButton = await within(firstDialog).findByRole('button', { name: 'kappaのDev例文1をコピー' });
+    const secondCopyButton = await within(firstDialog).findByRole('button', { name: 'kappaのDev例文2をコピー' });
+    vi.useFakeTimers();
+
+    try {
+      fireEvent.click(firstCopyButton);
+      fireEvent.click(secondCopyButton);
+      expect(pendingWrites.map(({ text }) => text)).toEqual([
+        'kappa dev example one with around twenty five tokens total.',
+        'kappa dev example two includes subordinate clauses and clear structure.',
+      ]);
+
+      await act(async () => {
+        pendingWrites[1]?.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(within(firstDialog).getByRole('status', { name: '例文コピー結果' })).toBeInTheDocument();
+      act(() => {
+        vi.advanceTimersByTime(4999);
+      });
+
+      await act(async () => {
+        pendingWrites[0]?.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(within(firstDialog).getByRole('status', { name: '例文コピー結果' })).toBeInTheDocument();
+      act(() => {
+        vi.advanceTimersByTime(1);
+      });
+      expect(within(firstDialog).getByRole('status', { name: '例文コピー結果' })).toHaveClass('is-empty', 'visually-hidden');
+
+      fireEvent.click(firstCopyButton);
+      expect(pendingWrites).toHaveLength(3);
+      fireEvent.click(screen.getByRole('button', { name: '別のWordPackを表示', hidden: true }));
+      expect(screen.queryByText('例文をクリップボードにコピーしました')).not.toBeInTheDocument();
+
+      await act(async () => {
+        pendingWrites[2]?.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
+      });
+      expect(screen.queryByText('例文をクリップボードにコピーしました')).not.toBeInTheDocument();
+    } finally {
+      if (clipboardDescriptor) {
+        Object.defineProperty(navigator, 'clipboard', clipboardDescriptor);
+      } else {
+        Reflect.deleteProperty(navigator, 'clipboard');
+      }
+      unmount();
+    }
+  });
+
   it('generates WordPack and shows examples', async () => {
     const fetchMock = setupFetchMocks();
     renderWithAuth();
@@ -737,7 +972,7 @@ describe('WordPackPanel E2E (mocked fetch)', () => {
       await user.click(ghostToken);
     });
 
-    const alert = await screen.findByRole('alert');
+    const alert = await screen.findByRole('alert', { name: '' });
     expect(alert).toHaveTextContent('ゲストモードでは例文中の未生成語をWordPack生成できません。ログインすると未生成語を追加できます。');
     const generatedBodies = fetchMock.mock.calls
       .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/word/pack/jobs') : ((c[0] as URL).toString().endsWith('/api/word/pack/jobs'))))
@@ -776,7 +1011,7 @@ describe('WordPackPanel E2E (mocked fetch)', () => {
       await user.click(longToken);
     });
 
-    const alert = await screen.findByRole('alert');
+    const alert = await screen.findByRole('alert', { name: '' });
     expect(alert).toHaveTextContent(`「${longTokenText}」はWordPackとして生成できません。見出し語は最大64文字までです`);
     const generatedBodies = fetchMock.mock.calls
       .filter((c) => (typeof c[0] === 'string' ? (c[0] as string).endsWith('/api/word/pack/jobs') : ((c[0] as URL).toString().endsWith('/api/word/pack/jobs'))))

@@ -3,6 +3,7 @@ import { useSettings } from '../../../../SettingsContext';
 import { useModal } from '../../../../ModalContext';
 import { useConfirmDialog } from '../../../../ConfirmDialogContext';
 import { useWordPack, Examples, WordPack } from '../../../../hooks/useWordPack';
+import type { WordPackMessage } from '../../../../hooks/useWordPack';
 import { useWordPackForm } from '../../../../hooks/useWordPackForm';
 import { useNotifications } from '../../../../NotificationsContext';
 import { Modal } from '../../../../components/Modal';
@@ -30,6 +31,7 @@ import { ContrastSection } from './ContrastSection';
 import { WordPackLoadingPlaceholder } from './WordPackLoadingPlaceholder';
 import { WordPackLoadError } from './WordPackLoadError';
 import { WordPackStatusMessage } from './WordPackStatusMessage';
+import { WordPackTransientMessage } from './WordPackTransientMessage';
 
 export interface WordPackPreviewMeta {
   id: string;
@@ -85,7 +87,32 @@ export const WordPackPanel: React.FC<Props> = ({
   } = settings;
   const { lemma, setLemma, lemmaValidation, model, showAdvancedModelOptions, handleChangeModel, advancedSettings } = useWordPackForm({ settings, setSettings });
   const [detailOpen, setDetailOpen] = useState(false);
+  const [transientMessage, setTransientMessage] = useState<Exclude<WordPackMessage, null> | null>(null);
+  const [transientMessageSequence, setTransientMessageSequence] = useState(0);
+  const transientMessageTimerRef = useRef<number | null>(null);
+  const transientMessageContextRef = useRef<{
+    currentWordPackId: string | null;
+    data: WordPack | null;
+    selectedWordPackId: string | null | undefined;
+  } | null>(null);
   const panelInstanceId = useId();
+
+  const clearTransientMessage = useCallback(() => {
+    if (transientMessageTimerRef.current !== null) {
+      window.clearTimeout(transientMessageTimerRef.current);
+      transientMessageTimerRef.current = null;
+    }
+    transientMessageContextRef.current = null;
+    setTransientMessage(null);
+  }, []);
+
+  useEffect(() => () => {
+    transientMessageContextRef.current = null;
+    if (transientMessageTimerRef.current !== null) {
+      window.clearTimeout(transientMessageTimerRef.current);
+      transientMessageTimerRef.current = null;
+    }
+  }, []);
 
   const {
     aiMeta,
@@ -103,6 +130,45 @@ export const WordPackPanel: React.FC<Props> = ({
     recordStudyProgress,
     updateGuestPublic,
   } = useWordPack({ model, onWordPackGenerated, onStudyProgressRecorded });
+
+  const currentTransientMessageContext = useMemo(
+    () => ({ currentWordPackId, data, selectedWordPackId }),
+    [currentWordPackId, data, selectedWordPackId],
+  );
+  const currentTransientMessageContextRef = useRef(currentTransientMessageContext);
+  currentTransientMessageContextRef.current = currentTransientMessageContext;
+
+  const isSameTransientMessageContext = useCallback(
+    (left: typeof currentTransientMessageContext, right: typeof currentTransientMessageContext) => (
+      left.currentWordPackId === right.currentWordPackId
+      && left.data === right.data
+      && left.selectedWordPackId === right.selectedWordPackId
+    ),
+    [],
+  );
+
+  const showTransientMessage = useCallback((next: Exclude<WordPackMessage, null>) => {
+    const context = currentTransientMessageContext;
+    // 古いプレビューから遅れて届いた結果は、現在の表示へ通知しない。
+    if (!isSameTransientMessageContext(currentTransientMessageContextRef.current, context)) return;
+    clearTransientMessage();
+    transientMessageContextRef.current = context;
+    setTransientMessageSequence((sequence) => sequence + 1);
+    setTransientMessage(next);
+    transientMessageTimerRef.current = window.setTimeout(() => {
+      if (!transientMessageContextRef.current || !isSameTransientMessageContext(transientMessageContextRef.current, context)) return;
+      transientMessageContextRef.current = null;
+      setTransientMessage(null);
+      transientMessageTimerRef.current = null;
+    }, 5000);
+  }, [clearTransientMessage, currentTransientMessageContext, isSameTransientMessageContext]);
+
+  useEffect(() => {
+    const messageContext = transientMessageContextRef.current;
+    if (messageContext && !isSameTransientMessageContext(messageContext, currentTransientMessageContext)) {
+      clearTransientMessage();
+    }
+  }, [clearTransientMessage, currentTransientMessageContext, isSameTransientMessageContext]);
 
   const {
     explorer: lemmaExplorer,
@@ -127,6 +193,7 @@ export const WordPackPanel: React.FC<Props> = ({
     reasoningEffort: advancedSettings.reasoningEffort,
     textVerbosity: advancedSettings.textVerbosity,
     setStatusMessage,
+    onTransientMessage: showTransientMessage,
     loadWordPack,
     notify: { add: addNotification, update: updateNotification },
     confirmDialog,
@@ -312,6 +379,7 @@ export const WordPackPanel: React.FC<Props> = ({
 
   const detailsContent = canShowDetails && data ? (
     <>
+      <WordPackTransientMessage message={transientMessage} announcementKey={transientMessageSequence} />
       {previewNotice ? (
         <div className="wp-preview-notice" role="status">
           {previewNotice}
@@ -552,6 +620,11 @@ export const WordPackPanel: React.FC<Props> = ({
         .wp-loading-field { max-width: 30rem; }
         .wp-loading-note { margin-top: 0.4rem; }
         .wp-status-message { overflow-wrap: anywhere; word-break: break-word; }
+        .wp-transient-message { position: sticky; top: 0; z-index: 10; width: min(36rem, 100%); margin: 0 auto 0.75rem; display: flex; align-items: center; gap: 0.65rem; box-sizing: border-box; padding: 0.8rem 1rem; border: 1px solid var(--color-accent); border-left-width: 4px; border-radius: 8px; background: var(--color-surface); color: var(--color-text); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.24); font-size: 1rem; font-weight: 600; line-height: 1.5; pointer-events: none; overflow-wrap: anywhere; }
+        .wp-transient-message.visually-hidden { border: 0; clip: rect(0 0 0 0); clip-path: inset(50%); height: 1px; margin: -1px; overflow: hidden; padding: 0; position: absolute; white-space: nowrap; width: 1px; }
+        .wp-transient-message.is-alert { border-color: var(--color-danger); }
+        .wp-transient-message__icon { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; width: 1.5rem; height: 1.5rem; border-radius: 50%; background: var(--color-accent-bg); color: var(--color-accent); font-weight: 800; }
+        .wp-transient-message.is-alert .wp-transient-message__icon { background: color-mix(in srgb, var(--color-danger) 16%, transparent); color: var(--color-danger); }
         .wp-load-error { border-color: var(--color-danger, #b00020); }
         .wp-load-error__message { font-weight: 600; overflow-wrap: anywhere; }
         .wp-load-error__note { color: var(--color-subtle); }

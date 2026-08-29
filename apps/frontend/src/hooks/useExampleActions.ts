@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, fetchJson } from '../lib/fetcher';
 import { APP_EVENTS, dispatchAppEvent } from '../shared/events/appEvents';
 import {
@@ -28,6 +28,7 @@ interface UseExampleActionsParams {
   reasoningEffort?: ReasoningEffort;
   textVerbosity?: TextVerbosity;
   setStatusMessage: (next: WordPackMessage) => void;
+  onTransientMessage?: (next: Exclude<WordPackMessage, null>) => void;
   loadWordPack: (wordPackId: string) => Promise<void>;
   notify: Pick<ReturnType<typeof useNotifications>, 'add' | 'update'>;
   confirmDialog: (targetLabel: string) => Promise<boolean>;
@@ -54,12 +55,29 @@ export const useExampleActions = ({
   reasoningEffort,
   textVerbosity,
   setStatusMessage,
+  onTransientMessage,
   loadWordPack,
   notify,
   confirmDialog,
   onWordPackGenerated,
 }: UseExampleActionsParams): UseExampleActionsResult => {
   const [examplesLoading, setExamplesLoading] = useState(false);
+  const mountedRef = useRef(true);
+  const copyOperationIdRef = useRef(0);
+  const copyContextRef = useRef({ currentWordPackId, data });
+  copyContextRef.current = { currentWordPackId, data };
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      copyOperationIdRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
+    copyOperationIdRef.current += 1;
+  }, [currentWordPackId, data]);
 
   const ensureSavedWordPack = useCallback(() => {
     if (!currentWordPackId) {
@@ -382,6 +400,16 @@ export const useExampleActions = ({
 
   const copyExampleText = useCallback(
     async (category: keyof Examples, index: number) => {
+      const operationId = copyOperationIdRef.current + 1;
+      copyOperationIdRef.current = operationId;
+      const sourceWordPackId = currentWordPackId;
+      const sourceData = data;
+      const isCurrentOperation = () => (
+        mountedRef.current
+        && copyOperationIdRef.current === operationId
+        && copyContextRef.current.currentWordPackId === sourceWordPackId
+        && copyContextRef.current.data === sourceData
+      );
       const ex = getExample(category, index);
       if (!ex) return;
       try {
@@ -390,22 +418,44 @@ export const useExampleActions = ({
           await navigator.clipboard.writeText(text);
         } else {
           const ta = document.createElement('textarea');
+          const previousActiveElement = document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
           ta.value = text;
           ta.style.position = 'fixed';
           ta.style.left = '-9999px';
           document.body.appendChild(ta);
-          ta.focus();
-          ta.select();
-          document.execCommand('copy');
-          document.body.removeChild(ta);
+          try {
+            ta.focus();
+            ta.select();
+            if (!document.execCommand('copy')) {
+              throw new Error('コピーに失敗しました');
+            }
+          } finally {
+            if (ta.parentNode) document.body.removeChild(ta);
+            previousActiveElement?.focus();
+          }
         }
-        notify.add({ title: 'コピー完了', message: '例文をクリップボードにコピーしました', status: 'success' });
+        if (!isCurrentOperation()) return;
+        const message = { kind: 'status' as const, text: '例文をクリップボードにコピーしました' };
+        if (onTransientMessage) {
+          onTransientMessage(message);
+        } else {
+          // フック単体の利用では、従来のWordPackステータス領域へフォールバックする。
+          setStatusMessage(message);
+        }
       } catch (error) {
+        if (!isCurrentOperation()) return;
         const m = resolveErrorMessage(error, 'コピーに失敗しました');
-        setStatusMessage({ kind: 'alert', text: m });
+        const message = { kind: 'alert' as const, text: m };
+        if (onTransientMessage) {
+          onTransientMessage(message);
+        } else {
+          setStatusMessage(message);
+        }
       }
     },
-    [getExample, notify, resolveErrorMessage, setStatusMessage],
+    [currentWordPackId, data, getExample, onTransientMessage, resolveErrorMessage, setStatusMessage],
   );
 
   return {
