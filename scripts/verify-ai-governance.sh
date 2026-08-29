@@ -36,6 +36,7 @@ reject_text() {
 bash scripts/verify-agent-harness.sh
 
 REQUIRED_FILES=(
+  ".agents/skills/ui-ux-review/SKILL.md"
   "docs/ai-governance/00-index.md"
   "docs/ai-governance/glossary.md"
   "docs/ai-governance/01-agent-operating-contract.md"
@@ -73,6 +74,119 @@ REQUIRED_FILES=(
 
 for file in "${REQUIRED_FILES[@]}"; do
   require_file "$file"
+done
+
+# #615で既存正本へ統合した内容を、旧番号の正本・専用checklist・専用verifierへ
+# 戻さない。走査対象はcanonical REQUIRED_FILESから導出し、過去reportは走査しない。
+RETIRED_PARALLEL_PATHS=(
+  "docs/ai-governance/15-interface-engineering-quality.md"
+  "docs/ai-governance/16-change-scoped-interface-review.md"
+  "docs/ai-governance/checklists/interface-engineering.md"
+  "docs/ai-governance/checklists/change-scoped-interface-review.md"
+  "scripts/verify-ui-quality-governance.sh"
+)
+
+find_retired_markdown_destination() {
+  local file="$1"
+  local source_path="$2"
+  shift 2
+  python3 - "$file" "$source_path" "$ROOT" "$@" <<'PY'
+import os
+import sys
+from urllib.parse import unquote, urlsplit
+
+from markdown_it import MarkdownIt
+
+
+file_name, source_path, root, *retired_paths = sys.argv[1:]
+source = open(file_name, encoding="utf-8").read()
+source_file = os.path.normpath(os.path.join(root, source_path))
+source_dir = os.path.dirname(source_file)
+retired_targets = {
+    os.path.normpath(os.path.join(root, retired_path)): retired_path
+    for retired_path in retired_paths
+}
+
+
+def local_destination_path(raw_destination):
+    destination = unquote(raw_destination.strip())
+    parsed = urlsplit(destination)
+    if parsed.scheme or parsed.netloc:
+        return None
+    return parsed.path or None
+
+
+for token in MarkdownIt("commonmark").parse(source):
+    if token.type != "inline":
+        continue
+    for child in token.children or []:
+        if child.type == "link_open":
+            raw_destination = child.attrGet("href")
+        elif child.type == "image":
+            raw_destination = child.attrGet("src")
+        else:
+            continue
+        if not raw_destination:
+            continue
+        destination = local_destination_path(raw_destination)
+        if destination is None:
+            continue
+        candidates = {
+            os.path.normpath(os.path.join(source_dir, destination)),
+            os.path.normpath(os.path.join(root, destination.lstrip("/"))),
+        }
+        for candidate in candidates:
+            retired_path = retired_targets.get(candidate)
+            if retired_path is not None:
+                print(retired_path)
+                raise SystemExit(0)
+
+raise SystemExit(1)
+PY
+}
+
+# root-relative、canonical fileからのlocal相対path、reference linkを検査し、
+# URL・code・近似文字列は対象外にする回帰fixture。
+if ! find_retired_markdown_destination \
+  <(printf '%s\n' '## Fixture' '[legacy](15-interface-engineering-quality.md)') \
+  "docs/ai-governance/03-evidence-and-completion-gates.md" \
+  "${RETIRED_PARALLEL_PATHS[@]}" >/dev/null; then
+  fail "retired markdown destination fixture was not detected"
+fi
+if ! find_retired_markdown_destination \
+  <(printf '%s\n' '## Fixture' '[legacy](docs/ai-governance/15-interface-engineering-quality.md)') \
+  "docs/ai-governance/00-index.md" \
+  "${RETIRED_PARALLEL_PATHS[@]}" >/dev/null; then
+  fail "root-relative retired markdown destination fixture was not detected"
+fi
+if ! find_retired_markdown_destination \
+  <(printf '%s\n' '## Fixture' '[legacy][old]' '' '[old]: docs/ai-governance/15-interface-engineering-quality.md') \
+  "docs/ai-governance/00-index.md" \
+  "${RETIRED_PARALLEL_PATHS[@]}" >/dev/null; then
+  fail "reference-link retired markdown destination fixture was not detected"
+fi
+if find_retired_markdown_destination \
+  <(printf '%s\n' '## Fixture' '    [legacy](15-interface-engineering-quality.md)' '[safe](15-interface-engineering-quality.md.bak)' '[external](https://example.test/15-interface-engineering-quality.md)') \
+  "docs/ai-governance/03-evidence-and-completion-gates.md" \
+  "${RETIRED_PARALLEL_PATHS[@]}" >/dev/null; then
+  fail "retired markdown destination fixture accepted a false positive"
+fi
+
+for retired_path in "${RETIRED_PARALLEL_PATHS[@]}"; do
+  if [[ -e "$retired_path" || -L "$retired_path" ]]; then
+    fail "retired parallel governance path must not be restored: $retired_path"
+  fi
+done
+
+RETIRED_REFERENCE_PATHS=("${REQUIRED_FILES[@]}")
+
+for file in "${RETIRED_REFERENCE_PATHS[@]}"; do
+  for retired_path in "${RETIRED_PARALLEL_PATHS[@]}"; do
+    reject_text "$file" "$retired_path"
+  done
+  if retired_destination="$(find_retired_markdown_destination "$file" "$file" "${RETIRED_PARALLEL_PATHS[@]}")"; then
+    fail "$file contains retired parallel markdown destination: $retired_destination"
+  fi
 done
 
 ISSUE_TEMPLATES=(
