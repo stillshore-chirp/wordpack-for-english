@@ -1,18 +1,19 @@
 {
   "schema": "task-state/v1",
   "status": "running",
-  "goal": "Synthetic resumable task goal.",
+  "goal": "Synthetic delivery checkpoint state.",
   "acceptance": [
-    "Synthetic acceptance condition is recorded."
+    "Stable snapshot and input closure are recorded.",
+    "Measurement scope excludes publication annotation."
   ],
   "snapshot": {
     "base": "base-ref",
     "head": "head-ref",
-    "phase": "implementation"
+    "phase": "code_freeze"
   },
   "lane": {
-    "id": "lane-1",
-    "owner": "lane-owner",
+    "id": "delivery-procedure-lane",
+    "owner": "synthetic-owner",
     "owned_paths": [
       "docs/example.md"
     ]
@@ -36,16 +37,29 @@
       "artifact-reference/evidence-1"
     ],
     "conditions": [
-      "Synthetic verification condition."
+      "Code snapshot is frozen.",
+      "Publication annotation is outside the measurement scope."
+    ]
+  },
+  "measurement": {
+    "gate": "measurement",
+    "input_paths": [
+      "docs/example.md"
+    ]
+  },
+  "publication": {
+    "gate": "publication",
+    "annotation_paths": [
+      "docs/publication-report.md"
     ]
   },
   "invalidated_gates": [],
   "remaining_work": [
-    "Start the next bounded task from this point."
+    "Record publication freeze and external gate state in the next bounded step."
   ],
   "risks_blockers": {
     "risks": [
-      "Synthetic risk only."
+      "Volatile delivery state is recorded separately from stable evidence."
     ],
     "blockers": []
   }

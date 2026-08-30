@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from fnmatch import fnmatchcase
 import json
 import re
 import sys
@@ -63,6 +64,18 @@ TASK_STATE_SHAPE: dict[str, object] = {
     ),
     "remaining_work": _TASK_STRING_LIST,
     "risks_blockers": {"risks": _TASK_STRING_LIST, "blockers": _TASK_STRING_LIST},
+}
+# These fields are optional so existing task-state/v1 documents remain valid.
+# New states can opt into an explicit measurement/publication boundary.
+TASK_STATE_OPTIONAL_SHAPE: dict[str, object] = {
+    "measurement": {
+        "gate": "string",
+        "input_paths": _TASK_REQUIRED_STRING_LIST,
+    },
+    "publication": {
+        "gate": "string",
+        "annotation_paths": _TASK_REQUIRED_STRING_LIST,
+    },
 }
 REQUIRED_FILES = (
     "AGENTS.md",
@@ -161,6 +174,57 @@ def _validate_task_state_shape(
     fail(f"{rel(path, root)} task-state {label} has an unsupported shape")
 
 
+def _validate_task_state_document(
+    value: Any, path: Path, root: Path
+) -> None:
+    if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
+        fail(f"{rel(path, root)} task-state document must be an object")
+    expected = set(TASK_STATE_SHAPE)
+    optional = set(TASK_STATE_OPTIONAL_SHAPE)
+    actual = set(value)
+    missing, unknown = sorted(expected - actual), sorted(actual - expected - optional)
+    if missing or unknown:
+        fail(f"{rel(path, root)} task-state document keys invalid: missing={missing} unknown={unknown}")
+    for key, child_shape in TASK_STATE_SHAPE.items():
+        _validate_task_state_shape(value[key], child_shape, f"document.{key}", path, root)
+    for key, child_shape in TASK_STATE_OPTIONAL_SHAPE.items():
+        if key in value:
+            _validate_task_state_shape(value[key], child_shape, f"document.{key}", path, root)
+
+
+def _task_paths_overlap(left: str, right: str) -> bool:
+    """Return whether two path entries can name the same input.
+
+    Intersecting two independent glob languages needs a solver.  Until one is
+    available, treating glob/glob pairs as overlapping keeps the validator
+    fail-closed while preserving the existing literal and literal/glob rules.
+    Non-canonical repository paths are also treated as overlapping so a second
+    spelling cannot evade the self-reference check.
+    """
+
+    def canonical(value: str) -> str | None:
+        if value != value.strip() or value.startswith("/") or "\\" in value:
+            return None
+        parts = value.split("/")
+        if not value or any(part in {"", ".", ".."} for part in parts):
+            return None
+        return value
+
+    left_path, right_path = canonical(left), canonical(right)
+    if left_path is None or right_path is None:
+        return True
+    glob_magic = frozenset("*?[")
+    if any(char in glob_magic for char in left_path) and any(
+        char in glob_magic for char in right_path
+    ):
+        return True
+    return (
+        left_path == right_path
+        or fnmatchcase(left_path, right_path)
+        or fnmatchcase(right_path, left_path)
+    )
+
+
 def validate_task_state(path: Path, root: Path = ROOT) -> None:
     """Validate one repository-owned, client-neutral task-state document."""
 
@@ -171,11 +235,26 @@ def validate_task_state(path: Path, root: Path = ROOT) -> None:
         state = json.loads(raw)
     except json.JSONDecodeError as error:
         fail(f"{rel(path, root)} task-state is not valid JSON: {error.msg}")
-    _validate_task_state_shape(state, TASK_STATE_SHAPE, "document", path, root)
+    _validate_task_state_document(state, path, root)
     if state["schema"] != TASK_STATE_SCHEMA:
         fail(f"{rel(path, root)} task-state has unknown schema: {state['schema']}")
     if state["status"] not in TASK_STATE_STATUSES:
         fail(f"{rel(path, root)} task-state has unknown status: {state['status']}")
+    measurement = state.get("measurement")
+    publication = state.get("publication")
+    if measurement is not None and publication is not None:
+        overlaps = [
+            (measurement_path, annotation_path)
+            for measurement_path in measurement["input_paths"]
+            for annotation_path in publication["annotation_paths"]
+            if _task_paths_overlap(measurement_path, annotation_path)
+        ]
+        if overlaps:
+            measurement_path, annotation_path = overlaps[0]
+            fail(
+                f"{rel(path, root)} task-state measurement/publication self-reference: "
+                f"{measurement_path!r} overlaps {annotation_path!r}"
+            )
     if state["completed_evidence"]:
         closure = state["input_closure"]
         if not closure["paths"] or not closure["conditions"]:

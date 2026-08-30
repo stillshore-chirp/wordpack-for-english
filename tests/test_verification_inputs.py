@@ -5,6 +5,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 from scripts.classify_verification_inputs import (
     AGENT_HARNESS_FULL,
     AI_GOVERNANCE_FULL,
@@ -16,6 +18,7 @@ from scripts.classify_verification_inputs import (
     OUTPUT_FIELDS,
     WORKFLOW_CONTRACT,
     WORKFLOW_YAML_EVIDENCE,
+    YAML_PARSE,
     changed_paths,
     classify_path,
     classify_paths,
@@ -514,3 +517,67 @@ def test_backend_evidence_plan_keeps_backend_full_separate() -> None:
     plan = classify_paths(["apps/backend/backend/main.py"])
 
     assert plan.invalidated_gates == (BACKEND_FULL,)
+
+
+@pytest.mark.parametrize(
+    "scenario,paths,invalidated,selected,retained,required_booleans",
+    [
+        (
+            "docs/governance",
+            ["docs/ai-governance/policy.md"],
+            (AI_GOVERNANCE_FULL,),
+            (),
+            (WORKFLOW_YAML_EVIDENCE,),
+            ("governance",),
+        ),
+        (
+            "ui",
+            ["apps/frontend/src/lib/date.ts"],
+            (),
+            (),
+            (WORKFLOW_YAML_EVIDENCE,),
+            ("frontend", "playwright_smoke"),
+        ),
+        (
+            "backend/api",
+            ["apps/backend/backend/main.py"],
+            (BACKEND_FULL,),
+            (),
+            (WORKFLOW_YAML_EVIDENCE,),
+            ("backend",),
+        ),
+        (
+            "workflow",
+            [".github/workflows/ci.yml"],
+            tuple(sorted({BACKEND_FULL, WORKFLOW_CONTRACT})),
+            tuple(sorted({FOCUSED_CONTRACT, YAML_PARSE, BASE_HEAD_CLASSIFICATION, LATEST_ACTIONS})),
+            (),
+            (
+                "backend",
+                "frontend",
+                "backend_container",
+                "deploy_preflight",
+                "governance",
+                "workflow_contract",
+                "playwright_smoke",
+                "playwright_visual",
+            ),
+        ),
+    ],
+)
+def test_representative_gate_plan_keeps_expected_selection_and_retention(
+    scenario: str,
+    paths: list[str],
+    invalidated: tuple[str, ...],
+    selected: tuple[str, ...],
+    retained: tuple[str, ...],
+    required_booleans: tuple[str, ...],
+) -> None:
+    plan = classify_paths(paths)
+
+    assert plan.classification_ok is True, scenario
+    for field in required_booleans:
+        assert getattr(plan, field) is True, scenario
+    assert plan.invalidated_gates == invalidated, scenario
+    assert plan.selected_checks == selected, scenario
+    assert plan.retained_evidence == retained, scenario
