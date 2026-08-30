@@ -8,6 +8,11 @@ updates:
       time: "06:00"
       timezone: "Asia/Tokyo"
     open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - 依存関係更新
+    commit-message:
+      prefix: "依存関係更新"
     groups:
       github-actions-minor-patch:
         update-types:
@@ -22,6 +27,11 @@ updates:
       time: "06:20"
       timezone: "Asia/Tokyo"
     open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - 依存関係更新
+    commit-message:
+      prefix: "依存関係更新"
     groups:
       root-npm-minor-patch:
         update-types:
@@ -36,6 +46,11 @@ updates:
       time: "06:40"
       timezone: "Asia/Tokyo"
     open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - 依存関係更新
+    commit-message:
+      prefix: "依存関係更新"
     groups:
       frontend-npm-minor-patch:
         update-types:
@@ -50,6 +65,11 @@ updates:
       time: "07:00"
       timezone: "Asia/Tokyo"
     open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - 依存関係更新
+    commit-message:
+      prefix: "依存関係更新"
     groups:
       backend-pip-minor-patch:
         update-types:
@@ -64,3 +84,8 @@ updates:
       time: "07:20"
       timezone: "Asia/Tokyo"
     open-pull-requests-limit: 2
+    labels:
+      - dependencies
+      - 依存関係更新
+    commit-message:
+      prefix: "依存関係更新"

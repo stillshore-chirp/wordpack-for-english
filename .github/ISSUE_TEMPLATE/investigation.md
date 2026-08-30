@@ -1,7 +1,7 @@
 ---
-name: Investigation
+name: 調査
 about: 実装前の調査、設計調査、技術選定、原因調査
-title: "[Investigation]: "
+title: "[調査] "
 ---
 
 ## 調査目的

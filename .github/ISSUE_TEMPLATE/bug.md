@@ -1,7 +1,7 @@
 ---
-name: Bug Report
+name: 不具合報告
 about: 不具合、回帰、想定外の挙動
-title: "[Bug]: "
+title: "[不具合] "
 labels: bug
 ---
 
