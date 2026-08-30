@@ -1,0 +1,112 @@
+{
+  "kind": "code-review-graph-routing-fixture",
+  "schema_version": 1,
+  "cases": [
+    {
+      "id": "backend-logic-change",
+      "scope": "nontrivial-code",
+      "paths": ["apps/backend/backend/domain/wordpack.py"],
+      "route": "graph",
+      "graph_status": "available",
+      "graph_targets": ["related-code", "callers", "boundaries", "test-candidates"]
+    },
+    {
+      "id": "frontend-shared-processing-change",
+      "scope": "nontrivial-code",
+      "paths": ["apps/frontend/src/hooks/useWordPack.ts"],
+      "route": "graph",
+      "graph_status": "available",
+      "graph_targets": ["related-code", "callers", "boundaries", "test-candidates"]
+    },
+    {
+      "id": "api-contract-change",
+      "scope": "nontrivial-code",
+      "paths": ["apps/backend/backend/api/wordpacks.py", "apps/frontend/src/api/wordpacks.ts"],
+      "route": "graph",
+      "graph_status": "available",
+      "graph_targets": ["related-code", "callers", "boundaries", "test-candidates"]
+    },
+    {
+      "id": "cross-layer-refactor",
+      "scope": "nontrivial-code",
+      "paths": ["apps/backend/backend/application/wordpack_service.py", "apps/frontend/src/features/wordpack/WordPackPanel.tsx"],
+      "route": "graph",
+      "graph_status": "available",
+      "graph_targets": ["related-code", "callers", "boundaries", "test-candidates"]
+    },
+    {
+      "id": "documentation-only",
+      "scope": "documentation-only",
+      "paths": ["docs/agent-harness.md"],
+      "route": "skip",
+      "skip_reason": "documentation has no runtime or public code dependency change"
+    },
+    {
+      "id": "copy-only",
+      "scope": "copy-only",
+      "paths": ["apps/frontend/src/components/WordPackPanel.tsx"],
+      "route": "skip",
+      "skip_reason": "copy-only change has no logic, contract, or call relationship change"
+    },
+    {
+      "id": "isolated-local-css",
+      "scope": "isolated-local-css",
+      "paths": ["apps/frontend/src/components/WordPackPanel.module.css"],
+      "route": "skip",
+      "skip_reason": "isolated local style change leaves shared tokens and global styles unchanged"
+    },
+    {
+      "id": "combined-skip-scope",
+      "scope": "combined-skip-scope",
+      "paths": ["docs/example-policy.md", "src/example/copy.ts", "src/example/local.module.css"],
+      "route": "graph",
+      "graph_status": "available",
+      "graph_targets": ["related-code", "callers", "boundaries", "test-candidates"]
+    },
+    {
+      "id": "graph-unavailable",
+      "scope": "nontrivial-code",
+      "paths": ["apps/backend/backend/domain/wordpack.py"],
+      "route": "fallback",
+      "graph_status": "unavailable",
+      "fallback_targets": ["rg", "import/reference-tracing"],
+      "fallback_reason": "graph capability is unavailable"
+    },
+    {
+      "id": "graph-unconfigured",
+      "scope": "nontrivial-code",
+      "paths": ["apps/frontend/src/hooks/useWordPack.ts"],
+      "route": "fallback",
+      "graph_status": "unconfigured",
+      "fallback_targets": ["rg", "import/reference-tracing"],
+      "fallback_reason": "graph capability is not configured"
+    },
+    {
+      "id": "graph-stale",
+      "scope": "nontrivial-code",
+      "paths": ["apps/backend/backend/api/wordpacks.py"],
+      "route": "fallback",
+      "graph_status": "stale",
+      "fallback_targets": ["rg", "import/reference-tracing"],
+      "fallback_reason": "graph snapshot is stale for the current source"
+    },
+    {
+      "id": "graph-analysis-failure",
+      "scope": "nontrivial-code",
+      "paths": ["apps/frontend/src/features/wordpack/WordPackPanel.tsx"],
+      "route": "fallback",
+      "graph_status": "analysis-failure",
+      "fallback_targets": ["rg", "import/reference-tracing"],
+      "fallback_reason": "graph analysis failed"
+    },
+    {
+      "id": "graph-insufficient-result",
+      "scope": "nontrivial-code",
+      "paths": ["apps/backend/backend/application/wordpack_service.py"],
+      "route": "fallback",
+      "graph_status": "insufficient-result",
+      "fallback_targets": ["rg", "import/reference-tracing"],
+      "fallback_reason": "graph result is empty or insufficient to bound impact"
+    }
+  ]
+}

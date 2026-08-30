@@ -106,4 +106,6 @@ AGENTS.md、Skill、docs、tool専用ruleに同じ長文を複製
 <!-- agent-harness:maintenance-verification:start -->
 
 実行コマンドと変更path別のtestは [`docs/testing/index.md`](../testing/index.md)、gate選択・包含・失効はGitHub配送Skillを正本とします。変更したshell、YAML、frontmatter、link、公開安全性と、通常配送・review・権限境界が機械検査で退行しないことを確認し、未確認項目は理由とriskを報告します。
+
+変更影響調査の入口を変更する場合は、正本が定める非自明なコード改修、代表的な省略ケース、graphの利用不能・未設定・古い・解析失敗・情報不足時のfallbackを `scripts/verify-agent-harness.sh` の機械検査で確認します。graph結果だけで品質ゲートを弱めず、3製品のadapterへ本文を複製しません。
 <!-- agent-harness:maintenance-verification:end -->

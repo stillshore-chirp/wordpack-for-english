@@ -30,6 +30,12 @@ def _extract_on_block(yml: str) -> str:
     return m.group(1)
 
 
+def _extract_trigger_block(on_block: str, trigger: str) -> str:
+    m = re.search(rf"(?ms)^  {re.escape(trigger)}:\s*\n(.*?)(?=^  \S|\Z)", on_block)
+    assert m, f"Could not locate {trigger} trigger"
+    return m.group(1)
+
+
 def test_ci_runs_on_develop_and_prs_to_develop() -> None:
     """
     Contract: develop remains a day-to-day CI target even though main is the default branch.
@@ -329,6 +335,17 @@ def test_agent_harness_workflow_runs_compact_contract_gates() -> None:
         ],
     )
     _assert_contains_none(yml, ["pytest -q tests/test_verification_inputs.py"])
+
+
+def test_agent_harness_triggers_include_graph_policy_inputs() -> None:
+    on_block = _extract_on_block(_read_text(".github/workflows/agent-harness.yml"))
+    required_paths = [
+        "scripts/validate_code_review_graph_policy.py",
+        "tests/fixtures/agent-harness/code-review-graph-policy.json",
+        "tests/test_code_review_graph_policy.py",
+    ]
+    for trigger in ("push", "pull_request"):
+        _assert_contains_all(_extract_trigger_block(on_block, trigger), required_paths)
 
 
 def test_all_workflow_yaml_files_parse() -> None:

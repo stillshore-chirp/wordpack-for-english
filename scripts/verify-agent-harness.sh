@@ -780,10 +780,14 @@ CANONICAL_HARNESS_PATHS=(
 )
 
 SCENARIO_FIXTURE="tests/fixtures/agent-harness/scenarios.json"
+GRAPH_POLICY_VALIDATOR="scripts/validate_code_review_graph_policy.py"
+GRAPH_POLICY_FIXTURE="tests/fixtures/agent-harness/code-review-graph-policy.json"
 require_file "scripts/validate_agent_harness_scenarios.py"
 require_file "scripts/validate_agent_harness_markers.py"
 require_file "scripts/measure_effective_instruction_budget.py"
 require_file "$SCENARIO_FIXTURE"
+require_file "$GRAPH_POLICY_VALIDATOR"
+require_file "$GRAPH_POLICY_FIXTURE"
 
 FRONTMATTER_PATHS=()
 CLAUDE_RULE_PATHS=()
@@ -842,6 +846,7 @@ python3 scripts/validate_agent_frontmatter.py --self-test
 python3 scripts/validate_agent_frontmatter.py "${FRONTMATTER_PATHS[@]}"
 
 python3 scripts/validate_agent_harness_scenarios.py "$SCENARIO_FIXTURE"
+python3 "$GRAPH_POLICY_VALIDATOR" docs/agent-harness.md "$GRAPH_POLICY_FIXTURE" --self-test
 
 budget_dir="$(mktemp -d "${TMPDIR:-/tmp}/agent-harness-budget.XXXXXX")"
 cleanup_budget_artifacts() {
@@ -1000,7 +1005,8 @@ trap - EXIT
 
 python3 -m pytest -q --no-cov \
   tests/test_agent_harness_scenarios.py \
-  tests/test_agent_harness_budget.py
+  tests/test_agent_harness_budget.py \
+  tests/test_code_review_graph_policy.py
 
 CLAUDE_CONTENT="$(tr -d '\r' < CLAUDE.md | sed '/^[[:space:]]*$/d')"
 [[ "$CLAUDE_CONTENT" == "@AGENTS.md" ]] || fail "CLAUDE.md must contain only @AGENTS.md"
@@ -1081,6 +1087,7 @@ require_text "docs/agent-harness.md" "Instruction budget"
 require_text "docs/agent-harness.md" "clean review"
 require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "委任、control plane、evidence package、review収束は docs/agent-harness.md"
 require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "配送順序、gate選択、証跡失効は GitHub配送Skill"
+require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "実装前に docs/agent-harness.md の「変更影響調査の入口」を確認"
 reject_text "AGENTS.md" "TTYの全表再描画"
 reject_text "AGENTS.md" "input closure"
 require_block_text ".agents/skills/github-delivery/SKILL.md" "## 3. Branch、実装、commit" "delivery-stack" "stacked PRでは、親PR・子PRのbaseと依存順を記録"
@@ -1112,7 +1119,10 @@ for public_file in \
   .agents/skills/github-delivery/SKILL.md \
   .github/workflows/agent-harness.yml \
   scripts/classify_verification_inputs.py \
-  tests/test_verification_inputs.py; do
+  scripts/validate_code_review_graph_policy.py \
+  tests/fixtures/agent-harness/code-review-graph-policy.json \
+  tests/test_verification_inputs.py \
+  tests/test_code_review_graph_policy.py; do
   reject_regex "$public_file" '/(Users|home)/[^[:space:]]+'
 done
 max_size "scripts/classify_verification_inputs.py" 220 16384
@@ -1242,6 +1252,7 @@ require_block_text "docs/ai-governance/13-maintenance-policy.md" "## Review収�
 require_block_text "docs/ai-governance/13-maintenance-policy.md" "## Review収束" "review-maintenance" "CI待機、最新snapshot、gate失効は GitHub配送Skill"
 require_block_text "docs/ai-governance/13-maintenance-policy.md" "## 検証" "maintenance-verification" "実行コマンドと変更path別のtestは docs/testing/index.md"
 require_block_text "docs/ai-governance/13-maintenance-policy.md" "## 検証" "maintenance-verification" "gate選択・包含・失効はGitHub配送Skill"
+require_block_text "docs/ai-governance/13-maintenance-policy.md" "## 検証" "maintenance-verification" "変更影響調査の入口を変更する場合"
 require_text ".agents/skills/github-delivery/SKILL.md" "docs/agent-harness.md"
 require_text "docs/agent-principles.md" "重複回数だけで抽象化を強制しない"
 require_text "AGENTS.md" "大小を問わずすべてソースコード変更"
