@@ -36,98 +36,128 @@ def _extract_trigger_block(on_block: str, trigger: str) -> str:
     return m.group(1)
 
 
-def test_ci_runs_on_develop_and_prs_to_develop() -> None:
-    """
-    Contract: develop remains a day-to-day CI target even though main is the default branch.
-    CI must run for pushes to develop and PRs targeting develop.
-    """
+def test_ci_triggers_only_main_and_develop() -> None:
+    """CI is limited to the two maintained branches and their pull requests."""
     yml = _read_text(".github/workflows/ci.yml")
     on_block = _extract_on_block(yml)
     _assert_contains_all(on_block, ["push:", "pull_request:"])
-    assert "develop" in on_block, "CI must include develop in its triggers"
+    _assert_contains_all(on_block, ["main", "develop"])
+    assert "feature/**" not in on_block, "feature branches must not duplicate CI runs"
 
 
-def test_playwright_pr_jobs_use_changed_path_classification() -> None:
-    """Contract: heavy UI tests use job-level scope gates instead of broad PR triggers."""
+def test_ci_classifier_exposes_the_stable_gate_interface() -> None:
+    """The classifier is the single change-scoped input for CI job selection."""
     ci = _read_text(".github/workflows/ci.yml")
-    visual = _read_text(".github/workflows/playwright-visual.yml")
-    visual_on_block = _extract_on_block(visual)
 
     _assert_contains_all(
         ci,
         [
-            "ui_test_scope:",
-            "scripts/classify_ui_test_changes.py",
-            "needs.ui_test_scope.outputs.playwright_smoke == 'true'",
-            "always() &&",
-            "needs.backend.result == 'success'",
-            "needs.frontend.result == 'success'",
-            'GIT_REF: ${{ github.ref }}',
-            'elif [ "${GIT_REF}" = "refs/heads/main" ]; then',
-            'echo "playwright_smoke=false" >> "${GITHUB_OUTPUT}"',
-            "ui_test_gate:",
-            "name: UI test selection gate",
-            'test "${SMOKE_RESULT}" = "success"',
-            'test "${SMOKE_RESULT}" = "skipped"',
+            "verification_scope:",
+            "scripts/classify_verification_inputs.py",
+            "--base \"${PR_BASE_SHA}\"",
+            "--full",
+            "classification_ok != 'true'",
         ],
     )
+    for field in (
+        "backend",
+        "frontend",
+        "backend_container",
+        "deploy_preflight",
+        "governance",
+        "workflow_contract",
+        "playwright_smoke",
+        "playwright_visual",
+        "classification_ok",
+    ):
+        assert f"      {field}: ${{{{ steps.scope.outputs.{field} }}}}" in ci
+    assert "elif [ \"${GIT_REF}\" = \"refs/heads/main\" ]; then" in ci
+
+
+def test_ci_selects_runtime_gates_and_keeps_security_in_backend_suite() -> None:
+    ci = _read_text(".github/workflows/ci.yml")
     _assert_contains_all(
-        visual,
+        ci,
         [
-            "ui_test_scope:",
-            "scripts/classify_ui_test_changes.py",
-            "needs.ui_test_scope.outputs.playwright_visual == 'true'",
-            "needs.ui_test_scope.result == 'success'",
-            "visual_test_gate:",
-            "name: Visual test selection gate",
-            'test "${VISUAL_RESULT}" = "success"',
-            'test "${VISUAL_RESULT}" = "skipped"',
+            "security_text_scan:",
+            "name: Backend tests (Python 3.14 + coverage)",
+            "python-version: '3.14'",
+            "Run backend pytest with coverage",
+            "tests/test_security_headers.py",
+            "backend_compatibility:",
+            "name: Backend compatibility (Python 3.13, no coverage)",
+            "github.ref == 'refs/heads/main'",
+            "python -m pytest --no-cov",
+            "npm test -- --coverage --silent",
+            "npm test -- --no-coverage --silent",
+            "backend_container:",
+            "deploy_preflight:",
+            "governance:",
+            "python scripts/validate_governance.py",
+            "workflow_contract:",
+            "quality_gate:",
         ],
     )
-    _assert_contains_none(visual_on_block, ["paths:", "paths-ignore:"])
+    assert "  security_headers:" not in ci
 
 
-def test_deploy_dry_run_is_main_only() -> None:
-    """
-    Contract: main is the production deployment branch.
-    Anything that authenticates to GCP must not run on develop.
-    """
-    yml = _read_text(".github/workflows/deploy-dry-run.yml")
+def test_playwright_jobs_are_classifier_scoped_and_parallel() -> None:
+    ci = _read_text(".github/workflows/ci.yml")
+    assert not Path(".github/workflows/playwright-visual.yml").exists()
+    for name, artifact in (("playwright_smoke", "playwright-smoke-artifacts"), ("playwright_visual", "playwright-visual-artifacts")):
+        start = ci.index(f"\n  {name}:") + 1
+        next_job = re.search(r"\n  [A-Za-z0-9_]+:\n", ci[start + 1 :])
+        end = start + 1 + next_job.start() if next_job else len(ci)
+        block = ci[start:end]
+        assert "      - verification_scope" in block
+        assert "      - backend" not in block and "      - frontend" not in block
+        assert "failure()" in block
+        assert "retention-days: 14" in block
+        assert artifact in block
+
+
+def test_codeql_is_main_scheduled_and_manual_only() -> None:
+    yml = _read_text(".github/workflows/codeql.yml")
     on_block = _extract_on_block(yml)
-    _assert_contains_all(
-        on_block,
-        [
-            "workflow_run:",
-            "workflows:",
-            "CI",
-            "types:",
-            "completed",
-        ],
-    )
-    _assert_contains_all(
-        yml,
-        [
-            "github.event.workflow_run.head_branch == 'main'",
-            "github.event.workflow_run.event == 'push'",
-        ],
-    )
-    assert "develop" not in yml, "deploy-dry-run must not run on develop"
-    # Sanity: ensure this workflow is actually the one touching GCP.
-    _assert_contains_all(yml, ["google-github-actions/auth@v2", "setup-gcloud@v3"])
+    _assert_contains_all(on_block, ["push:", "main", "schedule:", "workflow_dispatch:"])
+    assert "pull_request:" not in on_block
+    assert "develop" not in on_block
 
 
-def test_backend_ci_runs_real_pytest_on_supported_python_versions() -> None:
-    """Contract: backend CI must run pytest with Java 21 and propagate failures."""
+def test_full_playwright_is_weekly_manual_with_failure_artifacts() -> None:
+    yml = _read_text(".github/workflows/playwright-nightly.yml")
+    on_block = _extract_on_block(yml)
+    _assert_contains_all(on_block, ["schedule:", "workflow_dispatch:"])
+    assert "pull_request:" not in on_block
+    _assert_contains_all(yml, ["if: ${{ failure() }}", "retention-days: 14"])
+
+
+def test_dependency_review_fails_closed_when_graph_is_unavailable() -> None:
+    yml = _read_text(".github/workflows/dependency-review.yml")
+    on_block = _extract_on_block(yml)
+    _assert_contains_all(on_block, ["pull_request:", "paths:", ".github/workflows/**", "requirements.txt"])
+    _assert_contains_all(yml, ["set -euo pipefail", "Dependency graph is unavailable", "exit 1"])
+    _assert_contains_none(yml, ["if: steps.dependency_graph.outputs.supported", "::warning::Dependency review skipped"])
+
+
+def test_backend_ci_runs_production_314_coverage_and_main_313_compatibility() -> None:
+    """The production lane is 3.14 with coverage; 3.13 is main-only without coverage."""
     yml = _read_text(".github/workflows/ci.yml")
 
     _assert_contains_all(
         yml,
         [
-            "python-version: ['3.13', '3.14']",
+            "name: Backend tests (Python 3.14 + coverage)",
+            "python-version: '3.14'",
             "actions/setup-java@v5",
             "distribution: temurin",
             "java-version: '21'",
-            'firebase emulators:exec --only firestore --project "${FIRESTORE_PROJECT_ID}" --config firebase.json "python -m pytest"',
+            "firebase emulators:exec",
+            "python -m pytest",
+            "backend_compatibility:",
+            "name: Backend compatibility (Python 3.13, no coverage)",
+            "python-version: '3.13'",
+            "python -m pytest --no-cov",
         ],
     )
     _assert_contains_none(yml, ["pytest | cat", '"pytest" | cat'])
@@ -156,10 +186,8 @@ def test_production_runtime_and_single_version_jobs_default_to_python_314() -> N
 
     single_version_workflows = [
         ".github/workflows/deploy-production.yml",
-        ".github/workflows/deploy-dry-run.yml",
         ".github/workflows/production-deploy-preflight.yml",
         ".github/workflows/perf-backend.yml",
-        ".github/workflows/playwright-visual.yml",
         ".github/workflows/playwright-nightly.yml",
     ]
     for path in single_version_workflows:
@@ -184,7 +212,7 @@ def test_ci_does_not_embed_production_deploy_job() -> None:
     _assert_contains_all(
         yml,
         [
-            "cloud_run_guard:",
+            "deploy_preflight:",
             "deploy_cloud_run.sh --dry-run",
             "shellcheck scripts/deploy_cloud_run.sh scripts/promote_cloud_run_revision.sh",
             "--no-traffic --traffic-tag candidate",
@@ -192,16 +220,13 @@ def test_ci_does_not_embed_production_deploy_job() -> None:
     )
 
 
-def test_deploy_production_workflow_runs_on_main_push_or_manual_only() -> None:
-    """
-    Contract: automatic production deploy runs from the standalone workflow on main push.
-    workflow_dispatch remains as the manual fallback, and workflow_run is not used.
-    """
+def test_deploy_production_workflow_requires_successful_ci_or_manual_main() -> None:
+    """Production deployment is gated by a successful main CI run or manual main dispatch."""
     yml = _read_text(".github/workflows/deploy-production.yml")
     on_block = _extract_on_block(yml)
-    _assert_contains_all(on_block, ["push:", "branches:", "main", "workflow_dispatch:"])
-    _assert_contains_none(on_block, ["workflow_run:", "pull_request:"])
-    _assert_contains_none(yml, ["github.event.workflow_run."])
+    _assert_contains_all(on_block, ["workflow_run:", "workflows:", "CI", "completed", "workflow_dispatch:"])
+    _assert_contains_none(on_block, ["push:", "pull_request:"])
+    _assert_contains_all(yml, ["WORKFLOW_RUN_CONCLUSION", "WORKFLOW_RUN_BRANCH", "conclusion == \"success\"", "TARGET_SHA"])
     assert "cancel-in-progress: false" in yml
 
 
@@ -265,37 +290,17 @@ def test_deploy_production_uses_api_based_hosting_deploy() -> None:
     )
 
 
-def test_production_deploy_preflight_checks_prs_without_deploying() -> None:
-    """
-    Contract: PRs get a non-deploying production preflight. Static checks run on
-    the PR code without secrets, while the authenticated probe uses
-    pull_request_target and trusted base code for read-only API checks.
-    """
+def test_production_deploy_preflight_is_scheduled_or_manual_read_only() -> None:
+    """Production preflight is a read-only scheduled/manual probe."""
     yml = _read_text(".github/workflows/production-deploy-preflight.yml")
     on_block = _extract_on_block(yml)
-
-    _assert_contains_all(
-        on_block,
-        [
-            "pull_request:",
-            "pull_request_target:",
-            "workflow_dispatch:",
-            "branches:",
-            "main",
-        ],
-    )
+    _assert_contains_all(on_block, ["schedule:", "workflow_dispatch:"])
+    _assert_contains_none(on_block, ["pull_request:", "pull_request_target:"])
     _assert_contains_all(
         yml,
         [
-            "Static deploy preflight",
             "Authenticated deploy read-only probe",
-            "production-deploy-preflight-${{ github.workflow }}-${{ github.event_name }}-",
-            "github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'",
-            "github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch'",
-            "ref: ${{ github.event.pull_request.base.sha }}",
-            "--plan-only",
             "--probe-only",
-            "deploy_cloud_run.sh \\",
             "gcloud auth print-access-token --quiet >/dev/null",
             "pageSize=0",
             "google-github-actions/auth@v2",

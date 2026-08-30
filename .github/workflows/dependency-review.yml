@@ -29,32 +29,25 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Check Dependency Graph support
-        id: dependency_graph
         env:
           GH_TOKEN: ${{ github.token }}
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          set +e
-          gh api "repos/${GITHUB_REPOSITORY}/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}" >/tmp/dependency-review-probe.json 2>/tmp/dependency-review-probe.err
-          status=$?
-          set -e
-          if [ "$status" -eq 0 ]; then
-            echo "supported=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "supported=false" >> "$GITHUB_OUTPUT"
-            echo "::warning::Dependency review skipped because Dependency graph is not available for this repository yet. Enable it in repository security settings, then this workflow will fail high/critical vulnerable dependency changes."
-            cat /tmp/dependency-review-probe.err
+          set -euo pipefail
+          if ! gh api "repos/${GITHUB_REPOSITORY}/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}" >/tmp/dependency-review-probe.json 2>/tmp/dependency-review-probe.err; then
+            cat /tmp/dependency-review-probe.err >&2
+            echo "::error::Dependency graph is unavailable; dependency review cannot be skipped." >&2
+            exit 1
           fi
+          echo "Dependency graph comparison is available."
 
       - name: Checkout repository
-        if: steps.dependency_graph.outputs.supported == 'true'
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
       - name: Review dependency changes
-        if: steps.dependency_graph.outputs.supported == 'true'
         uses: actions/dependency-review-action@v5.0.0
         with:
           fail-on-severity: high

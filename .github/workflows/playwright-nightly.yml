@@ -1,6 +1,8 @@
 name: Playwright nightly regression
 
 on:
+  schedule:
+    - cron: "30 15 * * 0"
   workflow_dispatch:
 
 concurrency:
@@ -56,12 +58,12 @@ jobs:
 
       - name: Upload Playwright artifacts
         # 失敗時のスクリーンショット/トレース/HTML レポートを回収する。
-        if: ${{ always() }}
+        if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-nightly-artifacts
           path: |
             playwright-report/
             test-results/
-          retention-days: 90
+          retention-days: 14
           if-no-files-found: ignore

@@ -2,9 +2,13 @@ name: CI
 
 on:
   push:
-    branches: [ main, develop, feature/** ]
+    branches:
+      - main
+      - develop
   pull_request:
-    branches: [ main, develop ]
+    branches:
+      - main
+      - develop
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -14,44 +18,64 @@ permissions:
   contents: read
 
 jobs:
-  ui_test_scope:
-    name: Classify UI test scope
+  verification_scope:
+    name: Classify verification inputs
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
+      backend: ${{ steps.scope.outputs.backend }}
+      frontend: ${{ steps.scope.outputs.frontend }}
+      backend_container: ${{ steps.scope.outputs.backend_container }}
+      deploy_preflight: ${{ steps.scope.outputs.deploy_preflight }}
+      governance: ${{ steps.scope.outputs.governance }}
+      workflow_contract: ${{ steps.scope.outputs.workflow_contract }}
       playwright_smoke: ${{ steps.scope.outputs.playwright_smoke }}
+      playwright_visual: ${{ steps.scope.outputs.playwright_visual }}
+      classification_ok: ${{ steps.scope.outputs.classification_ok }}
     steps:
-      - name: Checkout pull request history
+      - name: Checkout repository history
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
 
       - name: Classify changed paths
         id: scope
         env:
           EVENT_NAME: ${{ github.event_name }}
           GIT_REF: ${{ github.ref }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          PUSH_HEAD_SHA: ${{ github.sha }}
         run: |
+          set +e
           if [ "${EVENT_NAME}" = "pull_request" ]; then
-            python scripts/classify_ui_test_changes.py \
-              --base "${BASE_SHA}" \
-              --head "${HEAD_SHA}" \
-              --github-output "${GITHUB_OUTPUT}"
+            python scripts/classify_verification_inputs.py --base "${PR_BASE_SHA}" --head "${PR_HEAD_SHA}" --github-output "${GITHUB_OUTPUT}"
           elif [ "${GIT_REF}" = "refs/heads/main" ]; then
-            echo "playwright_smoke=true" >> "${GITHUB_OUTPUT}"
+            python scripts/classify_verification_inputs.py --full --github-output "${GITHUB_OUTPUT}"
           else
-            echo "playwright_smoke=false" >> "${GITHUB_OUTPUT}"
+            python scripts/classify_verification_inputs.py --base "${BEFORE_SHA}" --head "${PUSH_HEAD_SHA}" --github-output "${GITHUB_OUTPUT}"
           fi
+          classifier_status=$?
+          set -e
+          echo "classifier_exit=${classifier_status}" >> "${GITHUB_OUTPUT}"
+
+      - name: Fail fast when classification is incomplete
+        if: ${{ steps.scope.outputs.classification_ok != 'true' }}
+        run: |
+          echo "::error::Verification input classification failed closed; no selected gate may be treated as complete."
+          exit 1
 
   security_text_scan:
     name: Security text scan
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    permissions:
-      contents: read
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -67,27 +91,32 @@ jobs:
         run: python scripts/security_scan_text.py
 
   backend:
-    name: Backend tests (pytest)
+    name: Backend tests (Python 3.14 + coverage)
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    needs:
+      - verification_scope
+    if: >-
+      ${{
+        needs.verification_scope.result == 'success' &&
+        needs.verification_scope.outputs.classification_ok == 'true' &&
+        needs.verification_scope.outputs.backend == 'true'
+      }}
     env:
       FIRESTORE_PROJECT_ID: wordpack-ci
       FIRESTORE_EMULATOR_PORT: 8080
       FIRESTORE_EMULATOR_HOST: "127.0.0.1:8080"
       ENABLE_FIRESTORE_EMULATOR: "true"
-    strategy:
-      matrix:
-        python-version: ['3.13', '3.14']
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - name: Set up Python
+      - name: Set up Python 3.14
         uses: actions/setup-python@v6
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: '3.14'
 
       - name: Set up Java for Firebase Emulator
         uses: actions/setup-java@v5
@@ -95,13 +124,23 @@ jobs:
           distribution: temurin
           java-version: '21'
 
+      - name: Set SESSION_SECRET_KEY for CI
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import secrets
+          print("SESSION_SECRET_KEY=" + secrets.token_hex(32))
+          PY
+
+      - name: Prepare production-like env file
+        run: cp .env.ci .env
+
       - name: Cache pip
         uses: actions/cache@v4
         with:
           path: ~/.cache/pip
-          key: ${{ runner.os }}-python-${{ matrix.python-version }}-pip-${{ hashFiles('requirements.txt') }}
+          key: ${{ runner.os }}-python-3.14-pip-${{ hashFiles('requirements.txt') }}
           restore-keys: |
-            ${{ runner.os }}-python-${{ matrix.python-version }}-pip-
+            ${{ runner.os }}-python-3.14-pip-
 
       - name: Install dependencies
         run: |
@@ -109,10 +148,11 @@ jobs:
           pip install -r requirements.txt
           pip install langgraph
 
-      - name: Run pytest
+      - name: Run backend pytest with coverage
         env:
           PYTHONPATH: apps/backend
         run: |
+          # The full suite includes tests/test_security_headers.py.
           if [ "${ENABLE_FIRESTORE_EMULATOR}" = "true" ]; then
             npm install -g firebase-tools@15.22.0
             FIRESTORE_EMULATOR_HOST="127.0.0.1:${FIRESTORE_EMULATOR_PORT}" FIRESTORE_PROJECT_ID="${FIRESTORE_PROJECT_ID}" firebase emulators:exec --only firestore --project "${FIRESTORE_PROJECT_ID}" --config firebase.json "python -m pytest"
@@ -121,20 +161,144 @@ jobs:
           fi
 
       - name: Add optional offline LLMOps summary
-        if: matrix.python-version == '3.14'
         continue-on-error: true
         env:
           PYTHONPATH: apps/backend
         run: |
-          python scripts/llmops/offline_report.py \
-            --json-output /tmp/llmops-offline-report.json \
-            --markdown-output /tmp/llmops-offline-report.md \
-            --summary-file "${GITHUB_STEP_SUMMARY}"
+          python scripts/llmops/offline_report.py --json-output /tmp/llmops-offline-report.json --markdown-output /tmp/llmops-offline-report.md --summary-file "${GITHUB_STEP_SUMMARY}"
+
+  backend_compatibility:
+    name: Backend compatibility (Python 3.13, no coverage)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs:
+      - verification_scope
+    if: >-
+      ${{
+        needs.verification_scope.result == 'success' &&
+        needs.verification_scope.outputs.classification_ok == 'true' &&
+        needs.verification_scope.outputs.backend == 'true' &&
+        github.event_name == 'push' &&
+        github.ref == 'refs/heads/main'
+      }}
+    env:
+      FIRESTORE_PROJECT_ID: wordpack-ci
+      FIRESTORE_EMULATOR_PORT: 8080
+      FIRESTORE_EMULATOR_HOST: "127.0.0.1:8080"
+      ENABLE_FIRESTORE_EMULATOR: "true"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+
+      - name: Set up Java for Firebase Emulator
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set SESSION_SECRET_KEY for CI
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import secrets
+          print("SESSION_SECRET_KEY=" + secrets.token_hex(32))
+          PY
+
+      - name: Prepare production-like env file
+        run: cp .env.ci .env
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-python-3.13-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-python-3.13-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install langgraph
+
+      - name: Run compatibility pytest without coverage
+        env:
+          PYTHONPATH: apps/backend
+        run: |
+          if [ "${ENABLE_FIRESTORE_EMULATOR}" = "true" ]; then
+            npm install -g firebase-tools@15.22.0
+            FIRESTORE_EMULATOR_HOST="127.0.0.1:${FIRESTORE_EMULATOR_PORT}" FIRESTORE_PROJECT_ID="${FIRESTORE_PROJECT_ID}" firebase emulators:exec --only firestore --project "${FIRESTORE_PROJECT_ID}" --config firebase.json "python -m pytest --no-cov"
+          else
+            python -m pytest --no-cov
+          fi
+
+  frontend:
+    name: Frontend tests (Vitest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - verification_scope
+    if: >-
+      ${{
+        needs.verification_scope.result == 'success' &&
+        needs.verification_scope.outputs.classification_ok == 'true' &&
+        needs.verification_scope.outputs.frontend == 'true'
+      }}
+    defaults:
+      run:
+        working-directory: apps/frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Use Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '20.19.0'
+          cache: npm
+          cache-dependency-path: apps/frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Typecheck frontend (including tests)
+        run: npx tsc -p tsconfig.json
+
+      - name: Run Vitest with coverage on main
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+        run: npm test -- --coverage --silent
+
+      - name: Run Vitest without coverage on PR or develop
+        if: ${{ github.event_name != 'push' || github.ref != 'refs/heads/main' }}
+        run: npm test -- --no-coverage --silent
+
+      - name: Check frontend architecture boundaries
+        working-directory: ${{ github.workspace }}
+        run: npm run check:frontend-architecture
 
   backend_container:
     name: Backend container smoke (Python 3.14)
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    needs:
+      - verification_scope
+    if: >-
+      ${{
+        needs.verification_scope.result == 'success' &&
+        needs.verification_scope.outputs.classification_ok == 'true' &&
+        (
+          needs.verification_scope.outputs.backend_container == 'true' ||
+          (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        )
+      }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -146,14 +310,7 @@ jobs:
 
       - name: Start backend container
         run: |
-          docker run --detach \
-            --name wordpack-backend-python314-smoke \
-            --env-file .env.ci \
-            --env FIRESTORE_PROJECT_ID=wordpack-ci \
-            --env GCP_PROJECT_ID=wordpack-ci \
-            --env FIRESTORE_EMULATOR_HOST=127.0.0.1:8081 \
-            --publish 127.0.0.1:8080:8080 \
-            wordpack-backend:python-3.14
+          docker run --detach --name wordpack-backend-python314-smoke --env-file .env.ci --env FIRESTORE_PROJECT_ID=wordpack-ci --env GCP_PROJECT_ID=wordpack-ci --env FIRESTORE_EMULATOR_HOST=127.0.0.1:8081 --publish 127.0.0.1:8080:8080 wordpack-backend:python-3.14
 
       - name: Verify backend health
         run: |
@@ -175,10 +332,21 @@ jobs:
         if: ${{ always() }}
         run: docker rm --force wordpack-backend-python314-smoke || true
 
-  security_headers:
-    name: Security headers tests (pytest)
+  deploy_preflight:
+    name: Static deploy preflight
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
+    needs:
+      - verification_scope
+    if: >-
+      ${{
+        needs.verification_scope.result == 'success' &&
+        needs.verification_scope.outputs.classification_ok == 'true' &&
+        (
+          needs.verification_scope.outputs.deploy_preflight == 'true' ||
+          (github.event_name == 'push' && github.ref == 'refs/heads/main')
+        )
+      }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -190,86 +358,94 @@ jobs:
         with:
           python-version: '3.14'
 
-      - name: Set SESSION_SECRET_KEY for CI
-        # Settings 検証で必須のため、CI 実行ごとにランダム値を注入する（実運用の秘密鍵は不要）。
-        run: |
-          python - <<'PY' >> "$GITHUB_ENV"
-          import secrets
-          print("SESSION_SECRET_KEY=" + secrets.token_hex(32))
-          PY
-
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install langgraph
 
-      - name: Prepare production-like env file for security header checks
-        run: cp .env.ci .env
+      - name: Install shellcheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y shellcheck
 
-      - name: Run security headers pytest suite
-        env:
-          PYTHONPATH: apps/backend
-        run: pytest -q --no-cov tests/test_security_headers.py
+      - name: Lint deploy scripts
+        run: shellcheck scripts/deploy_cloud_run.sh scripts/promote_cloud_run_revision.sh
 
-  frontend:
-    name: Frontend tests (vitest)
+      - name: Dry-run Cloud Run deployment
+        run: ./scripts/deploy_cloud_run.sh --dry-run --env-file configs/cloud-run/ci.env --project-id ci-placeholder-project --region asia-northeast1 --service wordpack-backend --min-instances 1 --no-traffic --traffic-tag candidate
+
+  governance:
+    name: Governance validation
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: apps/frontend
+    timeout-minutes: 10
+    needs:
+      - verification_scope
+    if: >-
+      ${{
+        needs.verification_scope.result == 'success' &&
+        needs.verification_scope.outputs.classification_ok == 'true' &&
+        needs.verification_scope.outputs.governance == 'true'
+      }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
-      - name: Use Node.js
-        uses: actions/setup-node@v7
+      - name: Set up Python
+        uses: actions/setup-python@v6
         with:
-          node-version: '20.19.0'
-          cache: 'npm'
-          cache-dependency-path: apps/frontend/package-lock.json
+          python-version: '3.14'
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Install governance dependencies
+        run: pip install -r requirements-agent-harness.txt
 
-      - name: Typecheck frontend (including tests)
-        run: npx tsc -p tsconfig.json
+      - name: Validate governance
+        run: python scripts/validate_governance.py
 
-      - name: Run vitest
-        run: npm test -- --coverage --silent
+  workflow_contract:
+    name: Workflow contract tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs:
+      - verification_scope
+    if: >-
+      ${{
+        needs.verification_scope.result == 'success' &&
+        needs.verification_scope.outputs.classification_ok == 'true' &&
+        needs.verification_scope.outputs.workflow_contract == 'true'
+      }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
-      - name: Check frontend architecture boundaries
-        working-directory: ${{ github.workspace }}
-        run: npm run check:frontend-architecture
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+
+      - name: Install workflow contract dependencies
+        run: pip install -r requirements-agent-harness.txt
+
+      - name: Parse workflow YAML
+        run: python -c 'import pathlib,yaml; [yaml.safe_load(p.read_text(encoding="utf-8")) for p in pathlib.Path(".github/workflows").glob("*.y*ml")]'
+
+      - name: Run workflow and classifier contract tests
+        run: python -m pytest -q --no-cov tests/test_github_actions_branch_policy.py tests/test_verification_inputs.py
 
   playwright_smoke:
-    name: Playwright smoke (PR critical flows)
+    name: Playwright smoke (selected flows)
     runs-on: ubuntu-latest
     timeout-minutes: 35
     needs:
-      - backend
-      - frontend
-      - ui_test_scope
-    # CD の前提チェックとして main push でもスモークを実行し、デプロイ前に主要動線を検証する。
-    # PR では主要導線へ影響する差分だけを対象にし、job-level skipをcheckとして残す。
+      - verification_scope
     if: >-
       ${{
-        always() &&
-        needs.backend.result == 'success' &&
-        needs.frontend.result == 'success' &&
-        needs.ui_test_scope.result == 'success' &&
-        needs.ui_test_scope.outputs.playwright_smoke == 'true'
+        needs.verification_scope.result == 'success' &&
+        needs.verification_scope.outputs.classification_ok == 'true' &&
+        needs.verification_scope.outputs.playwright_smoke == 'true'
       }}
     steps:
       - name: Checkout
@@ -281,7 +457,7 @@ jobs:
         uses: actions/setup-node@v7
         with:
           node-version: '22'
-          cache: 'npm'
+          cache: npm
           cache-dependency-path: |
             package-lock.json
             apps/frontend/package-lock.json
@@ -292,7 +468,6 @@ jobs:
           python-version: '3.14'
 
       - name: Set SESSION_SECRET_KEY for CI
-        # Settings 検証で必須のため、CI 実行ごとにランダム値を注入する（実運用の秘密鍵は不要）。
         run: |
           python - <<'PY' >> "$GITHUB_ENV"
           import secrets
@@ -315,96 +490,153 @@ jobs:
           npx playwright install --with-deps
 
       - name: Run Playwright smoke suite
-        # PR では主要導線のみを実行し、短時間で回帰を検知する。
         run: |
-          npx playwright test \
-            -c tests/e2e/playwright.config.ts \
-            tests/e2e/auth.spec.ts \
-            tests/e2e/guest.spec.ts \
-            tests/e2e/wordpack-server-query.spec.ts \
-            tests/e2e/wordpack.spec.ts
+          npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/auth.spec.ts tests/e2e/guest.spec.ts tests/e2e/wordpack-server-query.spec.ts tests/e2e/wordpack.spec.ts
 
-      - name: Upload Playwright artifacts
-        # 失敗時のスクリーンショット/トレース/HTML レポートを回収する。
-        if: ${{ always() }}
+      - name: Upload Playwright smoke artifacts
+        if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
           name: playwright-smoke-artifacts
           path: |
             playwright-report/
             test-results/
-          retention-days: 90
+          retention-days: 14
           if-no-files-found: ignore
 
-  ui_test_gate:
-    name: UI test selection gate
+  playwright_visual:
+    name: Playwright visual regression
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    if: ${{ always() }}
+    timeout-minutes: 45
     needs:
-      - backend
-      - frontend
-      - playwright_smoke
-      - ui_test_scope
-    steps:
-      - name: Validate selected UI test result
-        env:
-          BACKEND_RESULT: ${{ needs.backend.result }}
-          FRONTEND_RESULT: ${{ needs.frontend.result }}
-          PLAYWRIGHT_SMOKE: ${{ needs.ui_test_scope.outputs.playwright_smoke }}
-          SCOPE_RESULT: ${{ needs.ui_test_scope.result }}
-          SMOKE_RESULT: ${{ needs.playwright_smoke.result }}
-        run: |
-          if [ "${SCOPE_RESULT}" != "success" ] || \
-             [ "${BACKEND_RESULT}" != "success" ] || \
-             [ "${FRONTEND_RESULT}" != "success" ]; then
-            echo "UI test prerequisites did not succeed" >&2
-            exit 1
-          fi
-
-          if [ "${PLAYWRIGHT_SMOKE}" = "true" ]; then
-            test "${SMOKE_RESULT}" = "success"
-          else
-            test "${SMOKE_RESULT}" = "skipped"
-          fi
-
-  cloud_run_guard:
-    name: Cloud Run config guard
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    needs:
-      - security_headers
+      - verification_scope
+    if: >-
+      ${{
+        needs.verification_scope.result == 'success' &&
+        needs.verification_scope.outputs.classification_ok == 'true' &&
+        needs.verification_scope.outputs.playwright_visual == 'true'
+      }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           persist-credentials: false
 
+      - name: Use Node.js 22
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            apps/frontend/package-lock.json
+
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
           python-version: '3.14'
 
-      - name: Set SESSION_SECRET_KEY for CI
-        # Settings 検証で必須のため、CI 実行ごとにランダム値を注入する（実運用の秘密鍵は不要）。
-        run: |
-          python - <<'PY' >> "$GITHUB_ENV"
-          import secrets
-          print("SESSION_SECRET_KEY=" + secrets.token_hex(32))
-          PY
-
       - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          pip install langgraph
 
-      - name: Install shellcheck
+      - name: Install frontend dependencies
+        working-directory: apps/frontend
+        run: npm ci
+
+      - name: Install Playwright dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y shellcheck
+          npm ci
+          npx playwright install --with-deps
 
-      - name: Lint deploy script
-        run: shellcheck scripts/deploy_cloud_run.sh scripts/promote_cloud_run_revision.sh
+      - name: Run Playwright visual suite
+        run: npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/visual.spec.ts
 
-      - name: Dry-run Cloud Run deployment
-        run: ./scripts/deploy_cloud_run.sh --dry-run --env-file configs/cloud-run/ci.env --project-id ci-placeholder-project --region asia-northeast1 --service wordpack-backend --min-instances 1 --no-traffic --traffic-tag candidate
+      - name: Upload Playwright visual artifacts
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-visual-artifacts
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
+          if-no-files-found: ignore
+
+  quality_gate:
+    name: Quality gate (selected checks)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    if: ${{ always() }}
+    needs:
+      - verification_scope
+      - security_text_scan
+      - backend
+      - backend_compatibility
+      - frontend
+      - backend_container
+      - deploy_preflight
+      - governance
+      - workflow_contract
+      - playwright_smoke
+      - playwright_visual
+    steps:
+      - name: Validate selected job results
+        env:
+          CLASSIFIER_RESULT: ${{ needs.verification_scope.result }}
+          CLASSIFICATION_OK: ${{ needs.verification_scope.outputs.classification_ok }}
+          SECURITY_TEXT_RESULT: ${{ needs.security_text_scan.result }}
+          BACKEND_SELECTED: ${{ needs.verification_scope.outputs.backend }}
+          BACKEND_RESULT: ${{ needs.backend.result }}
+          BACKEND_COMPAT_REQUIRED: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+          BACKEND_COMPAT_RESULT: ${{ needs.backend_compatibility.result }}
+          FRONTEND_SELECTED: ${{ needs.verification_scope.outputs.frontend }}
+          FRONTEND_RESULT: ${{ needs.frontend.result }}
+          CONTAINER_SELECTED: ${{ needs.verification_scope.outputs.backend_container }}
+          CONTAINER_RESULT: ${{ needs.backend_container.result }}
+          DEPLOY_SELECTED: ${{ needs.verification_scope.outputs.deploy_preflight }}
+          DEPLOY_RESULT: ${{ needs.deploy_preflight.result }}
+          GOVERNANCE_SELECTED: ${{ needs.verification_scope.outputs.governance }}
+          GOVERNANCE_RESULT: ${{ needs.governance.result }}
+          WORKFLOW_SELECTED: ${{ needs.verification_scope.outputs.workflow_contract }}
+          WORKFLOW_RESULT: ${{ needs.workflow_contract.result }}
+          SMOKE_SELECTED: ${{ needs.verification_scope.outputs.playwright_smoke }}
+          SMOKE_RESULT: ${{ needs.playwright_smoke.result }}
+          VISUAL_SELECTED: ${{ needs.verification_scope.outputs.playwright_visual }}
+          VISUAL_RESULT: ${{ needs.playwright_visual.result }}
+        run: |
+          set -euo pipefail
+          test "${CLASSIFIER_RESULT}" = "success"
+          test "${CLASSIFICATION_OK}" = "true"
+          test "${SECURITY_TEXT_RESULT}" = "success"
+
+          check_selected() {
+            local selected="$1"
+            local result="$2"
+            local label="$3"
+            if [ "${selected}" = "true" ]; then
+              if [ "${result}" != "success" ]; then
+                echo "${label} was selected but ended with ${result}" >&2
+                return 1
+              fi
+            elif [ "${result}" != "skipped" ]; then
+              echo "${label} was not selected but ended with ${result}" >&2
+              return 1
+            fi
+          }
+
+          check_selected "${BACKEND_SELECTED}" "${BACKEND_RESULT}" backend
+          if [ "${BACKEND_COMPAT_REQUIRED}" = "true" ]; then
+            test "${BACKEND_COMPAT_RESULT}" = "success"
+          else
+            test "${BACKEND_COMPAT_RESULT}" = "skipped"
+          fi
+          check_selected "${FRONTEND_SELECTED}" "${FRONTEND_RESULT}" frontend
+          check_selected "${CONTAINER_SELECTED}" "${CONTAINER_RESULT}" backend_container
+          check_selected "${DEPLOY_SELECTED}" "${DEPLOY_RESULT}" deploy_preflight
+          check_selected "${GOVERNANCE_SELECTED}" "${GOVERNANCE_RESULT}" governance
+          check_selected "${WORKFLOW_SELECTED}" "${WORKFLOW_RESULT}" workflow_contract
+          check_selected "${SMOKE_SELECTED}" "${SMOKE_RESULT}" playwright_smoke
+          check_selected "${VISUAL_SELECTED}" "${VISUAL_RESULT}" playwright_visual
