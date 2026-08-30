@@ -66,6 +66,7 @@ def test_ci_classifier_exposes_the_stable_gate_interface() -> None:
         "deploy_preflight",
         "governance",
         "workflow_contract",
+        "dependency_review",
         "playwright_smoke",
         "playwright_visual",
         "classification_ok",
@@ -95,6 +96,13 @@ def test_ci_selects_runtime_gates_and_keeps_security_in_backend_suite() -> None:
             "governance:",
             "python scripts/validate_governance.py",
             "workflow_contract:",
+            "dependency_review:",
+            "actions/dependency-review-action@v5.0.0",
+            "Dependency graph is unavailable",
+            "DEPENDENCY_SELECTED:",
+            "DEPENDENCY_SELECTED: ${{ github.event_name == 'pull_request' && needs.verification_scope.outputs.dependency_review == 'true' }}",
+            "      - dependency_review",
+            'check_selected "${DEPENDENCY_SELECTED}" "${DEPENDENCY_RESULT}" dependency_review',
             "quality_gate:",
         ],
     )
@@ -116,28 +124,51 @@ def test_playwright_jobs_are_classifier_scoped_and_parallel() -> None:
         assert artifact in block
 
 
-def test_codeql_is_main_scheduled_and_manual_only() -> None:
-    yml = _read_text(".github/workflows/codeql.yml")
+def test_codeql_is_scheduled_and_manual_only() -> None:
+    yml = _read_text(".github/workflows/scheduled-maintenance.yml")
     on_block = _extract_on_block(yml)
-    _assert_contains_all(on_block, ["push:", "main", "schedule:", "workflow_dispatch:"])
-    assert "pull_request:" not in on_block
-    assert "develop" not in on_block
+    _assert_contains_all(on_block, ["schedule:", "workflow_dispatch:", "suite:"])
+    _assert_contains_none(on_block, ["push:", "pull_request:", "workflow_run:"])
+    _assert_contains_all(yml, ["  codeql:", "github/codeql-action/init@v4", "github/codeql-action/analyze@v4"])
 
 
 def test_full_playwright_is_weekly_manual_with_failure_artifacts() -> None:
-    yml = _read_text(".github/workflows/playwright-nightly.yml")
+    yml = _read_text(".github/workflows/scheduled-maintenance.yml")
     on_block = _extract_on_block(yml)
     _assert_contains_all(on_block, ["schedule:", "workflow_dispatch:"])
     assert "pull_request:" not in on_block
-    _assert_contains_all(yml, ["if: ${{ failure() }}", "retention-days: 14"])
+    _assert_contains_all(yml, ["  playwright:", "if: ${{ failure() }}", "retention-days: 14"])
 
 
-def test_dependency_review_fails_closed_when_graph_is_unavailable() -> None:
-    yml = _read_text(".github/workflows/dependency-review.yml")
-    on_block = _extract_on_block(yml)
-    _assert_contains_all(on_block, ["pull_request:", "paths:", ".github/workflows/**", "requirements.txt"])
-    _assert_contains_all(yml, ["set -euo pipefail", "Dependency graph is unavailable", "exit 1"])
-    _assert_contains_none(yml, ["if: steps.dependency_graph.outputs.supported", "::warning::Dependency review skipped"])
+def test_dependency_review_is_ci_only_and_fails_closed_when_graph_is_unavailable() -> None:
+    ci = _read_text(".github/workflows/ci.yml")
+    assert not Path(".github/workflows/dependency-review.yml").exists()
+    _assert_contains_all(
+        ci,
+        [
+            "dependency_review: ${{ steps.scope.outputs.dependency_review }}",
+            "github.event_name == 'pull_request'",
+            "needs.verification_scope.outputs.dependency_review == 'true'",
+            "permissions:\n      contents: read\n      pull-requests: read",
+            "gh api \"repos/${GITHUB_REPOSITORY}/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}\"",
+            "Dependency graph is unavailable",
+            "exit 1",
+            "uses: actions/dependency-review-action@v5.0.0",
+        ],
+    )
+    assert ci.count("uses: actions/dependency-review-action@v5.0.0") == 1
+
+
+def test_only_ci_is_an_automatic_pull_request_workflow_and_allowlist_is_bounded() -> None:
+    workflows = sorted(Path(".github/workflows").glob("*.y*ml"))
+    assert len(workflows) <= 5
+    automatic_pr_workflows = [
+        path.name
+        for path in workflows
+        if re.search(r"(?m)^  pull_request(?:_target)?:", _extract_on_block(_read_text(str(path))))
+    ]
+    assert len(automatic_pr_workflows) <= 5
+    assert automatic_pr_workflows == ["ci.yml"]
 
 
 def test_backend_ci_runs_production_314_coverage_and_main_313_compatibility() -> None:
@@ -161,6 +192,7 @@ def test_backend_ci_runs_production_314_coverage_and_main_313_compatibility() ->
         ],
     )
     _assert_contains_none(yml, ["pytest | cat", '"pytest" | cat'])
+    assert "Prepare production-like env file" not in yml
 
 
 def test_backend_ci_builds_and_health_checks_python_314_container() -> None:
@@ -187,8 +219,7 @@ def test_production_runtime_and_single_version_jobs_default_to_python_314() -> N
     single_version_workflows = [
         ".github/workflows/deploy-production.yml",
         ".github/workflows/production-deploy-preflight.yml",
-        ".github/workflows/perf-backend.yml",
-        ".github/workflows/playwright-nightly.yml",
+        ".github/workflows/scheduled-maintenance.yml",
     ]
     for path in single_version_workflows:
         yml = _read_text(path)

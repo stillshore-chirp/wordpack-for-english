@@ -29,6 +29,7 @@ jobs:
       deploy_preflight: ${{ steps.scope.outputs.deploy_preflight }}
       governance: ${{ steps.scope.outputs.governance }}
       workflow_contract: ${{ steps.scope.outputs.workflow_contract }}
+      dependency_review: ${{ steps.scope.outputs.dependency_review }}
       playwright_smoke: ${{ steps.scope.outputs.playwright_smoke }}
       playwright_visual: ${{ steps.scope.outputs.playwright_visual }}
       classification_ok: ${{ steps.scope.outputs.classification_ok }}
@@ -90,6 +91,51 @@ jobs:
       - name: Scan source text for invisible controls
         run: python scripts/security_scan_text.py
 
+  dependency_review:
+    name: Dependency review
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs:
+      - verification_scope
+    if: >-
+      ${{
+        github.event_name == 'pull_request' &&
+        needs.verification_scope.result == 'success' &&
+        needs.verification_scope.outputs.classification_ok == 'true' &&
+        needs.verification_scope.outputs.dependency_review == 'true'
+      }}
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout repository history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check Dependency Graph support
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if ! gh api "repos/${GITHUB_REPOSITORY}/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}" >/tmp/dependency-review-probe.json 2>/tmp/dependency-review-probe.err; then
+            cat /tmp/dependency-review-probe.err >&2
+            echo "::error::Dependency graph is unavailable; dependency review cannot be skipped." >&2
+            exit 1
+          fi
+          echo "Dependency graph comparison is available."
+
+      - name: Review dependency changes
+        uses: actions/dependency-review-action@v5.0.0
+        with:
+          fail-on-severity: high
+          vulnerability-check: true
+          license-check: false
+          show-patched-versions: true
+
   backend:
     name: Backend tests (Python 3.14 + coverage)
     runs-on: ubuntu-latest
@@ -130,9 +176,6 @@ jobs:
           import secrets
           print("SESSION_SECRET_KEY=" + secrets.token_hex(32))
           PY
-
-      - name: Prepare production-like env file
-        run: cp .env.ci .env
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -209,9 +252,6 @@ jobs:
           import secrets
           print("SESSION_SECRET_KEY=" + secrets.token_hex(32))
           PY
-
-      - name: Prepare production-like env file
-        run: cp .env.ci .env
 
       - name: Cache pip
         uses: actions/cache@v4
@@ -573,6 +613,7 @@ jobs:
     needs:
       - verification_scope
       - security_text_scan
+      - dependency_review
       - backend
       - backend_compatibility
       - frontend
@@ -588,6 +629,8 @@ jobs:
           CLASSIFIER_RESULT: ${{ needs.verification_scope.result }}
           CLASSIFICATION_OK: ${{ needs.verification_scope.outputs.classification_ok }}
           SECURITY_TEXT_RESULT: ${{ needs.security_text_scan.result }}
+          DEPENDENCY_SELECTED: ${{ github.event_name == 'pull_request' && needs.verification_scope.outputs.dependency_review == 'true' }}
+          DEPENDENCY_RESULT: ${{ needs.dependency_review.result }}
           BACKEND_SELECTED: ${{ needs.verification_scope.outputs.backend }}
           BACKEND_RESULT: ${{ needs.backend.result }}
           BACKEND_COMPAT_REQUIRED: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
@@ -628,6 +671,7 @@ jobs:
           }
 
           check_selected "${BACKEND_SELECTED}" "${BACKEND_RESULT}" backend
+          check_selected "${DEPENDENCY_SELECTED}" "${DEPENDENCY_RESULT}" dependency_review
           if [ "${BACKEND_COMPAT_REQUIRED}" = "true" ]; then
             test "${BACKEND_COMPAT_RESULT}" = "success"
           else
