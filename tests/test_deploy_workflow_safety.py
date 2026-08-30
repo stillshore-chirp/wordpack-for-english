@@ -28,11 +28,26 @@ def test_production_deploy_is_gated_by_a_successful_same_sha_ci_run() -> None:
     assert '"main"' in verify
     assert 'GITHUB_EVENT_NAME}" == "workflow_dispatch"' in verify
     assert 'refs/heads/main' in verify
+    assert "CI_WORKFLOW_PATH: .github/workflows/ci.yml" in verify
+    assert 'CI_WORKFLOW_ID: "187172373"' in verify
+    assert "actions/workflows?per_page=100" in verify
+    assert "actions/workflows/${CI_WORKFLOW_ID}/runs" in verify
+    assert 'status=completed' in verify
+    assert 'conclusion == "success"' in verify
+    assert "actions/runs/${run_id}/jobs?per_page=100" in verify
+    assert '(.name == "Quality gate"' in verify
+    assert 'verify_ci_run "${WORKFLOW_RUN_ID}"' in verify
+    assert 'verify_ci_run "${candidate_run_id}"' in verify
     assert "environment: production" not in verify
     assert "needs: verify-target" in deploy
     assert "environment: production" in deploy
     assert "ref: ${{ needs.verify-target.outputs.target_sha }}" in deploy
     assert 'checked_out_sha="$(git rev-parse HEAD)"' in deploy
+
+    deployment_docs = _read("docs/deployment.md")
+    assert ".github/workflows/ci.yml" in deployment_docs
+    assert "187172373" in deployment_docs
+    assert "Quality gate" in deployment_docs
 
 
 def test_authenticated_preflight_only_uses_trusted_main() -> None:

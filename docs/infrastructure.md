@@ -171,11 +171,11 @@ flowchart LR
 | **Quality gate** | push / PR | 中央classifierの結果と、選択されたBackend／Frontend／deploy／Playwright smoke・visual等の結果を集約し、未選択jobの予期しない実行も含めてfail-closed |
 | **Static deploy preflight** | 中央classifierが選択したpush / PR、およびmain push | `deploy_preflight` がデプロイスクリプトのshellcheckとCloud Run dry-runを実行 |
 | **Production deploy preflight** | schedule / `workflow_dispatch`（main refのみ） | 信頼済み main code で gcloud、Firestore、Firebase Hosting の read-only probe。credential 欠如は fail-closed |
-| **Deploy to production** | `CI` `workflow_run`（success / push / main / 同一SHA）または `workflow_dispatch`（target SHA必須） | GitHub APIでCI成功を照合し、対象SHAへcheckoutして `make release-cloud-run` と Firebase Hosting deploy を実行。PRでは本番デプロイ job を作らない |
+| **Deploy to production** | `CI` `workflow_run`（success / push / main / 同一SHA）または `workflow_dispatch`（target SHA必須） | 固定path `.github/workflows/ci.yml`／immutable workflow ID `187172373`、同一runの canonical `Quality gate` success をGitHub APIで照合し、対象SHAへcheckoutして `make release-cloud-run` と Firebase Hosting deploy を実行。PRでは本番デプロイ job を作らない |
 
 静的な Cloud Run dry-run と deploy contract 検証は `CI` lane に集約し、重複する `deploy-dry-run.yml` workflow は置かない。本番デプロイは `CI` の同一SHA成功を `workflow_run` 側で再検証してから開始する。PR では本番デプロイ job を作らず、認証済み probe は schedule または main ref の手動実行に限定する。
 
-CD のチェック表示は GitHub Actions に集約する。`workflow_run` は検証済み `workflow_run.head_sha` を checkout し、manual break-glass は GitHub API で指定 SHA の成功CIを照合する。Cloud Build は `cloudbuild.backend.yaml` でバックエンド image build のみを担当し、GitHub Checks API への通知は行わない。これにより Cloud Build 内の外部通知が詰まって Cloud Run デプロイ開始前に止まるリスクを避ける。
+CD のチェック表示は GitHub Actions に集約する。`workflow_run` は検証済み `workflow_run.head_sha` を checkout し、manual break-glass は completed候補から1件確定した後、同じrunの詳細とjobs APIで指定 SHAの成功CI／`Quality gate`を照合する。workflow再作成時のID変更はworkflow側の定数を明示更新する。Cloud Build は `cloudbuild.backend.yaml` でバックエンド image build のみを担当し、GitHub Checks API への通知は行わない。これにより Cloud Build 内の外部通知が詰まって Cloud Run デプロイ開始前に止まるリスクを避ける。
 
 ### E2E 実行レイヤ（Playwright）
 
