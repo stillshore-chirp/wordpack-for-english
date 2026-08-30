@@ -15,7 +15,7 @@ WordPack for English の本番運用で、何を監視し、どの状態を正�
 - [docs/testing/backend-performance.md](./docs/testing/backend-performance.md) - p95 性能回帰チェック
 - [.github/workflows/ci.yml](./.github/workflows/ci.yml) - PR / main push の CI
 - [.github/workflows/deploy-production.yml](./.github/workflows/deploy-production.yml) - 本番デプロイ
-- [.github/workflows/perf-backend.yml](./.github/workflows/perf-backend.yml) - 週次 p95 回帰チェック
+- [.github/workflows/scheduled-maintenance.yml](./.github/workflows/scheduled-maintenance.yml) - 週次およびmanual dispatch（`suite=backend-performance`）のp95回帰チェック
 
 ---
 
