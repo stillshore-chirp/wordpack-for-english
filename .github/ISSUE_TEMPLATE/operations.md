@@ -1,7 +1,7 @@
 ---
-name: 運用・本番調査
+name: Operations / Production Investigation
 about: Cloud Run、Firebase、Firestore、外部API、運用環境の調査
-title: "[運用] "
+title: "[Ops]: "
 ---
 
 ## 事象・依頼内容

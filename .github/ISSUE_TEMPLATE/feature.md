@@ -1,7 +1,7 @@
 ---
-name: 機能・改善
+name: Feature / Improvement
 about: 新機能、UI/UX改善、設計変更、ドキュメント整備、ガバナンス変更
-title: "[改善] "
+title: "[Feature]: "
 labels: enhancement
 ---
 
