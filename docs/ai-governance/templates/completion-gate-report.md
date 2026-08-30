@@ -8,6 +8,48 @@
 - P0 / P1 / P2:
 - 判定理由:
 
+## 配送snapshotとgate ledger
+
+### 現在のcheckpointとsnapshot
+
+- current checkpoint:
+- implementation snapshot（HEAD / base、変更path、入力閉包、条件）:
+- measurement snapshot（HEAD / base、測定scope、条件）:
+- publication snapshot（公開対象、安全性確認）:
+- external delivery snapshot（CI、review / thread、mergeability）:
+
+### stable evidence / volatile delivery state
+
+- stable evidence（HEAD / base、path、関連設定、生成物、実行条件、結果、artifact参照）:
+- volatile delivery state（CI、review / thread、mergeability、待機中status）:
+
+### Gate ledger
+
+| gate | checkpoint / snapshot（HEAD / base） | input closure（path / config / artifact / conditions） | stable evidence | volatile delivery state | result / artifact | invalidation reason / reacquire scope |
+|---|---|---|---|---|---|---|
+|  |  |  |  |  |  |  |
+
+### 自己参照と計測
+
+- self-reference検出結果:
+- 検出時の分離gateまたは明示したmeasurement scope:
+- report annotationをmeasurement evidenceへ混入させない扱い:
+
+### 同条件 Before / After
+
+change type、snapshot、runner、実行条件を固定して比較します。tokenは実telemetryを取得した場合だけ記録し、推定値は観測値として扱いません。
+
+| phase | gate実行数 | wall-clock | status照会数 | output bytes | token telemetry（observed only） |
+|---|---:|---:|---:|---:|---|
+| Before |  |  |  |  |  |
+| After |  |  |  |  |  |
+
+### Review fixの扱い
+
+- P0 / P1、security、secret、data integrity、受入証跡の矛盾によるblockingと対応:
+- P2-only finding / 公開文言の調整、review予算、包括reviewを追加しない条件:
+- fix後に入力閉包と交差して再取得したgate、その理由:
+
 ## 変更scope（UI変更レビューで差分がある場合）
 <!-- agent-harness:uiux-completion-scope:start -->
 

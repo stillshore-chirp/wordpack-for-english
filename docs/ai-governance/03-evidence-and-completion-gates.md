@@ -122,7 +122,24 @@ Issue / PR template、repository Markdown、workflowの入力・説明などで�
 
 GitHubが所有し、リポジトリが変更していないlayout、keyboard、focus、loading、permission stateへ、アプリ本体UIと同じstate matrixやaccessibility証跡を要求しません。GitHub共同作業面だけの変更では、アプリ本体UI用のscreenshotやruntime / dev serverを要求せず、owner / PID / process group / port / readiness / cleanupの実行記録も不要です。screenshotまたはpreviewは、リポジトリが制御する視覚構成・操作が実質的に変わる場合、受け入れ条件に含まれる場合、または明示依頼がある場合に限り追加します。
 
-## 7. 完了ゲート
+## 7. 配送checkpointと代表scenario
+
+配送は `implementation → focused_verification → code_freeze → measurement → publication_freeze → external_gate → review_fix → accepted` の順に進めます。高コストgateは、snapshot、測定scope、公開境界、再取得条件と入力閉包を固定した後に、変更種別に対応するgate mapから選びます。HEADの変更だけで全gateを失効させず、path・関連設定・生成物・実行条件と交差するgateだけを再取得します。
+
+stable evidence（HEAD / base、変更path、入力閉包、条件、結果、artifact参照）と、volatile delivery state（CI、review / thread、mergeability、待機中status）は分けて記録します。測定artifact自身が入力になる場合は、report annotationを別gateへ分離するか測定scopeから明示的に除外します。P0 / P1、security、secret、data integrity、受入証跡の矛盾は即時blockingとし、P2-only findingと公開文言の調整はreview予算内で扱います。
+
+次の表は、自然言語のexact matchを機械契約にするものではなく、代表的な判断入力を構造的に比較するためのものです。
+
+| scenario | checkpoint / focused gate | high-cost / external gate | invalidation reason | reacquire scope |
+|---|---|---|---|---|
+| 文書・governance | `code_freeze`; Markdown / link / 公開安全性 / `validate_governance` | `publication_freeze`; closureが必要とするgovernance gate | owned doc、関連設定・生成物、条件の交差 | 交差したgovernance検証と公開証跡だけ |
+| UI | `focused_verification`; 対象component・state・a11y・flow証跡 | `code_freeze`後、選択されたPlaywright / visual / full UI gate | surface、shared token、runtime条件、screenshot入力の変更 | 影響surfaceのgateとcurrent-run証跡だけ |
+| backend / API | `focused_verification`; contract / 対象pytest | closureが交差する場合のbackend full / coverage | API・schema・設定・生成物・runtime条件の変更 | 影響するcontract / backend closureだけ |
+| workflow | `focused_verification`; contract・YAML・`base...head`分類 | latest Actions / required CI とmergeability | workflow、classifier、trigger、設定、base依存入力の変更 | workflow contractとbase依存の外部gateだけ |
+
+Before / Afterの計測は、同じchange type、snapshot、runner、実行条件でgate実行数、wall-clock、status照会数、output bytesを比較します。tokenは実telemetryを取得した場合だけ観測値として記録し、推定値を観測値へ格上げしません。
+
+## 8. 完了ゲート
 
 ### 共通
 
@@ -178,7 +195,7 @@ PRをマージ可能な状態として報告する場合は、次を満たしま
 
 ソースコード変更でコードレビューが提供されない場合、代替自己レビューは補助証跡に限り、マージ可能状態の代替にしません。同じheadでclean reviewを複数回集める必要はありません。指摘対応でheadが変わった場合だけ、CIと該当reviewを再確認します。mergeまたはcloseは別の明示指示がある場合だけ行います。
 
-## 8. 推奨検証
+## 9. 推奨検証
 
 環境と変更範囲に応じて選びます。
 
@@ -195,6 +212,6 @@ PRをマージ可能な状態として報告する場合は、次を満たしま
 
 利用できない検証は、存在しない成果物として捏造せず、理由と残るリスクを報告します。
 
-## 9. 報告
+## 10. 報告
 
 `templates/completion-gate-report.md` を使うか、同等の情報をPR本文へ記録します。空の項目を定型的なN/Aで埋めるより、今回の対象面と未確認範囲が明確な報告を優先します。
