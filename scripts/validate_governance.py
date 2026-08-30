@@ -198,10 +198,21 @@ def _task_paths_overlap(left: str, right: str) -> bool:
     Intersecting two independent glob languages needs a solver.  Until one is
     available, treating glob/glob pairs as overlapping keeps the validator
     fail-closed while preserving the existing literal and literal/glob rules.
+    Non-canonical repository paths are also treated as overlapping so a second
+    spelling cannot evade the self-reference check.
     """
 
-    normalized = lambda value: value.strip().replace("\\", "/").lstrip("./")
-    left_path, right_path = normalized(left), normalized(right)
+    def canonical(value: str) -> str | None:
+        if value != value.strip() or value.startswith("/") or "\\" in value:
+            return None
+        parts = value.split("/")
+        if not value or any(part in {"", ".", ".."} for part in parts):
+            return None
+        return value
+
+    left_path, right_path = canonical(left), canonical(right)
+    if left_path is None or right_path is None:
+        return True
     glob_magic = frozenset("*?[")
     if any(char in glob_magic for char in left_path) and any(
         char in glob_magic for char in right_path

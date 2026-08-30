@@ -75,6 +75,24 @@ def test_task_state_accepts_non_overlapping_literal_paths(tmp_path: Path) -> Non
     validate_task_state(_write_state(tmp_path, state), tmp_path)
 
 
+@pytest.mark.parametrize(
+    "measurement_path,annotation_path",
+    [
+        ("docs/../docs/publication-report.md", "docs/publication-report.md"),
+        ("docs//publication-report.md", "docs/publication-report.md"),
+    ],
+)
+def test_task_state_rejects_noncanonical_self_reference_spellings(
+    tmp_path: Path, measurement_path: str, annotation_path: str
+) -> None:
+    state = _template()
+    state["measurement"]["input_paths"] = [measurement_path]
+    state["publication"]["annotation_paths"] = [annotation_path]
+
+    with pytest.raises(GovernanceError, match="self-reference"):
+        validate_task_state(_write_state(tmp_path, state), tmp_path)
+
+
 def test_task_state_keeps_measurement_evidence_for_publication_only_reacquire(
     tmp_path: Path,
 ) -> None:
