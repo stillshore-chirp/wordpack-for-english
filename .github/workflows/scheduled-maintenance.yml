@@ -1,0 +1,178 @@
+name: Scheduled maintenance
+
+on:
+  schedule:
+    # Run every maintenance suite once a week.
+    - cron: "0 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      suite:
+        description: "Select the maintenance suite to run"
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - codeql
+          - scorecard
+          - backend-performance
+          - playwright
+
+concurrency:
+  group: scheduled-maintenance-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    name: CodeQL (${{ matrix.language }})
+    if: ${{ github.event_name == 'schedule' || inputs.suite == 'all' || inputs.suite == 'codeql' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: javascript-typescript
+            build-mode: none
+          - language: python
+            build-mode: none
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          queries: +security-extended,security-and-quality
+      - name: Analyze with CodeQL
+        uses: github/codeql-action/analyze@v4
+        with:
+          category: "/language:${{ matrix.language }}"
+
+  scorecard:
+    name: OpenSSF Scorecard
+    if: ${{ github.event_name == 'schedule' || inputs.suite == 'all' || inputs.suite == 'scorecard' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Run OpenSSF Scorecard
+        uses: ossf/scorecard-action@v2.4.3
+        with:
+          results_file: scorecard-results.sarif
+          results_format: sarif
+          publish_results: false
+      - name: Upload Scorecard results
+        uses: actions/upload-artifact@v4
+        with:
+          name: openssf-scorecard-results
+          path: scorecard-results.sarif
+          retention-days: 30
+          if-no-files-found: error
+
+  backend_performance:
+    name: Backend p95 regression (pytest)
+    if: ${{ github.event_name == 'schedule' || inputs.suite == 'all' || inputs.suite == 'backend-performance' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      API_P95_THRESHOLD_MS: "2000"
+    strategy:
+      matrix:
+        python-version: ['3.14']
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Prepare test session secret
+        # Settings validation requires a per-run value; production secrets are not needed here.
+        run: |
+          python - <<'PY' >> "$GITHUB_ENV"
+          import secrets
+          print("SESSION_SECRET_KEY=" + secrets.token_hex(32))
+          PY
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install langgraph
+      - name: Run backend performance regression
+        env:
+          PYTHONPATH: apps/backend
+        run: pytest -q --no-cov tests/test_api_performance.py
+
+  playwright:
+    name: Playwright regression (Chromium)
+    if: ${{ github.event_name == 'schedule' || inputs.suite == 'all' || inputs.suite == 'playwright' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: |
+            apps/frontend/package-lock.json
+            package-lock.json
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.14'
+      - name: Install backend dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install langgraph
+      - name: Install frontend dependencies
+        working-directory: apps/frontend
+        run: npm ci
+      - name: Install root dependencies and browsers
+        run: |
+          npm ci
+          npx playwright install --with-deps
+      - name: Run Playwright full regression
+        run: npx playwright test -c tests/e2e/playwright.config.ts --browser=chromium
+      - name: Upload Playwright diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-nightly-artifacts
+          path: |
+            playwright-report/
+            test-results/
+          retention-days: 14
+          if-no-files-found: ignore

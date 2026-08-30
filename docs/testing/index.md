@@ -21,7 +21,7 @@ PRは `base...head` の変更pathだけを分類し、`main` pushは `--full` �
 | E2E smoke / visual、frontend共有runtime | classifierが選んだPlaywright job。smokeとvisualはclassifier直後に並行開始 |
 | すべてのCI実行 | `security_text_scan`。最後にstable `quality_gate` がclassifierの選択と各jobのresultを照合 |
 
-独立したCodeQLは `main` push、weekly schedule、manual dispatchに限定します。全Playwright回帰はweekly scheduleとmanual dispatchの `playwright-nightly.yml` で実行します。dependency reviewは既存のdependency関連path filterを維持し、Dependency Graph取得失敗をfail-closedにします。
+独立したCodeQL、OpenSSF Scorecard、backend performance、全Playwright回帰は、weekly scheduleとmanual dispatchの `scheduled-maintenance.yml` に統合しています。scheduleは4 suiteを実行し、manual dispatchは `suite`（`all` / `codeql` / `scorecard` / `backend-performance` / `playwright`）で選択したsuiteだけを実行します。dependency reviewは既存のdependency関連path filterを維持し、PRのdependency-bearing path（package manifest/lock、requirements、pyproject/poetry、Dockerfile、dependabot等）がある時だけDependency Graph probe/actionを実行します。workflow-only変更ではprobe/actionをskipしてjobを成功させ、changed-path判定の失敗はfail-closedにします。
 
 ## ローカルでよく使うコマンド
 
@@ -32,8 +32,8 @@ PRは `base...head` の変更pathだけを分類し、`main` pushは `--full` �
 | Backend architecture | `PYTHONPATH=apps/backend pytest -q --no-cov tests/backend/test_architecture_boundaries.py` | 禁止importとruntime直呼び出しを検査 |
 | Frontend PR相当 | `cd apps/frontend && npm test -- --no-coverage --silent` | Vitestのみ。typecheckは `npx tsc -p tsconfig.json` |
 | Frontend main相当 | `cd apps/frontend && npm test -- --coverage --silent` | coverage付きVitest |
-| Workflow / classifier contract | `python -m pytest -q --no-cov tests/test_github_actions_branch_policy.py tests/test_verification_inputs.py` | workflow条件、gate入力閉包、出力interface |
-| Workflow YAML parse | `python3 -c 'import pathlib,yaml; [yaml.safe_load(p.read_text(encoding="utf-8")) for p in pathlib.Path(".github/workflows").glob("*.y*ml")]'` | 全workflowの構文を確認 |
+| Workflow / classifier contract | `python -m pytest -q --no-cov tests/test_github_actions_branch_policy.py tests/test_verification_inputs.py tests/test_scheduled_maintenance_workflow.py` | workflow条件、scheduled maintenanceのsuite選択、gate入力閉包、出力interface |
+| Workflow YAML parse | `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/scheduled-maintenance.yml", encoding="utf-8"))'` | このlaneのowned workflowだけ構文を確認 |
 | Gate-input classification（PR） | `python3 scripts/classify_verification_inputs.py --base "$BASE_SHA" --head "$HEAD_SHA"` | `base...head` の9 gate booleanと `classification_ok` を確認 |
 | Gate-input classification（main） | `python3 scripts/classify_verification_inputs.py --full` | full profileの選択を確認 |
 | Governance static check | `python3 scripts/validate_governance.py` | 正本、Skill、adapter、frontmatter、link、budgetを確認 |
