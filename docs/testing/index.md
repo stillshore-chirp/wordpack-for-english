@@ -16,8 +16,7 @@
 | Workflow YAML parse | `python3 -c 'import pathlib,yaml; [yaml.safe_load(p.read_text(encoding="utf-8")) for p in pathlib.Path(".github/workflows").glob("*.y*ml")]'` | 変更workflowの構文を確認。意味上の条件はcontract testで確認 |
 | Gate-input classification | `python3 scripts/classify_verification_inputs.py --base "$BASE_SHA" --head "$HEAD_SHA"` | gate入力閉包の `base...head` 差分を確認。判定不能時は広いgateへfallbackし理由を残す |
 | UI-test classification | `python3 scripts/classify_ui_test_changes.py --base "$BASE_SHA" --head "$HEAD_SHA"` | UI test選択の `base...head` 差分を確認。判定不能時は安全側へfallbackする |
-| Agent-harness full gate | `bash scripts/verify-agent-harness.sh` | agent-harnessだけの変更で選択。AI governance gateに含まれる場合は重複実行しない |
-| AI governance full gate | `bash scripts/verify-ai-governance.sh` | UI governanceを含む最上位gate。内包するagent-harness gateは別途実行しない |
+| Governance static check | `python3 scripts/validate_governance.py` | 正本、Skill、adapter、frontmatter、重要link、instruction budgetを確認 |
 | LLMOps offline report | `python3 scripts/llmops/offline_report.py --json-output /tmp/llmops.json --markdown-output /tmp/llmops.md` | 外部 request 0件の fixture 契約検査。詳細は [LLMOps evaluation](../llmops/evaluation.md) |
 | Frontend architecture boundaries | `node ./scripts/check_frontend_architecture_boundaries.mjs` | page / feature layer の API transport 直参照と legacy fetcher import を検査 |
 | Backend p95 | `API_P95_THRESHOLD_MS=1500 PYTHONPATH=apps/backend pytest -q --no-cov tests/test_api_performance.py` | [backend-performance.md](./backend-performance.md) |
@@ -51,7 +50,7 @@ firebase emulators:exec --only firestore --project wordpack-ci --config firebase
 |---|---|---|
 | `.github/workflows/**`、`scripts/classify_ui_test_changes.py`、workflow/classifierのcontract test | contract test、変更workflowのYAML parse、`base...head` classification | latest Actions。backend application / Firestore / frontend runtimeに影響しない限りbackend full pytestや無関係なPlaywrightは選ばない |
 | workflow未変更のreview fix（docs、classifier test、Skillなど） | 変更pathに対応するfocused test | 既存YAML証跡は保持し、変更workflowがないため再parseしない |
-| `.agents/**`、`AGENTS.md`、`docs/agent-harness.md`、`docs/ai-governance/**`、`scripts/verify-*` | `git diff --check`、必要なfrontmatter / marker検査 | 変更範囲に応じてagent-harnessまたはAI governanceの最上位full gate |
+| `.agents/**`、`AGENTS.md`、`docs/agent-harness.md`、`docs/ai-governance/**`、governance script | `git diff --check`、`python3 scripts/validate_governance.py` | 変更範囲に対応する静的な正本・参照・budget検査 |
 | `apps/backend/backend/**`、Firestore/API設定・契約 | 対象pytestを `--no-cov` で実行。architecture / security境界は該当時に追加 | Firestore Emulator付きbackend full gate。frontend runtimeを変えない限りPlaywrightは不要 |
 | `apps/frontend/src/**`、frontend設定・依存、hook / UI state | typecheckと対象Vitest | classifierに従うPlaywright smoke / visual、必要ならcoverage付きVitest |
 | `tests/e2e/**`、主要導線、表示・レイアウト | 対象Playwrightまたは関連Vitest | 変更内容に対応するsmoke / visual。無関係なsuiteは選ばない |

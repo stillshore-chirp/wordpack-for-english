@@ -173,9 +173,8 @@ PRをマージ可能な状態として報告する場合は、次を満たしま
 - latest meaningful changeに対するGitHub上で確認可能な自動または人間のコードレビューがcleanである。
 - actionableな未解決review threadがない。
 - GitHubのmergeabilityがcleanで、conflictやblocking conditionがない。
-- review decision recordと停止条件は [`docs/agent-harness.md`](../agent-harness.md) の正本を参照し、terminalなfocused reviewを完了条件へ反映する。
-- lane livenessとfocused review terminalの状態遷移、compact terminal receipt、指定scope完了の判定は [`docs/agent-harness.md`](../agent-harness.md) を参照する。
-- 高コストのfull gate finalizationはfocused review terminalの後に1回だけ行い、同一input closure・execution conditionsで成功したgateは既存evidenceを再利用する。
+- 停止条件、委任、evidence packageは [`docs/agent-harness.md`](../agent-harness.md) の共通契約を参照する。
+- 同一input closure・execution conditionsで成功したgateは既存evidenceを再利用し、closureを構成する変更があった場合だけ再取得する。
 
 ソースコード変更でコードレビューが提供されない場合、代替自己レビューは補助証跡に限り、マージ可能状態の代替にしません。同じheadでclean reviewを複数回集める必要はありません。指摘対応でheadが変わった場合だけ、CIと該当reviewを再確認します。mergeまたはcloseは別の明示指示がある場合だけ行います。
 

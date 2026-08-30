@@ -18,6 +18,7 @@
 
 | 文書 | 責務 |
 |---|---|
+| [`../agent-harness.md`](../agent-harness.md) | 3製品のrule接続、委任、証跡再利用、instruction budget |
 | `01-agent-operating-contract.md` | UI/UX作業の基本契約と証跡の考え方 |
 | `02-uiux-review-framework.md` | 対象面、品質定義、P0/P1/P2、レビュー観点 |
 | `03-evidence-and-completion-gates.md` | 対象面別の証跡と完了条件 |

@@ -18,8 +18,6 @@
 - 同じ指示が競合する場合は、より対象範囲が狭く、現在の作業に具体的な指示を採用し、解消できない競合は実装前に明示します。
 
 ## 作業の進め方
-<!-- agent-harness:workflow:start -->
-
 1. 依頼の目的、完了条件、非対象を確認します。
 2. 現在のコード、設定、テスト、文書、履歴を確認し、記憶や一般論だけで判断しません。
    影響範囲が非自明なコード改修では、実装前に `docs/agent-harness.md` の「変更影響調査の入口」を確認します。
@@ -32,7 +30,6 @@
 限定されたタスクは、調査だけ、実装だけ、PR作成だけで恣意的に分断しません。権限、秘密情報、外部サービス障害などの真の blocker がある場合だけ、安全な整合点で止め、確認済み事実、未完了範囲、次の最短アクションを示します。
 
 委任、control plane、evidence package、review収束は [`docs/agent-harness.md`](docs/agent-harness.md)、配送順序、gate選択、証跡失効は [GitHub配送Skill](.agents/skills/github-delivery/SKILL.md) を正本とし、ここへ詳細を複製しません。
-<!-- agent-harness:workflow:end -->
 
 ## ソースコード変更の配送契約
 

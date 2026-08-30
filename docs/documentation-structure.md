@@ -76,7 +76,7 @@ READMEには短い要約とlinkだけを置き、詳細は該当文書を正本�
 - `AGENTS.md`、Skill、詳細docs、tool adapterで同じ長文を正本化しない。
 - rootは常時必要な共通核、nested ruleはpath固有差分、Skillはtaskの実行順序、詳細docsは判定基準を持つ。
 - `.claude/`と`.cursor/`は正本への接続だけを行い、新しい品質基準を持たない。
-- 機械判定できる形式・上限・参照は`verify-agent-harness.sh`へ置く。
+- 機械判定できる形式・上限・参照は`scripts/validate_governance.py`へ置く。
 - 配置判断の詳細は`docs/agent-harness.md`に従う。
 
 ## 一般的な重複管理

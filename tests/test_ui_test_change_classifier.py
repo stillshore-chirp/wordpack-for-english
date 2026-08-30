@@ -105,16 +105,15 @@ def test_classify_paths_combines_independent_changes() -> None:
     ) == UiTestScope(playwright_smoke=True, playwright_visual=True)
 
 
-def test_issue_619_governance_only_paths_skip_ui_tests() -> None:
+def test_governance_only_paths_skip_ui_tests() -> None:
     assert classify_paths(
         [
             ".agents/skills/github-delivery/SKILL.md",
-            ".github/workflows/agent-harness.yml",
             "AGENTS.md",
             "docs/agent-harness.md",
             "docs/ai-governance/13-maintenance-policy.md",
             "scripts/classify_verification_inputs.py",
-            "scripts/verify-agent-harness.sh",
+            "scripts/validate_governance.py",
             "tests/test_verification_inputs.py",
         ]
     ) == UiTestScope(playwright_smoke=False, playwright_visual=False)

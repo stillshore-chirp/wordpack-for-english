@@ -55,7 +55,7 @@ description: "ソースコード変更とIssue、branch、commit、push、PR、C
 
 - latest headに紐づく対象branchのCIを確認し、成功後はlatest-head review、未解決thread、mergeabilityも確認する。失敗時は原因を特定し、修正、commit、push、再確認する。
 - 開発中とreview修正中は変更pathに対応するfocused testを使い、最終HEAD確定前にfull gateを機械的に繰り返さない。
-- 配送対象の最終HEADでは、変更範囲に必要な包含関係上の最上位full gateをそれぞれ原則1回実行する。独立領域は各gate、包含関係は内包側だけを選ぶ。UIガバナンス変更は `scripts/verify-ai-governance.sh`、agent-harnessだけの変更は `scripts/verify-agent-harness.sh` を選び、前者が後者を内包するため同じsnapshotで重ねない。stacked PRは親merge後にbase統合、最上位gate、latest HEAD reviewを各1回確認する。
+- 配送対象の最終HEADでは、変更範囲に必要な検証を入力閉包へ束縛して一度実行する。ガバナンス変更では `python3 scripts/validate_governance.py` を使い、同じsnapshot・条件の検査を重ねない。stacked PRは親merge後にbase統合、必要な検証、latest HEAD reviewを確認する。
 - workflowまたはpath classifierを変更した場合は、変更pathに対応するcontract test、変更workflowのYAML parse、`base...head` classification、latest Actionsを選択する。backend application / Firestore / frontend runtimeに影響しない場合、backend full pytestや無関係なPlaywrightを追加しない。workflow未変更のreview fixでは、既存のYAML証跡を保持する。
 - gateの入力閉包は、変更path、関連設定、生成物、実行条件の集合とする。`gate / HEAD・base / input closure / conditions / result / artifact reference` をcompact ledgerへ記録し、失効時は `invalidation reason / reacquire scope`、判定不能時は `fallback reason` を残す。laneとevidence packageのschemaは [`docs/agent-harness.md`](../../../docs/agent-harness.md) を正本とする。
 - 同じHEAD・入力閉包・条件で成功したgateは再実行しない。新commitだけではlocal full gateを一括失効させず、閉包と交差する変更だけを失効させる。閉包が同じ証跡を後続HEADで再利用する場合は、由来HEADと新しいHEADをledgerへ併記する。
