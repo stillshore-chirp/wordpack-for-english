@@ -6,6 +6,15 @@ import re
 import yaml
 
 
+_FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_EXTERNAL_ACTION_RE = re.compile(
+    r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[^@\s]+)?@(?P<ref>[^@\s]+)$"
+)
+_VERSION_COMMENT_RE = re.compile(
+    r"(?:^|\s)#\s*v\d+(?:\.\d+){0,2}(?:[-+][0-9A-Za-z.-]+)?(?:\s|$)"
+)
+
+
 def _read_text(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
@@ -28,6 +37,92 @@ def _assert_contains_all(text: str, needles: list[str]) -> None:
 def _assert_contains_none(text: str, needles: list[str]) -> None:
     present = [n for n in needles if n in text]
     assert not present, f"Found forbidden snippets: {present}"
+
+
+def _iter_step_uses_lines(yml: str) -> list[tuple[object, str]]:
+    """Return step-level YAML ``uses`` keys, not reusable workflows or run text."""
+    root = yaml.compose(yml, Loader=yaml.SafeLoader)
+    assert root is not None
+    lines = yml.splitlines()
+    references: list[tuple[object, str]] = []
+    active_nodes: set[int] = set()
+
+    def visit(node: yaml.Node, context: str = "root") -> None:
+        node_id = id(node)
+        if node_id in active_nodes:
+            return
+        active_nodes.add(node_id)
+        if isinstance(node, yaml.MappingNode):
+            for key, value in node.value:
+                key_name = key.value if isinstance(key, yaml.ScalarNode) else None
+                if (
+                    context == "step"
+                    and isinstance(key, yaml.ScalarNode)
+                    and key.value == "uses"
+                ):
+                    references.append(
+                        (
+                            value.value
+                            if isinstance(value, yaml.ScalarNode)
+                            else None,
+                            lines[key.start_mark.line],
+                        )
+                    )
+                child_context = "other"
+                if context == "root" and key_name == "jobs":
+                    child_context = "jobs"
+                elif context == "jobs" and isinstance(value, yaml.MappingNode):
+                    child_context = "job"
+                elif (
+                    context == "job"
+                    and key_name == "steps"
+                    and isinstance(value, yaml.SequenceNode)
+                ):
+                    child_context = "steps"
+                visit(value, child_context)
+        elif isinstance(node, yaml.SequenceNode):
+            for item in node.value:
+                visit(item, "step" if context == "steps" else "other")
+        active_nodes.remove(node_id)
+
+    visit(root)
+    return references
+
+
+def _classify_step_uses_reference(value: object) -> str:
+    if not isinstance(value, str):
+        return "unknown"
+    if value.startswith(("./", "../")):
+        return "local"
+    if value.startswith("docker://"):
+        return "docker"
+    target = value.rsplit("@", 1)[0]
+    if "/.github/workflows/" in target:
+        return "unknown"
+    if _EXTERNAL_ACTION_RE.fullmatch(value) is not None:
+        return "external"
+    return "unknown"
+
+
+def _external_action_pin_violations(yml: str) -> list[str]:
+    violations: list[str] = []
+    for value, source_line in _iter_step_uses_lines(yml):
+        reference_kind = _classify_step_uses_reference(value)
+        if reference_kind in {"local", "docker"}:
+            continue
+        if reference_kind == "unknown":
+            display_value = value if isinstance(value, str) else "<non-scalar>"
+            violations.append(
+                f"{display_value}: unsupported step-level uses reference"
+            )
+            continue
+        assert isinstance(value, str)
+        ref = value.rsplit("@", 1)[1]
+        if _FULL_SHA_RE.fullmatch(ref) is None:
+            violations.append(f"{value}: full lowercase SHA required")
+        if _VERSION_COMMENT_RE.search(source_line) is None:
+            violations.append(f"{value}: inline version comment required")
+    return violations
 
 
 def _extract_on_block(yml: str) -> str:
@@ -107,7 +202,7 @@ def test_ci_selects_runtime_gates_and_keeps_security_in_backend_suite() -> None:
             "python scripts/validate_governance.py",
             "workflow_contract:",
             "dependency_review:",
-            "actions/dependency-review-action@v5.0.0",
+            "uses: actions/dependency-review-action@",
             "Dependency graph is unavailable",
             "DEPENDENCY_SELECTED:",
             "DEPENDENCY_SELECTED: ${{ github.event_name == 'pull_request' && needs.verification_scope.outputs.dependency_review == 'true' }}",
@@ -169,7 +264,14 @@ def test_codeql_is_scheduled_and_manual_only() -> None:
     on_block = _extract_on_block(yml)
     _assert_contains_all(on_block, ["schedule:", "workflow_dispatch:", "suite:"])
     _assert_contains_none(on_block, ["push:", "pull_request:", "workflow_run:"])
-    _assert_contains_all(yml, ["  codeql:", "github/codeql-action/init@v4", "github/codeql-action/analyze@v4"])
+    _assert_contains_all(
+        yml,
+        [
+            "  codeql:",
+            "uses: github/codeql-action/init@",
+            "uses: github/codeql-action/analyze@",
+        ],
+    )
 
 
 def test_full_playwright_is_weekly_manual_with_failure_artifacts() -> None:
@@ -193,10 +295,12 @@ def test_dependency_review_is_ci_only_and_fails_closed_when_graph_is_unavailable
             "gh api \"repos/${GITHUB_REPOSITORY}/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}\"",
             "Dependency graph is unavailable",
             "exit 1",
-            "uses: actions/dependency-review-action@v5.0.0",
+            "uses: actions/dependency-review-action@",
         ],
     )
-    assert ci.count("uses: actions/dependency-review-action@v5.0.0") == 1
+    assert ci.count(
+        "uses: actions/dependency-review-action@"
+    ) == 1
 
 
 def test_only_ci_is_an_automatic_pull_request_workflow_and_allowlist_is_bounded() -> None:
@@ -220,7 +324,7 @@ def test_backend_ci_runs_production_314_coverage_and_main_313_compatibility() ->
         [
             "name: Backend tests (Python 3.14 + coverage)",
             "python-version: '3.14'",
-            "actions/setup-java@v5",
+            "uses: actions/setup-java@",
             "distribution: temurin",
             "java-version: '21'",
             "firebase emulators:exec",
@@ -362,7 +466,7 @@ def test_deploy_production_uses_api_based_hosting_deploy() -> None:
     _assert_contains_all(
         yml,
         [
-            "google-github-actions/auth@v2",
+            "uses: google-github-actions/auth@",
             "credentials_json: ${{ secrets.GCP_SA_KEY }}",
             "create_credentials_file: true",
             "export_environment_variables: true",
@@ -399,7 +503,7 @@ def test_production_deploy_preflight_is_scheduled_or_manual_read_only() -> None:
             "--probe-only",
             "gcloud auth print-access-token --quiet >/dev/null",
             "pageSize=0",
-            "google-github-actions/auth@v2",
+            "uses: google-github-actions/auth@",
             "scripts/deploy_firebase_hosting.py",
         ],
     )
@@ -410,6 +514,117 @@ def test_production_deploy_preflight_is_scheduled_or_manual_read_only() -> None:
             "firebase deploy --only hosting",
             "pageSize=1",
         ],
+    )
+
+
+def test_external_step_actions_are_full_sha_pinned_and_version_documented() -> None:
+    violations: list[str] = []
+    for path in sorted(Path(".github/workflows").glob("*.y*ml")):
+        violations.extend(
+            f"{path}: {violation}"
+            for violation in _external_action_pin_violations(
+                path.read_text(encoding="utf-8")
+            )
+        )
+    assert not violations, "\n".join(violations)
+
+
+def test_action_pin_contract_ignores_local_docker_container_reusable_and_run_text() -> None:
+    workflow = """
+name: synthetic
+'on': workflow_dispatch
+jobs:
+  reusable:
+    uses: acme/workflows/.github/workflows/reusable.yml@main
+  local-reusable:
+    uses: ./.github/workflows/reusable.yml
+  build:
+    container: ubuntu:24.04
+    services:
+      database:
+        image: postgres:16
+    steps:
+      - uses: ./local-action
+      - uses: ../local-action
+      - uses: docker://alpine:3.20
+      - run: |
+          uses: example/fake-action@main
+      - uses: example/action@main
+      - uses: example/pinned-action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v4
+        with:
+          uses: example/input-value@main
+"""
+
+    violations = _external_action_pin_violations(workflow)
+    assert len(violations) == 2
+    assert all("example/action@main" in violation for violation in violations)
+
+
+def test_action_pin_contract_accepts_lowercase_sha_and_short_or_full_version_comment() -> None:
+    workflow = """
+name: synthetic
+'on': workflow_dispatch
+jobs:
+  build:
+    steps:
+      - uses: example/action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v4
+      - uses: example/other@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb # v5.0.0
+"""
+
+    assert _external_action_pin_violations(workflow) == []
+
+
+def test_action_pin_contract_rejects_tags_short_long_uppercase_and_missing_comments() -> None:
+    short_sha = "a" * 39
+    long_sha = "b" * 41
+    uppercase_sha = "A" * 40
+    valid_sha = "c" * 40
+    workflow = f"""
+name: synthetic
+'on': workflow_dispatch
+jobs:
+  build:
+    steps:
+      - uses: example/tag@v4 # v4
+      - uses: example/short@{short_sha} # v4
+      - uses: example/long@{long_sha} # v4
+      - uses: example/uppercase@{uppercase_sha} # v4
+      - uses: example/no-comment@{valid_sha}
+"""
+
+    violations = _external_action_pin_violations(workflow)
+    assert len(violations) == 5
+    assert sum("full lowercase SHA required" in violation for violation in violations) == 4
+    assert sum("inline version comment required" in violation for violation in violations) == 1
+    for reference in (
+        "example/tag@v4",
+        f"example/short@{short_sha}",
+        f"example/long@{long_sha}",
+        f"example/uppercase@{uppercase_sha}",
+        f"example/no-comment@{valid_sha}",
+    ):
+        assert any(reference in violation for violation in violations)
+
+
+def test_action_pin_contract_fails_closed_for_unknown_step_references() -> None:
+    workflow = """
+name: synthetic
+'on': workflow_dispatch
+jobs:
+  build:
+    steps:
+      - uses: example/action
+      - uses: https://example.test/action@main
+      - uses: example/reusable/.github/workflows/reuse.yml@main
+      - uses: ${{ inputs.action }}
+      - uses: [example, action]
+"""
+
+    violations = _external_action_pin_violations(workflow)
+    assert len(violations) == 5
+    assert all(
+        "unsupported step-level uses reference" in violation
+        for violation in violations
     )
 
 
