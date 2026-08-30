@@ -340,6 +340,27 @@ def test_deleted_legacy_classifier_paths_are_known_non_ui_migrations() -> None:
         assert plan.categories == ("legacy_migration",)
 
 
+def test_deleted_live_only_paths_are_known_non_runtime_migrations() -> None:
+    for path in (
+        "evals/cases/live_smoke.json",
+        "scripts/llmops/estimate_run.py",
+        "scripts/llmops/live_eval.py",
+    ):
+        plan = classify_paths([path])
+
+        assert plan.classification_ok is True
+        assert plan.backend is False
+        assert plan.frontend is False
+        assert plan.backend_container is False
+        assert plan.deploy_preflight is False
+        assert plan.governance is False
+        assert plan.workflow_contract is False
+        assert plan.dependency_review is False
+        assert plan.playwright_smoke is False
+        assert plan.playwright_visual is False
+        assert plan.categories == ("legacy_migration",)
+
+
 def test_deleted_visual_workflow_uses_generic_workflow_contract() -> None:
     plan = classify_paths([".github/workflows/playwright-visual.yml"])
 

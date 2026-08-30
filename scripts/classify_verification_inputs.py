@@ -147,6 +147,11 @@ LEGACY_MIGRATION_FILES = {
     "scripts/classify_ui_test_changes.py",
     "tests/test_ui_test_change_classifier.py",
 }
+LEGACY_NON_RUNTIME_FILES = {
+    "evals/cases/live_smoke.json",
+    "scripts/llmops/estimate_run.py",
+    "scripts/llmops/live_eval.py",
+}
 HARNESS_PREFIXES = (".agents/", ".claude/", ".cursor/")
 HARNESS_FILES = {
     "AGENTS.md",
@@ -304,6 +309,12 @@ PATH_RULES: tuple[PathRule, ...] = (
         "workflow_contract",
         gates={"workflow_contract"},
         exact=LEGACY_MIGRATION_FILES,
+    ),
+    _rule(
+        "legacy_live_only_non_runtime",
+        "legacy_migration",
+        "non_runtime",
+        exact=LEGACY_NON_RUNTIME_FILES,
     ),
     _rule(
         "backend_pytest_config",
