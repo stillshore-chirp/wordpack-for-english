@@ -166,11 +166,10 @@ flowchart LR
 | **Backend tests** | push / PR | `PYTHONPATH=apps/backend` で `pytest` を実行し、`pytest.ini` の `addopts` に揃えた `apps/backend/backend` のカバレッジが 60% 以上であることを検証 |
 | **Security headers tests** | push / PR | セキュリティヘッダー検証（HSTS, CSP, etc.） |
 | **Frontend tests** | push / PR | `vitest --coverage` によるフロントエンドテストと、lines/statements 80%、branches 70%、functions 66% のカバレッジ閾値チェック（functions は段階的に 70%→75%→80% へ引き上げ予定） |
-| **Playwright smoke** | `pull_request`（主要導線に影響する変更かつBackend / Frontendテスト成功後）/ `main` push | Playwright の主要導線スモークテスト（`auth.spec.ts` / `guest.spec.ts` / `wordpack-server-query.spec.ts` / `wordpack.spec.ts`）。文書やtest-only変更はPRでskipし、mainへのpushではデプロイ前提として常に実行 |
-| **Visual regression** | `pull_request`（描画に影響し得る変更のみ） | frontend runtime source、visual test／snapshot、関連するbuild・依存設定が変わった場合にPlaywrightの視覚回帰 (`tests/e2e/visual.spec.ts`) を実行。frontendのtest-only・型宣言だけの変更はskip |
-| **UI test selection gate** | push / PR | changed path分類、Backend／Frontend、選択されたPlaywright smokeの結果を集約し、前提失敗によるsmoke skipを成功扱いにしない |
-| **Visual test selection gate** | `pull_request` | changed path分類と選択されたVisual Regressionの結果を集約し、分類失敗や予期しないskipを成功扱いにしない |
-| **Cloud Run config guard** | Security headers 成功後 | デプロイスクリプトの lint と dry-run 検証 |
+| **Playwright smoke** | 中央classifierが選択した push / PR | 選択時だけ主要導線スモーク（`auth.spec.ts` / `guest.spec.ts` / `wordpack-server-query.spec.ts` / `wordpack.spec.ts`）を実行。前提失敗や予期しないskipは `Quality gate` で失敗扱い |
+| **Visual regression** | 中央classifierが選択した push / PR | 選択時だけ `tests/e2e/visual.spec.ts` を実行。分類失敗や予期しないskipは `Quality gate` で失敗扱い |
+| **Quality gate** | push / PR | 中央classifierの結果と、選択されたBackend／Frontend／deploy／Playwright smoke・visual等の結果を集約し、未選択jobの予期しない実行も含めてfail-closed |
+| **Static deploy preflight** | 中央classifierが選択したpush / PR、およびmain push | `deploy_preflight` がデプロイスクリプトのshellcheckとCloud Run dry-runを実行 |
 | **Production deploy preflight** | schedule / `workflow_dispatch`（main refのみ） | 信頼済み main code で gcloud、Firestore、Firebase Hosting の read-only probe。credential 欠如は fail-closed |
 | **Deploy to production** | `CI` `workflow_run`（success / push / main / 同一SHA）または `workflow_dispatch`（target SHA必須） | GitHub APIでCI成功を照合し、対象SHAへcheckoutして `make release-cloud-run` と Firebase Hosting deploy を実行。PRでは本番デプロイ job を作らない |
 
@@ -180,19 +179,19 @@ CD のチェック表示は GitHub Actions に集約する。`workflow_run` は�
 
 ### E2E 実行レイヤ（Playwright）
 
-Playwright の E2E は実行レイヤごとにスコープとブラウザを分離する。PR では最短のスモークのみを CI に含め、フル回帰は必要時に手動実行（workflow_dispatch）で起動する専用ワークフローで扱う。
+Playwright の E2E は実行レイヤごとにスコープとブラウザを分離する。CI の中央classifier（`scripts/classify_verification_inputs.py`）が変更範囲から smoke と visual の選択を決め、選択されたjobだけを実行する。フル回帰は週次または手動の専用workflowで扱う。
 
 | レイヤ | トリガー | ブラウザ | 実行コマンド | 成果物 |
 |---|---|---|---|---|
-| PR スモーク | `pull_request`（主要導線に影響する変更時） | Chromium | `npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/auth.spec.ts tests/e2e/guest.spec.ts tests/e2e/wordpack-server-query.spec.ts tests/e2e/wordpack.spec.ts` | `playwright-report/`, `test-results/` |
-| PR ビジュアル回帰 | `pull_request`（描画に影響する変更時） | Chromium | `npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/visual.spec.ts` | `playwright-report/`, `test-results/` |
+| 選択時スモーク | 中央classifierが選択した push / PR | Chromium | `npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/auth.spec.ts tests/e2e/guest.spec.ts tests/e2e/wordpack-server-query.spec.ts tests/e2e/wordpack.spec.ts` | failure時のみ `playwright-report/`, `test-results/` |
+| 選択時ビジュアル回帰 | 中央classifierが選択した push / PR | Chromium | `npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/visual.spec.ts` | failure時のみ `playwright-report/`, `test-results/` |
 | 手動回帰 | `workflow_dispatch` | Chromium | `npx playwright test -c tests/e2e/playwright.config.ts --browser=chromium` | `playwright-report/`, `test-results/` |
 
-各レイヤの実行前に `npx playwright install --with-deps` を実行してブラウザを取得する。成果物は GitHub Actions の Artifacts として 90 日保持する。ビジュアル回帰の差分画像や HTML レポートは対象ワークフローの実行画面から `playwright-report/` と `test-results/` をダウンロードして確認する。
+各レイヤの実行前に `npx playwright install --with-deps` を実行してブラウザを取得する。smoke／visual／週次回帰の成果物は failure 時だけ GitHub Actions Artifacts へ保存し、保持期間は 14 日とする。ビジュアル回帰の差分画像や HTML レポートは対象workflowの実行画面から確認する。
 
-PRの変更path分類は `scripts/classify_ui_test_changes.py` を正本とする。Playwright workflow自体は全PRで起動し、対象外の重いjobだけをjob条件でskipするため、required checkに設定された場合もworkflow-level path filterによるpendingを残さない。文書、ガバナンス、test-onlyなど既知の非UI pathだけを明示的にskipし、未分類pathは見逃しを避けてsmokeとvisualの両方を起動する。runtime source、user-visible backend、E2E本体、依存・build設定は保守的に対象へ含める。
+PRとpushの変更path分類は `scripts/classify_verification_inputs.py` に集約する。CI workflowは常に分類を実行し、対象jobを選択的に起動する。`Quality gate` はclassifier失敗、選択jobの失敗、前提失敗によるskipを成功扱いにしない。main pushでは `--full` の分類によりデプロイ前提の検証を選択する。
 
-branch rulesでUIテストをrequiredにする場合は、条件付きのPlaywright job単体ではなく `UI test selection gate` と `Visual test selection gate` を対象にする。各selection gateは、テスト対象外の明示的skipだけを許容し、classifier・依存job・選択されたPlaywright jobの失敗を集約して失敗として報告する。
+branch rulesで選択検証をrequiredにする場合は、個別のPlaywright jobではなく `Quality gate` を対象にする。Quality gateがclassifierと選択されたsmoke／visualを含む全選択結果を集約し、対象外だけを明示的skipとして許容する。
 
 ---
 
