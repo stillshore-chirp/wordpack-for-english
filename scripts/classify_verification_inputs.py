@@ -108,6 +108,7 @@ GATE_INPUTS = {
             "scripts/measure_effective_instruction_budget.py",
             "scripts/security_scan_text.py",
             "tests/test_agent_harness_budget.py",
+            "tests/test_governance_task_state.py",
         ),
         ("requirements-agent-harness.txt",),
         ("governance summary",),
@@ -174,6 +175,7 @@ HARNESS_FILES = {
     "tests/test_agent_harness_budget.py",
 }
 AI_GOVERNANCE_FILES = {
+    "docs/ai-governance/templates/task-state.json",
     "requirements-agent-harness.txt",
     "scripts/validate_governance.py",
     "scripts/validate_agent_frontmatter.py",
@@ -195,6 +197,7 @@ DEPLOY_TEST_FILES = {
 }
 DEPLOY_WORKFLOW_TEST_FILES = {"tests/test_deploy_workflow_safety.py"}
 GOVERNANCE_TEST_FILES = {
+    "tests/test_governance_task_state.py",
     "tests/test_public_docs_security.py",
     "tests/test_security_scan_text.py",
 }

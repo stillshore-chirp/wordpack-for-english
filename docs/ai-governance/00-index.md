@@ -48,6 +48,7 @@
 - `templates/trust-satisfaction-review.md`
 - `templates/completion-gate-report.md`
 - `templates/agent-task-prompt.md`
+- [`templates/task-state.json`](templates/task-state.json)
 
 ## チェックリスト
 

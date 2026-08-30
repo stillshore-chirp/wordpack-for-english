@@ -1,64 +1,55 @@
 # エージェントハーネス設計・保守ガイド
 
-この文書は、Codex、Claude Code、Cursorで共有するエージェントルールの配置と、委任・証跡の最小契約を定めます。文面は人間向けの説明であり、機械検査の入力にはしません。
+この文書は、Codex、Claude Code、Cursorで共有する、正本の読者・配置、委任、evidence、task-stateの最小契約です。説明文であり、機械検査や製品runtimeの代替ではありません。
 
-## 正本と接続
+## 正本、読者、責務
 
-| 層 | 正本 | 役割 |
+| 正本 | 主な読者 | 責務 |
 |---|---|---|
-| 共通核 | `AGENTS.md`、`CLAUDE.md` | 全作業の安全境界と入口 |
-| path固有 | 最寄りの`AGENTS.md` | frontend、backend、operationsの契約 |
-| task固有 | `.agents/skills/<name>/SKILL.md` | 作業種類ごとの手順 |
-| 詳細基準 | `docs/ai-governance/` | UI/UX、Issue、証跡の判定 |
-| adapter | `.claude/`、`.cursor/` | 正本へ接続する短い製品固有設定 |
-| 機械検査 | `scripts/validate_governance.py` | 形式、参照、budget、重要リンク |
+| `AGENTS.md`、最寄りの`AGENTS.md` | 3製品 | hard gate、権限境界、path契約、最小実行 |
+| `CLAUDE.md`、`.claude/rules/`、`.claude/skills/`、`.cursor/rules/` | Claude Code / Cursor | 正本へ到達する製品固有router |
+| `.agents/skills/<name>/SKILL.md` | 3製品 | task固有の発動条件、手順、handoff |
+| `docs/ai-governance/` | agent、reviewer | UI/UX、Issue、evidenceの判定基準 |
+| この文書 | agent、reviewer、保守者 | source/readers、委任、evidence、task-state、runtime境界 |
+| `scripts/validate_governance.py` | CI、保守者 | 形式、存在、参照、budgetのstatic検査 |
 
-`CLAUDE.md`は`@AGENTS.md`だけをimportします。Claude CodeとCursorのadapterは適用範囲と読む正本だけを示し、共通契約を複製しません。task SkillはCodex、Claude Code、Cursorで同じ`.agents/skills/`を正本にします。
+Codexはrootと最寄りの`AGENTS.md`、該当Skillを読みます。Claude Codeは`CLAUDE.md`からrootへimportし、path ruleとSkill adapterで同じ正本へ接続します。Cursorはrootと`alwaysApply: false`のMDC routerから接続します。adapterは本文を複製せず、失敗しても共通hard gateを弱めません。
 
-自動判定できる形式、存在、参照、上限は`validate_governance.py`へ置きます。判断が必要な品質基準は正本に短く書き、製品固有のruntime挙動やtoken telemetryをrepositoryの検査で代用しません。
+## 読み分けと変更影響
 
-## 変更の進め方
-
-目的、受け入れ条件、非対象、現在のHEADとbase、変更path、検証方法を先に確認します。影響範囲が明らかに局所的でないコード変更は、利用可能な影響分析または参照追跡を入口にします。取得できない場合は理由を残して実コード、契約、関連testへフォールバックします。
-
-実装、検証、文書更新を完了し、実施していない確認と残るriskを分けて報告します。ソースコード変更はGitHub配送SkillのIssue、branch、commit、PR、CI、review、mergeability契約に従います。merge、close、release、deploy、破壊的操作には対象を特定した別の明示指示が必要です。
-
-### 変更影響調査の入口
-
-ロジック、共有処理、API、型、データ契約、複数レイヤーを変える場合は、利用可能な影響分析または参照追跡を使い、実コード・契約・関連testで候補を確認します。分析が使えない場合は理由を記録し、同じ確認を手動で行います。
+- 全体の安全境界と権限はroot、path固有の契約は最寄りの`AGENTS.md`、task手順はSkillに置きます。
+- 設計判断のheuristicは [`docs/agent-principles.md`](agent-principles.md)、ruleの追加・変更・削除基準は [`docs/ai-governance/13-maintenance-policy.md`](ai-governance/13-maintenance-policy.md)を読みます。
+- logic、共有処理、API、型、data契約、複数layerを変える場合は、参照追跡または影響分析を入口にし、実code・契約・関連testで候補を確認します。利用できなければ理由を残して手動確認します。
 
 ## 委任契約
 
-委任は、他作業と重ならない専門riskをbounded laneへ分けるために使います。委任時に次を固定します。
+委任は、他作業と重ならない専門riskをbounded laneへ分けるために使います。依頼時に `risk lane`、owner、target HEAD / base、target paths、受け入れ条件、`depends_on`、`snapshot_phase`、write ownership、runtime resources、ports、cleanup、`output_cap`、completion、verification、`reuse_evidence`、`invalidation_condition`を固定します。
 
-- risk lane、owner、target HEAD / base、target paths、受け入れ条件
-- `depends_on`、`snapshot_phase`、write ownership、runtime resources、ports、cleanup
-- `output_cap`、completion、verification、`reuse_evidence`、`invalidation_condition`
+同一PR・同一risk laneの監査は原則一回とし、completed laneはscope、結論、検証、未確認範囲、残るrisk、snapshot/diff、artifact参照を含む短いevidence packageだけを返します。
 
-同一PR・同一risk laneの監査は原則一回とし、同じ状態の結果を根拠なく再取得しません。completed laneはscope、結論、検証、未確認範囲、残るrisk、snapshotまたはdiff、artifact参照を含む短いevidence packageだけを返します。
+## task-state route
 
-進展のないlaneでは固定timeout回数で失敗判定しません。checkpoint前のtimeoutは状態変化とみなさず、通知またはbackoff付きre-waitでownerを維持します。checkpointを逃した時だけ、同じownerへ一度boundedなpartial resultを求めます。継続が不明ならscopeを縮小し、縮小後も進展がなければ再割当します。first failureだけでprimaryへ回収しません。
+- Cross-session task-stateのfield sourceは [`docs/ai-governance/templates/task-state.json`](ai-governance/templates/task-state.json) だけとし、この文書はresumeの振る舞いだけを定めます。field名と型はtemplateから読みます。
+- resume時は現在のsnapshotとclosureを確認し、条件が一致するcompleted evidenceをartifact referenceで再利用して、remaining workから開始します。完了済みの長い出力は再取得しません。
+- timeoutは失敗・状態変化・evidence失効ではなく、laneは`running`のままbackoff付きで再待機します。
+- checkpointを逃した時だけ同じownerへ一度partial resultを求め、進展がなければscope shrink、縮小後も進展がなければreassignします。first failureだけでprimaryへ回収しません。
+- `partial` / `unverified`は未確認範囲と再開条件を保持します。`complete`は受け入れ条件と必要gateを満たした場合だけ、`blocked`は権限・外部状態などの真の停止理由がある場合だけ使います。
+- primaryが分離可能な作業を直接行う場合は、理由、subagent不能の証拠、scope shrink履歴、reassignment履歴、primary-only question、target paths、output capを記録します。
 
-分離可能な作業をprimaryが直接行う場合は、次の7項目だけを記録します。
+## evidenceと再利用
 
-`specific_reason`、`evidence_subagent_cannot_continue`、`scope_shrink_history`、`reassignment_history`、`primary_only_question`、`target_paths`、`output_cap`
+gate evidenceは、実際に読むinput paths、関連設定、生成物、実行条件、HEAD / base、結果、artifact参照を一つのinput closureへ束縛します。成功証拠はsnapshot、closure、条件が同じ場合だけ再利用し、変化したclosureだけを失効・再取得します。
 
-## 証跡と再利用
+task-stateはcross-sessionの現在状態、completed evidence packageは一回のlane結果の要約であり、別の記録です。`status=blocked`の停止理由はtask-stateの`risks_blockers.blockers`へ保持します。
 
-gateのevidenceは、実際に読む`input paths`、関連設定、生成物、実行条件、HEAD / base、結果、artifact参照を一つのinput closureへ束縛します。成功した証拠は、snapshot、closure、条件が同じなら再利用できます。snapshotが異なる場合はsourceとtarget、間のdiffがclosureに交差しないこと、baseと条件が不変であることを確認します。
+completed packageは、status、scope / revision、verification、unperformed checks、remaining risks、stop reason、snapshot/diff、artifact referenceを分離します。raw logやfile全文を通常報告へ含めません。
 
-closureを構成するpath、設定、生成物、条件、base依存が変わったgateだけを失効させ、理由と再取得範囲を記録します。HEADが変わっただけで全gateを一括失効させません。長時間検証はexit code、pass / fail / skip、coverage総計、warning、失敗箇所、artifact参照に絞り、raw logやfile全文を通常の報告へ含めません。
+## runtimeとadvisoryの境界
 
-## runtime resource
+runtime/dev serverを使うlaneは、起動前にowner、PID、process group、port、readiness、cleanupを必須項目として計画し、起動後にPIDを記録します。成功、正常停止、失敗、割込みのいずれでもprocess groupを終了し、port解放を確認し、結果を記録します。owner、readiness、cleanupのいずれかが不明な実行は完了evidenceに使いません。runtimeを使わない場合もその旨を記録します。
 
-runtimeまたはdev serverを使うlaneは、起動前にowner、PID、process group、port、readiness確認、cleanup責任を固定します。終了・停止・失敗時にprocess groupの終了とport解放を確認し、証跡へ残します。owner不明、port衝突、readiness未確認、cleanup未確認の実行は完了根拠にしません。runtimeを使わない場合は、使用しなかったことだけを記録します。
+`validate_governance.py`はstaticな形式・参照・budget検査です。製品version、rule発見、sandbox、権限、runtime routing、Hookのcontext注入やcontext pruningを保証しません。configured、observed、unverifiedを分け、static PASSをruntime成功と表現しません。
 
-## instruction budgetとSkill Evaluation
+## budgetと完了
 
-root、nested rule、adapter、Skillの上限とroot + nested `AGENTS.md`の合計上限は`validate_governance.py`が検査します。計測値はsource-sizeのestimateであり、製品のobserved usageではありません。Skill Evaluationはfrontmatter、trigger、参照、責務重複、budget、syntheticな代表設定をstaticに確認します。認証、費用、隔離workspace、外部runnerが確定しないlive benchmarkは実行せず、static結果をlive成功と表現しません。
-
-## 完了条件
-
-正本へ到達でき、adapterが本文を複製せず、重要リンクが解決し、budgetを満たし、実行した検証と未確認範囲が報告されている状態を完了候補とします。検証失敗、未確認の重要条件、公開安全性の問題、未解決の配送条件がある場合は、その状態を明記します。
-
-各製品のversion、rule発見、sandbox、権限、runtime routing、context pruningはrepositoryの静的検査だけでは保証できません。製品固有の差は、製品名、version、実行形態、再現pathを分けて記録します。
+root、nested、adapter、canonical Skillの上限はvalidatorが検査します。source-sizeのestimateを製品のobserved token usageと混同しません。正本へ到達でき、adapterが本文を複製せず、重要linkとbudgetを満たし、実行済み検証と未確認範囲を報告できる状態を完了候補とします。失敗中の検証、未確認の重要条件、公開安全性または配送条件の問題は明記します。

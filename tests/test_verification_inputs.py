@@ -494,6 +494,22 @@ def test_governance_evidence_plan_separates_harness_and_ai_governance() -> None:
     assert governance.governance is True
 
 
+def test_task_state_template_and_test_route_to_governance() -> None:
+    plan = classify_paths(
+        [
+            "docs/ai-governance/templates/task-state.json",
+            "tests/test_governance_task_state.py",
+        ]
+    )
+
+    assert plan.classification_ok is True
+    assert plan.governance is True
+    assert plan.backend is False
+    assert plan.frontend is False
+    assert plan.invalidated_gates == (AI_GOVERNANCE_FULL,)
+    assert {item.category for item in plan.path_classifications} == {"governance"}
+
+
 def test_backend_evidence_plan_keeps_backend_full_separate() -> None:
     plan = classify_paths(["apps/backend/backend/main.py"])
 

@@ -453,6 +453,14 @@ jobs:
       - name: Validate governance
         run: python scripts/validate_governance.py
 
+      - name: Run governance contract tests
+        run: |
+          python -m pytest -q --no-cov \
+            tests/test_agent_harness_budget.py \
+            tests/test_governance_task_state.py \
+            tests/test_public_docs_security.py \
+            tests/test_security_scan_text.py
+
   workflow_contract:
     name: Workflow contract tests
     runs-on: ubuntu-latest
