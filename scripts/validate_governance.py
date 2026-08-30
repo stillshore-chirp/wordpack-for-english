@@ -326,7 +326,7 @@ def required_string(data: dict[str, Any], key: str, path: Path, root: Path) -> N
         fail(f"{rel(path, root)} frontmatter {key} must be a non-empty string")
 
 
-def validate_frontmatter(path: Path, root: Path) -> None:
+def validate_frontmatter(path: Path, root: Path) -> dict[str, Any]:
     data = load_frontmatter(path, root)
     try:
         parts = path.relative_to(root).parts
@@ -351,16 +351,19 @@ def validate_frontmatter(path: Path, root: Path) -> None:
             fail(f"{rel(path, root)} frontmatter alwaysApply must be false")
     else:
         fail(f"cannot infer frontmatter kind for {rel(path, root)}")
+    return data
 
 
-def markdown_targets(path: Path, root: Path) -> Iterable[Path]:
+def markdown_targets(
+    path: Path, root: Path, *, include_images: bool = True
+) -> Iterable[Path]:
     for token in MarkdownIt("commonmark").parse(text(path)):
         if token.type != "inline":
             continue
         for child in token.children or []:
             if child.type == "link_open":
                 raw = child.attrGet("href")
-            elif child.type == "image":
+            elif include_images and child.type == "image":
                 raw = child.attrGet("src")
             else:
                 continue
@@ -375,6 +378,33 @@ def markdown_targets(path: Path, root: Path) -> Iterable[Path]:
             except ValueError:
                 fail(f"{rel(path, root)} link escapes repository: {parsed.path}")
             yield candidate
+
+
+def _collect_skill_identities(
+    paths: Iterable[Path], root: Path, kind: str, budget_kind: str
+) -> dict[str, Path]:
+    records: list[tuple[Path, str]] = []
+    for path in paths:
+        budget(path, root, budget_kind)
+        data = validate_frontmatter(path, root)
+        records.append((path, data["name"]))
+
+    identities: dict[str, Path] = {}
+    for path, name in records:
+        if name in identities:
+            fail(
+                f"duplicate {kind} frontmatter name {name!r}: "
+                f"{rel(identities[name], root)} and {rel(path, root)}"
+            )
+        identities[name] = path
+
+    for path, name in records:
+        if name != path.parent.name:
+            fail(
+                f"{rel(path, root)} frontmatter name must match its directory: "
+                f"{name!r} != {path.parent.name!r}"
+            )
+    return identities
 
 
 def validate_links(paths: Iterable[Path], root: Path) -> None:
@@ -402,18 +432,30 @@ def validate_skills(root: Path, routers: list[Path]) -> tuple[int, int, int]:
     adapters = sorted((root / ".claude/skills").glob("*/SKILL.md"))
     if not canonical:
         fail("no canonical task Skills found")
-    if {path.parent.name for path in canonical} != {path.parent.name for path in adapters}:
-        fail("canonical Skills and Claude adapters must have the same names")
-    targets = {candidate for router in routers for candidate in markdown_targets(router, root)}
+    canonical_identities = _collect_skill_identities(canonical, root, "canonical Skill", "skill")
+    adapter_identities = _collect_skill_identities(adapters, root, "Claude adapter", "adapter")
+    if set(canonical_identities) != set(adapter_identities):
+        missing = sorted(set(canonical_identities) - set(adapter_identities))
+        orphan = sorted(set(adapter_identities) - set(canonical_identities))
+        details = []
+        if missing:
+            details.append(f"missing adapters: {', '.join(missing)}")
+        if orphan:
+            details.append(f"orphan adapters: {', '.join(orphan)}")
+        suffix = f": {'; '.join(details)}" if details else ""
+        fail(f"canonical Skills and Claude adapters must have the same names{suffix}")
+    targets = {
+        candidate
+        for router in routers
+        for candidate in markdown_targets(router, root, include_images=False)
+    }
     for skill in canonical:
-        budget(skill, root, "skill")
-        validate_frontmatter(skill, root)
         if skill.resolve() not in targets:
             fail(f"an AGENTS.md must link to {rel(skill, root)}")
-        adapter = root / ".claude/skills" / skill.parent.name / "SKILL.md"
-        budget(adapter, root, "adapter")
-        validate_frontmatter(adapter, root)
-        if skill.resolve() not in set(markdown_targets(adapter, root)):
+        adapter = adapter_identities[skill.parent.name]
+        if skill.resolve() not in set(
+            markdown_targets(adapter, root, include_images=False)
+        ):
             fail(f"{rel(adapter, root)} must link to {rel(skill, root)}")
     return len(canonical), len(adapters), len(routers)
 

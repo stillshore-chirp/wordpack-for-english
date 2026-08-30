@@ -238,6 +238,7 @@ def test_governance_job_runs_contract_tests_after_validation() -> None:
     for test_path in (
         "tests/test_agent_harness_budget.py",
         "tests/test_governance_task_state.py",
+        "tests/test_validate_governance.py",
         "tests/test_public_docs_security.py",
         "tests/test_security_scan_text.py",
     ):

@@ -458,6 +458,7 @@ jobs:
           python -m pytest -q --no-cov \
             tests/test_agent_harness_budget.py \
             tests/test_governance_task_state.py \
+            tests/test_validate_governance.py \
             tests/test_public_docs_security.py \
             tests/test_security_scan_text.py
 

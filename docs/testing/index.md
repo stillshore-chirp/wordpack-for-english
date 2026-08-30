@@ -16,7 +16,7 @@ PRは `base...head` の変更pathだけを分類し、`main` pushは `--full` �
 | frontend runtime / 設定 / 依存 | typecheck + Vitest。PRと`develop`はno coverage、`main` pushはcoverage |
 | container定義 | `backend_container`。該当変更と`main` pushで実行 |
 | deploy script / Cloud Run設定 | static `deploy_preflight`。該当変更と`main` pushで実行 |
-| agent / governance / `docs/testing/index.md` | `python scripts/validate_governance.py` の後に `python -m pytest -q --no-cov tests/test_agent_harness_budget.py tests/test_governance_task_state.py tests/test_public_docs_security.py tests/test_security_scan_text.py` |
+| agent / governance / `docs/testing/index.md` | `python scripts/validate_governance.py` の後に `python -m pytest -q --no-cov tests/test_agent_harness_budget.py tests/test_governance_task_state.py tests/test_validate_governance.py tests/test_public_docs_security.py tests/test_security_scan_text.py` |
 | workflow / classifier / workflow contract test | `workflow_contract` とYAML parseのcontract |
 | E2E smoke / visual、frontend共有runtime | classifierが選んだPlaywright job。smokeとvisualはclassifier直後に並行開始 |
 | すべてのCI実行 | `security_text_scan`。最後にstable `quality_gate` がclassifierの選択と各jobのresultを照合 |
@@ -36,7 +36,7 @@ PRは `base...head` の変更pathだけを分類し、`main` pushは `--full` �
 | Workflow YAML parse | `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/scheduled-maintenance.yml", encoding="utf-8"))'` | このlaneのowned workflowだけ構文を確認 |
 | Gate-input classification（PR） | `python3 scripts/classify_verification_inputs.py --base "$BASE_SHA" --head "$HEAD_SHA"` | `base...head` の10 gate booleanと `classification_ok` を確認 |
 | Gate-input classification（main） | `python3 scripts/classify_verification_inputs.py --full` | full profileの選択を確認 |
-| Governance static + contract check | `python3 scripts/validate_governance.py && python -m pytest -q --no-cov tests/test_agent_harness_budget.py tests/test_governance_task_state.py tests/test_public_docs_security.py tests/test_security_scan_text.py` | 正本、Skill、adapter、frontmatter、link、budget、公開テキストとtask-stateを確認 |
+| Governance static + contract check | `python3 scripts/validate_governance.py && python -m pytest -q --no-cov tests/test_agent_harness_budget.py tests/test_governance_task_state.py tests/test_validate_governance.py tests/test_public_docs_security.py tests/test_security_scan_text.py` | 正本、Skill、adapter、frontmatter、link、budget、公開テキストとtask-stateを確認 |
 
 Firestore Emulator付きbackend CIはJava 21を使います。Playwright、Docker、全suiteの実行はCIの選択jobに委ね、このlaneのローカル検証では起動しません。
 
