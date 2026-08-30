@@ -14,6 +14,7 @@ from scripts.classify_verification_inputs import (
     BASE_HEAD_CLASSIFICATION,
     FOCUSED_CONTRACT,
     GATE_INPUTS,
+    HARNESS_FILES,
     LATEST_ACTIONS,
     WORKFLOW_CONTRACT,
     WORKFLOW_YAML_EVIDENCE,
@@ -84,6 +85,25 @@ def test_canonical_classifier_and_contract_inputs_invalidate_agent_harness() -> 
         LATEST_ACTIONS,
     }
     assert plan.retained_evidence == (WORKFLOW_YAML_EVIDENCE,)
+
+
+def test_code_review_graph_policy_inputs_are_harness_closure_only() -> None:
+    paths = [
+        "scripts/validate_code_review_graph_policy.py",
+        "tests/fixtures/agent-harness/code-review-graph-policy.json",
+        "tests/test_code_review_graph_policy.py",
+    ]
+
+    plan = classify_paths(paths)
+
+    assert set(paths) <= HARNESS_FILES
+    assert set(paths) <= set(GATE_INPUTS[AGENT_HARNESS_FULL].paths)
+    assert set(paths) <= set(GATE_INPUTS[AI_GOVERNANCE_FULL].paths)
+    assert plan.invalidated_gates == (AGENT_HARNESS_FULL,)
+    assert plan.selected_checks == ()
+    assert plan.retained_evidence == (WORKFLOW_YAML_EVIDENCE,)
+    assert plan.fallback_reason is None
+    assert plan.unknown_path_count == 0
 
 
 def test_workflow_unmodified_review_fix_retains_yaml_evidence() -> None:
