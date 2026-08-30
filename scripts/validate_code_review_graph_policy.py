@@ -120,7 +120,7 @@ def _visible_section_text(document: str) -> str:
     end = len(tokens)
     for index in range(start, len(tokens)):
         token = tokens[index]
-        if token.type == "heading_open" and token.level == 0 and token.tag in {"h1", "h2"}:
+        if token.type == "heading_open" and token.level == 0 and token.tag in {"h1", "h2", "h3"}:
             end = index
             break
 

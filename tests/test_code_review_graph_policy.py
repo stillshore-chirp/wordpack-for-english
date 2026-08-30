@@ -43,6 +43,16 @@ def test_policy_document_rejects_hidden_or_fenced_section(wrapper: str) -> None:
         validate_document(hidden)
 
 
+def test_policy_document_rejects_peer_h3_before_required_policy() -> None:
+    source = DOCUMENT.read_text(encoding="utf-8")
+    heading_end = source.index("\n", source.index("### 変更影響調査の入口")) + 1
+    peer_heading = "\n### Peer policy section\n\n"
+    with_peer_heading = source[:heading_end] + peer_heading + source[heading_end:]
+
+    with pytest.raises(PolicyValidationError, match="visible policy text"):
+        validate_document(with_peer_heading)
+
+
 @pytest.mark.parametrize(
     ("case_id", "mutation", "message"),
     (
