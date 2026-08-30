@@ -48,19 +48,21 @@ def test_governance_only_is_governance_without_runtime_gates() -> None:
     assert set(plan.categories) == {"governance", "skill"}
 
 
-def test_backend_runtime_and_tests_are_backend_only() -> None:
-    plan = classify_paths(
-        ["apps/backend/backend/main.py", "tests/backend/test_health.py"]
-    )
+def test_backend_runtime_and_tests_keep_container_boundary() -> None:
+    runtime = classify_paths(["apps/backend/backend/main.py"])
+    test_only = classify_paths(["tests/backend/test_health.py"])
 
-    assert plan.classification_ok is True
-    assert plan.backend is True
-    assert plan.frontend is False
-    assert plan.backend_container is False
-    assert plan.deploy_preflight is False
-    assert plan.playwright_smoke is False
-    assert plan.playwright_visual is False
-    assert set(plan.categories) == {"backend_runtime", "backend_test"}
+    assert runtime.classification_ok is True
+    assert runtime.backend is True
+    assert runtime.backend_container is True
+    assert runtime.frontend is False
+    assert runtime.deploy_preflight is False
+    assert runtime.playwright_smoke is False
+    assert runtime.playwright_visual is False
+    assert runtime.categories == ("backend_runtime",)
+    assert test_only.backend is True
+    assert test_only.backend_container is False
+    assert test_only.categories == ("backend_test",)
 
 
 def test_frontend_unit_test_selects_frontend_only() -> None:
@@ -312,9 +314,15 @@ def test_deleted_visual_workflow_uses_generic_workflow_contract() -> None:
     plan = classify_paths([".github/workflows/playwright-visual.yml"])
 
     assert plan.classification_ok is True
-    assert plan.workflow_contract is True
-    assert plan.playwright_smoke is False
-    assert plan.playwright_visual is False
+    assert all(getattr(plan, field) is True for field in OUTPUT_FIELDS)
+    assert plan.categories == ("workflow",)
+
+
+def test_ci_workflow_change_selects_all_major_gates() -> None:
+    plan = classify_paths([".github/workflows/ci.yml"])
+
+    assert plan.classification_ok is True
+    assert all(getattr(plan, field) is True for field in OUTPUT_FIELDS)
     assert plan.categories == ("workflow",)
 
 

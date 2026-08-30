@@ -134,6 +134,18 @@ BACKEND_FILES = {
     "Dockerfile.backend",
 }
 WORKFLOW_PREFIX = ".github/workflows/"
+WORKFLOW_GATES = frozenset(
+    {
+        "backend",
+        "frontend",
+        "backend_container",
+        "deploy_preflight",
+        "governance",
+        "workflow_contract",
+        "playwright_smoke",
+        "playwright_visual",
+    }
+)
 WORKFLOW_CONTRACT_FILES = {
     "pytest.ini",
     "scripts/classify_verification_inputs.py",
@@ -271,28 +283,28 @@ PATH_RULES: tuple[PathRule, ...] = (
         "workflow_smoke",
         "workflow",
         "smoke_workflow",
-        gates={"workflow_contract", "playwright_smoke"},
+        gates=WORKFLOW_GATES,
         exact={".github/workflows/ci.yml"},
     ),
     _rule(
         "workflow_deploy",
         "workflow",
         "deploy_workflow",
-        gates={"workflow_contract", "deploy_preflight"},
+        gates=WORKFLOW_GATES,
         prefixes={".github/workflows/deploy"},
     ),
     _rule(
         "workflow_preflight",
         "workflow",
         "deploy_workflow",
-        gates={"workflow_contract", "deploy_preflight"},
+        gates=WORKFLOW_GATES,
         exact={".github/workflows/production-deploy-preflight.yml"},
     ),
     _rule(
         "workflow_other",
         "workflow",
         "workflow_contract",
-        gates={"workflow_contract"},
+        gates=WORKFLOW_GATES,
         prefixes={WORKFLOW_PREFIX},
     ),
     _rule(
@@ -608,7 +620,7 @@ def _classify_backend_path(path: str) -> PathClassification | None:
             "backend_runtime_root",
             "backend_runtime",
             "backend_runtime",
-            frozenset({"backend"}),
+            frozenset({"backend", "backend_container"}),
         )
     return None
 
