@@ -21,6 +21,31 @@ Codexはrootと最寄りの`AGENTS.md`、該当Skillを読みます。Claude Cod
 - 設計判断のheuristicは [`docs/agent-principles.md`](agent-principles.md)、ruleの追加・変更・削除基準は [`docs/ai-governance/13-maintenance-policy.md`](ai-governance/13-maintenance-policy.md)を読みます。
 - logic、共有処理、API、型、data契約、複数layerを変える場合は、参照追跡または影響分析を入口にし、実code・契約・関連testで候補を確認します。利用できなければ理由を残して手動確認します。
 
+## 配送stateとcheckpoint
+
+改修配送は、次のcheckpointを順に通過します。各checkpointで対象HEAD / base、入力閉包、owner、終了条件を固定し、高コストgateへ進む前に次の入力を変えない状態を作ります。対象面ごとのgate選択は [`docs/ai-governance/03-evidence-and-completion-gates.md`](ai-governance/03-evidence-and-completion-gates.md)、実行手順は GitHub配送Skillが所有します。
+
+1. `implementation`: scope、acceptance、非対象、owner、変更pathを確定する。
+2. `focused_verification`: 変更pathに対応する最小十分なtest・構造確認を実行し、未確認範囲を記録する。
+3. `code_freeze`: source、test、設定、生成物を固定し、変更path・関連設定・生成物・条件からgateの入力閉包を確定する。
+4. `measurement`: 固定したsnapshotと測定scopeでgate実行数、wall-clock、status照会数、出力bytesを記録する。
+5. `publication_freeze`: Issue、PR、report、artifactの公開内容と安全性を固定する。
+6. `external_gate`: 入力閉包が固定された状態で、必要なCI・review・thread確認を行う。
+7. `review_fix`: actionableな修正をまとめ、交差するgateだけを再取得して再びfreezeする。
+8. `accepted`: latest HEAD / base、CI、review、thread、mergeability、受入条件を同一snapshotで照合する。
+
+高コストgate（full suite、coverage、外部CI、包括reviewなど）の開始条件は、`code_freeze`、測定scope、公開境界、再取得条件が確定していることです。gateの回数を固定せず、変更種別と既存gate mapで選びます。
+
+## snapshot、evidence、delivery state
+
+implementation・measurement・publicationのsnapshotは、HEAD / base、変更path、関連設定、生成物、実行条件へ束縛したstable evidenceです。CIのpending / success、review・threadの状態、mergeability、時刻、待機中のstatusはvolatile delivery stateとして別に記録し、stable evidenceの入力へ混ぜません。base、path、設定、生成物、条件が閉包と交差した場合だけ該当gateを失効し、base依存の外部gateはbase変更時に再取得します。thread解決だけではstable gateを失効させません。
+
+gate ledgerは `gate / snapshot phase・HEAD・base / input paths / related config / generated artifacts / execution conditions / result / artifact reference` を持ち、失効時は `invalidation reason / reacquire scope` を追記します。判定不能時はskipせず、fallback理由と対象を残します。task-stateは現在状態、completion-gate reportは各gateの詳細台帳として分けます。
+
+測定artifact自身が検証入力になる場合は、測定snapshotの後に行うreport annotationを測定scopeから外して別gateへ分離するか、明示した測定scopeへ固定します。annotation後のreportを同じ測定結果の入力として扱いません。token量は実telemetryを取得した場合だけ観測値とし、source-size estimateを格上げしません。
+
+P0 / P1、security、secret、data integrity、受入証跡の矛盾は、コスト削減を理由に延期しません。P2-only findingと公開文言の調整は、既存のreview予算と限定された再確認条件に従い、不要な包括reviewへ拡張しません。
+
 ## 委任契約
 
 委任は、他作業と重ならない専門riskをbounded laneへ分けるために使います。依頼時に `risk lane`、owner、target HEAD / base、target paths、受け入れ条件、`depends_on`、`snapshot_phase`、write ownership、runtime resources、ports、cleanup、`output_cap`、completion、verification、`reuse_evidence`、`invalidation_condition`を固定します。
