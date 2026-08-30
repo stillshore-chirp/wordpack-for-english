@@ -155,6 +155,9 @@ LEGACY_NON_RUNTIME_FILES = {
     "evals/cases/live_smoke.json",
     "scripts/llmops/estimate_run.py",
     "scripts/llmops/live_eval.py",
+    "tests/fixtures/agent-harness/code-review-graph-policy.json",
+    "tests/fixtures/agent-harness/scenarios-invalid.json",
+    "tests/fixtures/agent-harness/scenarios.json",
 }
 HARNESS_PREFIXES = (".agents/", ".claude/", ".cursor/")
 HARNESS_FILES = {
@@ -855,7 +858,10 @@ def classify_path(path: str) -> PathClassification | None:
     # through to the generic tests/ rule and silently skip all gates.
     if path.startswith(FIXTURE_PREFIX):
         for rule in PATH_RULES:
-            if rule.rule_id.startswith("fixture_") and rule.matches(path):
+            if rule.matches(path) and (
+                rule.rule_id.startswith("fixture_")
+                or rule.rule_id == "legacy_live_only_non_runtime"
+            ):
                 return PathClassification(
                     path, rule.rule_id, rule.category, rule.risk, rule.gates
                 )

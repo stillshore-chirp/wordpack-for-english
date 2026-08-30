@@ -438,6 +438,9 @@ def test_deleted_live_only_paths_are_known_non_runtime_migrations() -> None:
         "evals/cases/live_smoke.json",
         "scripts/llmops/estimate_run.py",
         "scripts/llmops/live_eval.py",
+        "tests/fixtures/agent-harness/code-review-graph-policy.json",
+        "tests/fixtures/agent-harness/scenarios-invalid.json",
+        "tests/fixtures/agent-harness/scenarios.json",
     ):
         plan = classify_paths([path])
 
@@ -452,6 +455,7 @@ def test_deleted_live_only_paths_are_known_non_runtime_migrations() -> None:
         assert plan.playwright_smoke is False
         assert plan.playwright_visual is False
         assert plan.categories == ("legacy_migration",)
+        assert plan.risks == ("non_runtime",)
 
 
 def test_deleted_visual_workflow_uses_generic_workflow_contract() -> None:
