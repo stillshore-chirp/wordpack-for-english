@@ -11,6 +11,7 @@ def test_production_deploy_is_gated_by_a_successful_same_sha_ci_run() -> None:
     workflow = _read(".github/workflows/deploy-production.yml")
     verify = workflow[workflow.index("  verify-target:"): workflow.index("  deploy:")]
     deploy = workflow[workflow.index("  deploy:"):]
+    concurrency = workflow[workflow.index("concurrency:"): workflow.index("permissions:")]
 
     assert "workflow_run:" in workflow
     assert "- CI" in workflow
@@ -43,6 +44,11 @@ def test_production_deploy_is_gated_by_a_successful_same_sha_ci_run() -> None:
     assert "environment: production" in deploy
     assert "ref: ${{ needs.verify-target.outputs.target_sha }}" in deploy
     assert 'checked_out_sha="$(git rev-parse HEAD)"' in deploy
+    assert "group: deploy-production-${{ github.workflow }}" in concurrency
+    assert "head_sha" not in concurrency
+    assert "inputs." not in concurrency
+    assert "github.ref" not in concurrency
+    assert "cancel-in-progress: false" in concurrency
 
     deployment_docs = _read("docs/deployment.md")
     assert ".github/workflows/ci.yml" in deployment_docs

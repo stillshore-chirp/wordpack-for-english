@@ -205,6 +205,7 @@ firebase deploy --only hosting --project <firebase-project-id>
 - CI workflow identity は固定 path `.github/workflows/ci.yml` と、live repository の API で解決した immutable workflow ID `187172373` を照合します。同一runの詳細と jobs API で canonical `Quality gate`（現行表示名: `Quality gate (selected checks)`）の completed/success も確認します。workflowを再作成してIDが変わった場合は、この定数を明示的に更新してから再開します。
 - 手動の break-glass 実行は trusted `main` ref からのみ起動でき、必須入力 `target_sha` を受け取ります。completed状態の候補runをGitHub APIで取得し、同一 SHA の `CI` 成功・push・main runを1件確定した後、自動経路と同じrun詳細／Quality gate検証を通過してから `production` environment job へ進みます。
 - checkout は検証済み対象 SHA に固定し、checkout 後の `git rev-parse HEAD` との一致を assert します。
+- 自動／手動の全 production release は単一の stable concurrency group に入り、`cancel-in-progress=false` でFIFO待機します。candidate tag、traffic、rollback操作を異なるSHA間で並行させません。
 - PR では本番 deploy job を作りません。
 - Cloud Run は traffic 0% の候補作成、tag URL の health check、10% canary、60 秒の継続確認、100% 昇格の順に進みます。canary 失敗時は直前の traffic 配分へ自動復旧します。
 - Cloud Run の minimum instances は repository variable `CLOUD_RUN_MIN_INSTANCES` で上書きできます。未設定時は紹介用 URL の初回体験を優先して `1` を使います。費用優先へ戻す場合は `0` を設定します。

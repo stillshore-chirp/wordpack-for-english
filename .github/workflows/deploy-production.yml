@@ -14,7 +14,8 @@ on:
         type: string
 
 concurrency:
-  group: deploy-production-${{ github.workflow }}-${{ github.event.workflow_run.head_sha || inputs.target_sha || github.ref }}
+  # auto/manual を同じ単一キューへ入れ、candidate tag と traffic/rollback 操作を直列化する。
+  group: deploy-production-${{ github.workflow }}
   # canary 中断で traffic split を残さないよう、進行中の本番リリースは完走させて次を待機させる。
   cancel-in-progress: false
 
