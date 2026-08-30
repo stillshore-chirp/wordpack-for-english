@@ -244,7 +244,7 @@ firebase deploy --only firestore:indexes --project <firebase-project-id>
 
 ## OpenAI API / Langfuse で見るもの
 
-生成来歴、通常CIの無料評価、任意 Live Evaluation の全体手順は [docs/llmops/](docs/llmops/index.md) を参照する。production 既定では raw prompt / output を送らず、保存済み provenance の `request_id` / `workflow_id` / `trace_id`、`release` / `git_sha` / `cloud_run_revision`、`prompt_revision` を private log と相関する。
+生成来歴と通常CIの無料評価の全体手順は [docs/llmops/](docs/llmops/index.md) を参照する。production 既定では raw prompt / output を送らず、保存済み provenance の `request_id` / `workflow_id` / `trace_id`、`release` / `git_sha` / `cloud_run_revision`、`prompt_revision` を private log と相関する。
 
 OpenAI API は WordPack 新規生成、再生成、TTS の外部依存。アプリ単体の uptime が正常でも、ここが落ちると生成・音声読み上げだけが失敗する。
 
@@ -271,7 +271,6 @@ OpenAI API は WordPack 新規生成、再生成、TTS の外部依存。アプ�
 | ワークフロー | 目的 | 失敗時の見方 |
 |---|---|---|
 | `CI` | backend / frontend / security headers / Playwright smoke / Cloud Run dry-run | PR ではここが最低限の品質ゲート |
-| `Manual LLM live evaluation` | 手動 estimate または承認付き bounded live 評価 | 通常CI・deployの依存外。既定 estimate は外部 request 0件 |
 | `Backend performance regression` | `/healthz` と `/api/word/pack` の p95 回帰検知 | 週次または手動で latency regression を見る |
 | `Deploy to production` | `.env.deploy` 復元、設定検証、Cloud Run traffic 0% 候補、10% canary と自動 rollback、100% 昇格、Firebase Hosting deploy | 本番リリース失敗時の一次ログ。自動 rollback の成否も確認する |
 | Cloud Build | backend image build と GitHub Checks 連携 | Dockerfile / dependency / Artifact Registry 問題を確認 |
