@@ -27,6 +27,10 @@ TASK_STATE_TEMPLATE = "docs/ai-governance/templates/task-state.json"
 TASK_STATE_SCHEMA = "task-state/v1"
 TASK_STATE_STATUSES = frozenset({"planned", "running", "partial", "blocked", "complete"})
 TASK_STATE_RESULTS = frozenset({"pass", "fail", "partial", "unverified"})
+TASK_STATE_MAX_BYTES = 16_384
+TASK_STATE_MAX_ITEMS = 50
+TASK_STATE_MAX_STRING_LENGTH = 1_000
+TASK_STATE_MAX_SUMMARY_LENGTH = 500
 _TASK_STRING_LIST = ("list", "string", True)
 _TASK_REQUIRED_STRING_LIST = ("list", "string", False)
 TASK_STATE_SHAPE: dict[str, object] = {
@@ -40,7 +44,7 @@ TASK_STATE_SHAPE: dict[str, object] = {
         "list",
         {
             "gate": "string",
-            "summary": ("bounded", 500),
+            "summary": ("bounded", TASK_STATE_MAX_SUMMARY_LENGTH),
             "result": "string",
             "artifact_reference": "nullable_string",
         },
@@ -142,12 +146,15 @@ def _validate_task_state_shape(
     if shape == "string" or (isinstance(shape, tuple) and shape[0] == "bounded"):
         if not isinstance(value, str) or not value.strip():
             fail(f"{rel(path, root)} task-state {label} must be a non-empty string")
-        if isinstance(shape, tuple) and len(value) > shape[1]:
+        max_length = shape[1] if isinstance(shape, tuple) else TASK_STATE_MAX_STRING_LENGTH
+        if len(value) > max_length:
             fail(f"{rel(path, root)} task-state {label} exceeds bounded length")
         return
     if isinstance(shape, tuple) and shape[0] == "list":
         if not isinstance(value, list) or (not shape[2] and not value):
             fail(f"{rel(path, root)} task-state {label} must be a string list")
+        if len(value) > TASK_STATE_MAX_ITEMS:
+            fail(f"{rel(path, root)} task-state {label} exceeds item bound")
         for index, item in enumerate(value):
             _validate_task_state_shape(item, shape[1], f"{label}[{index}]", path, root)
         return
@@ -157,8 +164,11 @@ def _validate_task_state_shape(
 def validate_task_state(path: Path, root: Path = ROOT) -> None:
     """Validate one repository-owned, client-neutral task-state document."""
 
+    raw = text(path)
+    if len(raw.encode("utf-8")) > TASK_STATE_MAX_BYTES:
+        fail(f"{rel(path, root)} task-state exceeds UTF-8 size bound")
     try:
-        state = json.loads(text(path))
+        state = json.loads(raw)
     except json.JSONDecodeError as error:
         fail(f"{rel(path, root)} task-state is not valid JSON: {error.msg}")
     _validate_task_state_shape(state, TASK_STATE_SHAPE, "document", path, root)
@@ -166,6 +176,26 @@ def validate_task_state(path: Path, root: Path = ROOT) -> None:
         fail(f"{rel(path, root)} task-state has unknown schema: {state['schema']}")
     if state["status"] not in TASK_STATE_STATUSES:
         fail(f"{rel(path, root)} task-state has unknown status: {state['status']}")
+    if state["completed_evidence"]:
+        closure = state["input_closure"]
+        if not closure["paths"] or not closure["conditions"]:
+            fail(f"{rel(path, root)} completed evidence requires paths and conditions in input closure")
+        artifacts = closure["artifacts"]
+        for entry in state["completed_evidence"]:
+            reference = entry["artifact_reference"]
+            if reference is not None and reference not in artifacts:
+                fail(f"{rel(path, root)} completed evidence has an external artifact reference")
+    completed_gates = {entry["gate"] for entry in state["completed_evidence"]}
+    invalidated_gates = {entry["gate"] for entry in state["invalidated_gates"]}
+    if completed_gates & invalidated_gates:
+        fail(f"{rel(path, root)} a gate cannot be completed and invalidated")
+    blockers = state["risks_blockers"]["blockers"]
+    if state["status"] == "complete" and (
+        state["remaining_work"] or state["invalidated_gates"] or blockers
+    ):
+        fail(f"{rel(path, root)} complete task-state must have no remaining work, invalidated gates, or blockers")
+    if state["status"] == "blocked" and not blockers:
+        fail(f"{rel(path, root)} blocked task-state requires a blocker")
     for entry in state["completed_evidence"]:
         if entry["result"] not in TASK_STATE_RESULTS:
             fail(f"{rel(path, root)} task-state has unknown evidence result: {entry['result']}")

@@ -40,11 +40,13 @@ Codexはrootと最寄りの`AGENTS.md`、該当Skillを読みます。Claude Cod
 
 gate evidenceは、実際に読むinput paths、関連設定、生成物、実行条件、HEAD / base、結果、artifact参照を一つのinput closureへ束縛します。成功証拠はsnapshot、closure、条件が同じ場合だけ再利用し、変化したclosureだけを失効・再取得します。
 
+task-stateはcross-sessionの現在状態、completed evidence packageは一回のlane結果の要約であり、別の記録です。`status=blocked`の停止理由はtask-stateの`risks_blockers.blockers`へ保持します。
+
 completed packageは、status、scope / revision、verification、unperformed checks、remaining risks、stop reason、snapshot/diff、artifact referenceを分離します。raw logやfile全文を通常報告へ含めません。
 
 ## runtimeとadvisoryの境界
 
-runtime/dev serverを使うlaneはowner、PID、process group、port、readiness、cleanupを起動前に固定し、終了時に解放を確認します。runtimeを使わない場合もその旨を記録します。
+runtime/dev serverを使うlaneは、起動前にowner、PID、process group、port、readiness、cleanupを必須項目として計画し、起動後にPIDを記録します。成功、正常停止、失敗、割込みのいずれでもprocess groupを終了し、port解放を確認し、結果を記録します。owner、readiness、cleanupのいずれかが不明な実行は完了evidenceに使いません。runtimeを使わない場合もその旨を記録します。
 
 `validate_governance.py`はstaticな形式・参照・budget検査です。製品version、rule発見、sandbox、権限、runtime routing、Hookのcontext注入やcontext pruningを保証しません。configured、observed、unverifiedを分け、static PASSをruntime成功と表現しません。
 

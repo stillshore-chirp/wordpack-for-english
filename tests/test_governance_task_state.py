@@ -64,3 +64,61 @@ def test_task_state_rejects_unknown_evidence_result(tmp_path: Path) -> None:
 
     with pytest.raises(GovernanceError):
         validate_task_state(_write_state(tmp_path, state), tmp_path)
+
+
+def test_task_state_rejects_external_artifact_reference(tmp_path: Path) -> None:
+    state = _template()
+    state["completed_evidence"][0]["artifact_reference"] = "unlisted-reference"
+
+    with pytest.raises(GovernanceError):
+        validate_task_state(_write_state(tmp_path, state), tmp_path)
+
+
+def test_task_state_rejects_completed_and_invalidated_gate_overlap(tmp_path: Path) -> None:
+    state = _template()
+    state["invalidated_gates"] = [
+        {"gate": "synthetic-gate", "reason": "changed", "reacquire_scope": ["docs/example.md"]}
+    ]
+
+    with pytest.raises(GovernanceError):
+        validate_task_state(_write_state(tmp_path, state), tmp_path)
+
+
+@pytest.mark.parametrize("bound", ["size", "list", "string"])
+def test_task_state_rejects_size_list_or_string_bound(tmp_path: Path, bound: str) -> None:
+    state = _template()
+    if bound == "size":
+        state["risks_blockers"]["risks"] = ["x" * 500] * 50
+    elif bound == "list":
+        state["acceptance"] = ["x"] * 51
+    else:
+        state["goal"] = "x" * 1_001
+
+    with pytest.raises(GovernanceError):
+        validate_task_state(_write_state(tmp_path, state), tmp_path)
+
+
+@pytest.mark.parametrize(
+    "status,remaining,invalidated,blockers",
+    [
+        ("complete", ["next"], [], []),
+        ("complete", [], [{"gate": "other", "reason": "changed", "reacquire_scope": ["path"]}], []),
+        ("complete", [], [], ["blocker"]),
+        ("blocked", [], [], []),
+    ],
+)
+def test_task_state_rejects_invalid_terminal_state(
+    tmp_path: Path,
+    status: str,
+    remaining: list[str],
+    invalidated: list[dict[str, object]],
+    blockers: list[str],
+) -> None:
+    state = _template()
+    state["status"] = status
+    state["remaining_work"] = remaining
+    state["invalidated_gates"] = invalidated
+    state["risks_blockers"]["blockers"] = blockers
+
+    with pytest.raises(GovernanceError):
+        validate_task_state(_write_state(tmp_path, state), tmp_path)
