@@ -27,6 +27,7 @@ EXPECTED_CASES = {
     "documentation-only": "skip",
     "copy-only": "skip",
     "isolated-local-css": "skip",
+    "combined-skip-scope": "graph",
     "graph-unavailable": "fallback",
     "graph-unconfigured": "fallback",
     "graph-stale": "fallback",
@@ -39,15 +40,16 @@ GRAPH_TARGETS = {
     "boundaries",
     "test-candidates",
 }
-FALLBACK_STATUSES = {
-    "unavailable",
-    "unconfigured",
-    "stale",
-    "analysis-failure",
-    "insufficient-result",
+EXPECTED_FALLBACK_STATUSES = {
+    "graph-unavailable": "unavailable",
+    "graph-unconfigured": "unconfigured",
+    "graph-stale": "stale",
+    "graph-analysis-failure": "analysis-failure",
+    "graph-insufficient-result": "insufficient-result",
 }
 FALLBACK_TARGETS = {"rg", "import/reference-tracing"}
 SKIPPABLE_SCOPES = {"documentation-only", "copy-only", "isolated-local-css"}
+GRAPH_SCOPES = {"nontrivial-code", "combined-skip-scope"}
 REQUIRED_DOCUMENT_TEXT = (
     "code-review-graph",
     "実装前の影響範囲調査",
@@ -173,7 +175,7 @@ def _validate_case(case: Any, index: int) -> None:
     _require(route == EXPECTED_CASES[case_id], f"{label} route must be {EXPECTED_CASES[case_id]}")
 
     if route == "graph":
-        _require(scope == "nontrivial-code", f"{label} graph route must cover nontrivial-code")
+        _require(scope in GRAPH_SCOPES, f"{label} graph route must cover a graph scope")
         _require(
             item.get("graph_status", "available") == "available",
             f"{label} graph route needs an available graph",
@@ -206,8 +208,8 @@ def _validate_case(case: Any, index: int) -> None:
     _require(route == "fallback", f"{label} has unsupported route: {route}")
     _require(scope == "nontrivial-code", f"{label} fallback must cover nontrivial-code")
     _require(
-        item.get("graph_status") in FALLBACK_STATUSES,
-        f"{label} graph_status must represent an unavailable or untrustworthy result",
+        item.get("graph_status") == EXPECTED_FALLBACK_STATUSES[case_id],
+        f"{label} graph_status must be {EXPECTED_FALLBACK_STATUSES[case_id]}",
     )
     _require("graph_targets" not in item, f"{label} fallback must not claim graph targets")
     _require(
@@ -288,6 +290,25 @@ def _self_test(fixture: Mapping[str, Any]) -> None:
         pass
     else:
         _fail("self-test accepted an incomplete fallback")
+
+    broken_status = dict(fallback_case)
+    broken_status["graph_status"] = "stale"
+    try:
+        _validate_case(broken_status, 0)
+    except PolicyValidationError:
+        pass
+    else:
+        _fail("self-test accepted a mismatched fallback status")
+
+    combined_case = next(case for case in cases if case["id"] == "combined-skip-scope")
+    broken_combined = dict(combined_case)
+    broken_combined["route"] = "skip"
+    try:
+        _validate_case(broken_combined, 0)
+    except PolicyValidationError:
+        pass
+    else:
+        _fail("self-test accepted skipping a combined scope")
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -56,6 +56,14 @@
       "skip_reason": "isolated local style change leaves shared tokens and global styles unchanged"
     },
     {
+      "id": "combined-skip-scope",
+      "scope": "combined-skip-scope",
+      "paths": ["docs/example-policy.md", "src/example/copy.ts", "src/example/local.module.css"],
+      "route": "graph",
+      "graph_status": "available",
+      "graph_targets": ["related-code", "callers", "boundaries", "test-candidates"]
+    },
+    {
       "id": "graph-unavailable",
       "scope": "nontrivial-code",
       "paths": ["apps/backend/backend/domain/wordpack.py"],

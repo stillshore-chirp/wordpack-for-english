@@ -71,6 +71,16 @@ def test_policy_document_rejects_peer_h3_before_required_policy() -> None:
             lambda case: case.update(fallback_targets=["rg"]),
             "fallback_targets",
         ),
+        (
+            "graph-unavailable",
+            lambda case: case.update(graph_status="stale"),
+            "graph_status must be unavailable",
+        ),
+        (
+            "combined-skip-scope",
+            lambda case: case.update(route="skip"),
+            "route must be graph",
+        ),
     ),
 )
 def test_policy_matrix_rejects_routing_regressions(case_id: str, mutation, message: str) -> None:
