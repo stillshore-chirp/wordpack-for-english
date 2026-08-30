@@ -15,7 +15,7 @@ langgraph
 chromadb
 cmudict
 g2p_en
-openai>=2.46.0
+openai>=3.5.0
 sentry-sdk
 # v4 observation API（start_as_current_observation）へ移行済み
 langfuse>=4.12.0,<5
