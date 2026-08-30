@@ -117,6 +117,8 @@ cd apps/frontend && npm run dev
 
 ## CI/CD パイプライン
 
+GitHub Actions は、`ci.yml`（PRと`main` / `develop` push）、`deploy-production.yml`（CI成功の同一SHAまたは手動指定SHA）、`production-deploy-preflight.yml`（daily schedule / main手動のread-only probe）、`scheduled-maintenance.yml`（weekly schedule / suite選択の手動実行）の4 workflowで構成する。
+
 ```mermaid
 flowchart LR
     subgraph GitHub["GitHub"]
@@ -124,54 +126,54 @@ flowchart LR
         Actions["GitHub Actions"]
     end
 
-    subgraph CI["CI ジョブ"]
-        BackendTest["Backend tests<br/>(pytest)"]
-        SecurityTest["Security headers tests"]
-        FrontendTest["Frontend tests<br/>(vitest)"]
-        UiTestScope["UI test scope<br/>(changed path classifier)"]
-        PlaywrightSmoke["Playwright smoke<br/>(PR critical flows)"]
-        VisualRegression["Playwright visual<br/>(rendering changes)"]
-        CloudRunGuard["Cloud Run config guard<br/>(dry-run)"]
+    subgraph Workflows["GitHub Actions（4 workflows）"]
+        CI["CI<br/>(PR / push main, develop)"]
+        ProductionDeploy["Deploy to production<br/>(CI success same SHA / manual SHA)"]
+        DeployPreflight["Production deploy preflight<br/>(daily schedule / main manual, read-only)"]
+        Maintenance["Scheduled maintenance<br/>(weekly schedule / manual suite)"]
     end
 
-    subgraph CD["CD / preflight"]
-        ProductionDeploy["Deploy to production<br/>(CI success workflow_run / manual SHA)"]
-        DeployPreflight["Production deploy preflight<br/>(schedule/manual main, read-only)"]
+    subgraph CD["Release resources"]
         FirestoreIndex["Firestore インデックス同期"]
         CloudBuild["Cloud Build"]
         CloudRun["Cloud Run デプロイ"]
     end
 
-    Push --> Actions
-    Actions --> BackendTest
-    Actions --> SecurityTest
-    Actions --> FrontendTest
-    Actions --> UiTestScope
-    BackendTest --> PlaywrightSmoke
-    FrontendTest --> PlaywrightSmoke
-    UiTestScope --> PlaywrightSmoke
-    UiTestScope --> VisualRegression
-    SecurityTest --> CloudRunGuard
-    Actions -->|schedule / main manual| DeployPreflight
-    Actions -->|CI completed successfully| ProductionDeploy
+    Push --> Actions --> CI
+    CI -->|completed successfully / same SHA| ProductionDeploy
+    DeployPreflight -.->|read-only probe| Actions
+    Maintenance -.->|scheduled / selected suite| Actions
     ProductionDeploy --> FirestoreIndex
     FirestoreIndex --> CloudBuild
     CloudBuild --> CloudRun
 ```
 
+### GitHub Actions ワークフロー一覧
+
+| workflow | トリガー | 主な内容 |
+|---------|---------|------|
+| **CI** (`.github/workflows/ci.yml`) | `push`（`main` / `develop`） / `pull_request`（`main` / `develop`） | `verification_scope` で10出力を分類し、選択された検証、security text scan、`Quality gate`を実行 |
+| **Deploy to production** (`.github/workflows/deploy-production.yml`) | `CI`の`workflow_run`（completed） / `workflow_dispatch`（`target_sha`必須） | CI成功と同一SHAを照合してからCloud Run canary / rollback / Firebase Hosting deployを実行 |
+| **Production deploy preflight** (`.github/workflows/production-deploy-preflight.yml`) | daily schedule（`17 3 * * *`） / `workflow_dispatch`（main refのみ） | 信頼済みmain codeでgcloud、Firestore、Firebase Hostingのread-only probe。credential欠如はfail-closed |
+| **Scheduled maintenance** (`.github/workflows/scheduled-maintenance.yml`) | weekly schedule（`0 3 * * 1`） / `workflow_dispatch`（`all` / `codeql` / `scorecard` / `backend-performance` / `playwright`） | CodeQL、OpenSSF Scorecard、backend performance、全Playwright回帰をsuite単位で実行 |
+
 ### CI ジョブ一覧
 
 | ジョブ名 | トリガー | 内容 |
 |---------|---------|------|
-| **Backend tests** | push / PR | `PYTHONPATH=apps/backend` で `pytest` を実行し、`pytest.ini` の `addopts` に揃えた `apps/backend/backend` のカバレッジが 60% 以上であることを検証 |
-| **Security headers tests** | push / PR | セキュリティヘッダー検証（HSTS, CSP, etc.） |
-| **Frontend tests** | push / PR | `vitest --coverage` によるフロントエンドテストと、lines/statements 80%、branches 70%、functions 66% のカバレッジ閾値チェック（functions は段階的に 70%→75%→80% へ引き上げ予定） |
+| **`verification_scope`** | push / PR | `scripts/classify_verification_inputs.py` が10出力を生成し、分類不能時はfail-fast |
+| **`security_text_scan`** | すべてのCI | `scripts/security_scan_text.py` でsource textの不可視制御文字を検査 |
+| **`dependency_review`** | dependency-bearing pathを含むPR | Dependency Graph probeとdependency reviewを実行。Graph利用不可はfail-closed |
+| **`backend`** | classifier選択時、およびmain push | Python 3.14 + Firestore Emulatorでpytestとcoverageを実行。security headersもfull suiteに含む |
+| **`backend_compatibility`** | backend選択のmain push | Python 3.13で同じpytest suiteを`--no-cov`実行 |
+| **`frontend`** | classifier選択時 | typecheckとVitest。PR / developはno coverage、main pushはcoverage |
+| **`backend_container`** | classifier選択時、およびmain push | Python 3.14 backend imageをbuildし、`/healthz`を確認 |
+| **`deploy_preflight`** | classifier選択時、およびmain push | deploy contract test、shellcheck、Cloud Run dry-runを実行 |
+| **`governance`** | governance選択時 | `validate_governance.py` の後にgovernance contract pytestを実行 |
+| **`workflow_contract`** | workflow contract選択時 | workflow YAML parseとclassifier / scheduled-maintenance contract testを実行 |
 | **Playwright smoke** | 中央classifierが選択した push / PR | 選択時だけ主要導線スモーク（`auth.spec.ts` / `guest.spec.ts` / `wordpack-server-query.spec.ts` / `wordpack.spec.ts`）を実行。前提失敗や予期しないskipは `Quality gate` で失敗扱い |
 | **Visual regression** | 中央classifierが選択した push / PR | 選択時だけ `tests/e2e/visual.spec.ts` を実行。分類失敗や予期しないskipは `Quality gate` で失敗扱い |
 | **Quality gate** | push / PR | 中央classifierの結果と、選択されたBackend／Frontend／deploy／Playwright smoke・visual等の結果を集約し、未選択jobの予期しない実行も含めてfail-closed |
-| **Static deploy preflight** | 中央classifierが選択したpush / PR、およびmain push | `deploy_preflight` がデプロイスクリプトのshellcheckとCloud Run dry-runを実行 |
-| **Production deploy preflight** | schedule / `workflow_dispatch`（main refのみ） | 信頼済み main code で gcloud、Firestore、Firebase Hosting の read-only probe。credential 欠如は fail-closed |
-| **Deploy to production** | `CI` `workflow_run`（success / push / main / 同一SHA）または `workflow_dispatch`（target SHA必須） | 固定path `.github/workflows/ci.yml`／immutable workflow ID `187172373`、同一runの canonical `Quality gate` success をGitHub APIで照合し、対象SHAへcheckoutして `make release-cloud-run` と Firebase Hosting deploy を実行。PRでは本番デプロイ job を作らない |
 
 静的な Cloud Run dry-run と deploy contract 検証は `CI` lane に集約し、重複する `deploy-dry-run.yml` workflow は置かない。本番デプロイは `CI` の同一SHA成功を `workflow_run` 側で再検証してから開始する。PR では本番デプロイ job を作らず、認証済み probe は schedule または main ref の手動実行に限定する。
 

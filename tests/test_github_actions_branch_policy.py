@@ -10,6 +10,16 @@ def _read_text(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
+def _read_workflow_job(path: str, job_id: str) -> dict[str, object]:
+    workflow = yaml.safe_load(_read_text(path))
+    assert isinstance(workflow, dict)
+    jobs = workflow.get("jobs")
+    assert isinstance(jobs, dict)
+    job = jobs.get(job_id)
+    assert isinstance(job, dict)
+    return job
+
+
 def _assert_contains_all(text: str, needles: list[str]) -> None:
     missing = [n for n in needles if n not in text]
     assert not missing, f"Missing expected snippets: {missing}"
@@ -108,6 +118,35 @@ def test_ci_selects_runtime_gates_and_keeps_security_in_backend_suite() -> None:
         ],
     )
     assert "  security_headers:" not in ci
+
+
+def test_governance_job_runs_contract_tests_after_validation() -> None:
+    """The governance job owns the validator and its focused contract tests."""
+    job = _read_workflow_job(".github/workflows/ci.yml", "governance")
+    steps = job.get("steps")
+    assert isinstance(steps, list)
+    runs = [
+        step["run"]
+        for step in steps
+        if isinstance(step, dict) and isinstance(step.get("run"), str)
+    ]
+
+    validator_index = next(
+        index for index, run in enumerate(runs) if "python scripts/validate_governance.py" in run
+    )
+    pytest_index = next(
+        index for index, run in enumerate(runs) if "python -m pytest -q --no-cov" in run
+    )
+    assert validator_index < pytest_index
+
+    pytest_run = runs[pytest_index]
+    for test_path in (
+        "tests/test_agent_harness_budget.py",
+        "tests/test_governance_task_state.py",
+        "tests/test_public_docs_security.py",
+        "tests/test_security_scan_text.py",
+    ):
+        assert test_path in pytest_run
 
 
 def test_playwright_jobs_are_classifier_scoped_and_parallel() -> None:

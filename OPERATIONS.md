@@ -15,7 +15,8 @@ WordPack for English の本番運用で、何を監視し、どの状態を正�
 - [docs/testing/backend-performance.md](./docs/testing/backend-performance.md) - p95 性能回帰チェック
 - [.github/workflows/ci.yml](./.github/workflows/ci.yml) - PR / main push の CI
 - [.github/workflows/deploy-production.yml](./.github/workflows/deploy-production.yml) - 本番デプロイ
-- [.github/workflows/scheduled-maintenance.yml](./.github/workflows/scheduled-maintenance.yml) - 週次およびmanual dispatch（`suite=backend-performance`）のp95回帰チェック
+- [.github/workflows/production-deploy-preflight.yml](./.github/workflows/production-deploy-preflight.yml) - daily schedule / main手動のread-only deploy probe
+- [.github/workflows/scheduled-maintenance.yml](./.github/workflows/scheduled-maintenance.yml) - 週次およびmanual dispatch（`suite`選択）の保守suite
 
 ---
 
@@ -29,7 +30,7 @@ WordPack for English の本番運用で、何を監視し、どの状態を正�
 | App logs | `request_complete` の JSON ログ、`latency_ms`、`status_code`、`is_error`、`is_timeout`、`request_id` | Cloud Logging | エラー原因、遅い path、失敗リクエストを追跡する |
 | Firestore | 読み書きエラー、権限エラー、インデックス不足、レイテンシ、使用量 | Firestore console、Cloud Monitoring、Cloud Logging | 永続化・検索・一覧取得の障害を切り分ける |
 | OpenAI API / LLM / TTS | `llm_complete_*`、`tts_*` ログ、rate limit、timeout、TTS 失敗、生成遅延 | Cloud Logging、Langfuse（任意）、OpenAI dashboard / status | 生成・音声読み上げの外部依存障害を切り分ける |
-| CI/CD | CI 成功、Cloud Run config guard、Deploy to production、Cloud Build、Firebase deploy | GitHub Actions、Cloud Build、Cloud Run revisions、Firebase release history | 壊れた revision / Hosting release を本番に出していないか確認する |
+| CI/CD | CI の Quality gate / Static deploy preflight、Deploy to production、Production deploy preflight、Scheduled maintenance、Cloud Build、Firebase deploy | GitHub Actions、Cloud Build、Cloud Run revisions、Firebase release history | 壊れた revision / Hosting release を本番に出していないか確認する |
 
 ---
 
@@ -270,10 +271,11 @@ OpenAI API は WordPack 新規生成、再生成、TTS の外部依存。アプ�
 
 | ワークフロー | 目的 | 失敗時の見方 |
 |---|---|---|
-| `CI` | backend / frontend / security headers / Playwright smoke / Cloud Run dry-run | PR ではここが最低限の品質ゲート |
-| `Backend performance regression` | `/healthz` と `/api/word/pack` の p95 回帰検知 | 週次または手動で latency regression を見る |
+| `CI` | classifierが選択するbackend / frontend / container / deploy / governance / workflow contract / Playwright、security text scan、Quality gate | PR ではここが最低限の品質ゲート |
+| `Production deploy preflight` | daily schedule またはmain refの手動実行で、gcloud / Firestore / Firebase Hostingのread-only probe | credential欠如またはprobe失敗を本番デプロイ前の設定・接続問題として確認する |
+| `Scheduled maintenance` | 週次またはsuite選択の手動実行で、CodeQL / OpenSSF Scorecard / backend performance / 全Playwright回帰を検査 | suite単位で保守上の回帰を切り分ける |
 | `Deploy to production` | `.env.deploy` 復元、設定検証、Cloud Run traffic 0% 候補、10% canary と自動 rollback、100% 昇格、Firebase Hosting deploy | 本番リリース失敗時の一次ログ。自動 rollback の成否も確認する |
-| Cloud Build | backend image build と GitHub Checks 連携 | Dockerfile / dependency / Artifact Registry 問題を確認 |
+| Cloud Build | backend image buildのみ | Dockerfile / dependency / Artifact Registry 問題を確認 |
 
 本番デプロイ前のローカル dry-run:
 
@@ -374,7 +376,7 @@ firebase deploy --only firestore:indexes --project <firebase-project-id>
 | Firestore error | index / permission / unavailable が deploy 後に発生 | P1 / P2 |
 | OpenAI API error | `llm_complete_*` / `tts_*` の rate limit / timeout / 5xx が 15 分で急増 | P2 |
 | Deploy failure | `Deploy to production` が失敗 | P1 |
-| Performance regression | `Backend performance regression` が失敗 | P2 |
+| Performance regression | `Scheduled maintenance` の `backend-performance` suite が失敗 | P2 |
 
 ---
 

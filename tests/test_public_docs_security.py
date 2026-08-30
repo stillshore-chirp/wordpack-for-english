@@ -9,9 +9,17 @@ DOC_GLOBS = (
     "*.md",
     "*.txt",
     "docs/**/*.md",
+    "docs/**/*.json",
     "plans/**/*.md",
+    "plans/**/*.json",
     ".agents/**/*.md",
-    ".github/*.md",
+    ".agents/**/*.json",
+    ".claude/**/*.md",
+    ".cursor/**/*.mdc",
+    ".github/**/*.md",
+    ".github/**/*.json",
+    ".github/**/*.yml",
+    ".github/**/*.yaml",
 )
 
 SECRET_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = (
@@ -85,4 +93,21 @@ def test_public_documents_do_not_contain_high_risk_secret_material() -> None:
 
     assert not findings, "公開ドキュメントに秘匿値または不要に具体的な運用識別子の疑いがあります:\n" + "\n".join(
         findings
+    )
+
+
+def test_public_text_scan_covers_governance_surfaces_without_binary_evidence() -> None:
+    relative_paths = {path.relative_to(ROOT).as_posix() for path in _iter_doc_files()}
+
+    assert "docs/ai-governance/templates/task-state.json" in relative_paths
+    assert ".agents/skills/skill-evaluation/references/application-security-benchmark.json" in relative_paths
+    assert any(path.startswith(".claude/") and path.endswith(".md") for path in relative_paths)
+    assert any(path.startswith(".cursor/") and path.endswith(".mdc") for path in relative_paths)
+    assert any(
+        path.startswith(".github/") and path.endswith((".md", ".yml", ".yaml"))
+        for path in relative_paths
+    )
+    assert not any(
+        Path(path).suffix.lower() in {".gif", ".ico", ".jpeg", ".jpg", ".png", ".webp"}
+        for path in relative_paths
     )
