@@ -2,7 +2,7 @@
 
 ## Scope とスナップショット
 
-対象は、共有入口、path/task router、canonical Skill、保守正本、静的検査およびCI接続です。source-sizeの比較は変更前 `e96d0fd` とpost-review後 `df3eac6` に固定し、最新validator/test code-fix snapshotは `31a16b5` としました。本報告の後続report-only commitは測定入力外です。4つのcanonical sourceは `AGENTS.md`、`docs/agent-principles.md`、`docs/agent-harness.md`、`docs/ai-governance/13-maintenance-policy.md` です。
+対象は、共有入口、path/task router、canonical Skill、保守正本、静的検査およびCI接続です。source-sizeの比較は変更前のbase snapshotとpost-review後のsource snapshotに固定し、最新validator/test code-fix snapshotをlatest code-fix snapshotとしました。本報告の後続report-only commitは測定入力外です。4つのcanonical sourceは `AGENTS.md`、`docs/agent-principles.md`、`docs/agent-harness.md`、`docs/ai-governance/13-maintenance-policy.md` です。
 
 行・byteはsource-sizeの測定値、tokenは `ceil(unicode_codepoints/4)` によるestimateです。製品のtokenizer、Hook注入量、observed usageは測定していません。
 
@@ -38,11 +38,11 @@ maintenanceの基準は、scope、trigger、owner、enforcement、coverage、inc
 
 workflowは4本→4本、declared jobsは20→20、matrixは21。canonical validatorは1本を維持しました。governance core（validator＋contract files）は `4 files / 453 lines / 16,179B` → `5 / 750 / 28,273B`、governance jobのfocused testは0 files→4 filesです。新しいworkflow、job、大規模fixtureは追加していません。
 
-同一環境のlocal wall測定は、base validatorが `0.12s (user 0.06s, sys 0.02s)`、`31a16b5`での `python3 scripts/validate_governance.py && python -m pytest -q --no-cov tests/test_agent_harness_budget.py tests/test_governance_task_state.py tests/test_public_docs_security.py tests/test_security_scan_text.py` が validator PASS・27 tests pass、wall `1.11s (user 0.42s, sys 0.24s)` でした。変更後CI runnerはpendingで、PR #642の過去runner証跡は同一条件のafter測定ではありません。
+同一環境のlocal wall測定は、base validatorが `0.12s (user 0.06s, sys 0.02s)`、latest code-fix snapshotでの `python3 scripts/validate_governance.py && python -m pytest -q --no-cov tests/test_agent_harness_budget.py tests/test_governance_task_state.py tests/test_public_docs_security.py tests/test_security_scan_text.py` が validator PASS・27 tests pass、wall `1.11s (user 0.42s, sys 0.24s)` でした。変更後CI runnerはpendingで、PR #642の過去runner証跡は同一条件のafter測定ではありません。
 
 ## Task-state と配送状態
 
-初回review snapshot `6183353`で指摘されたP1 2件（runtime cleanup/evidence、artifact/closure semantics）は `df3eac6` で修正済みです。post-fix review snapshot `45225a2`では、`remaining_work` 非空のshapeとcomplete時空配列semanticsの不一致によるP1 false-negativeを検出し、`31a16b5`でpositive complete testとfail/partial/unverified rejectionを追加して修正しました。initial+one post-fix review budgetのため第三のlocal comprehensive reviewは実施せず、latest-head GitHub reviewはpendingです。handoff smokeは `5500b0b` で実行したcurrent-run・no-historyのbounded smokeです。HEAD不一致のnegative smokeはevidenceを正しくinvalid化し、matching HEAD/input closureのpositive inline stateではpass evidenceを再利用して残作業を選択しました。これは3製品すべてにまたがるpersistent cross-session behaviorの検証ではなく、raw output/artifactも取得していません。
+初回review snapshotで指摘されたP1 2件（runtime cleanup/evidence、artifact/closure semantics）はpost-review source snapshotで修正済みです。post-fix review snapshotでは、`remaining_work` 非空のshapeとcomplete時空配列semanticsの不一致によるP1 false-negativeを検出し、latest code-fix snapshotでpositive complete testとfail/partial/unverified rejectionを追加して修正しました。initial+one post-fix review budgetのため第三のlocal comprehensive reviewは実施せず、latest-head GitHub reviewはPR delivery gateとして別途確認します。handoff smokeはhandoff smoke snapshotで実行したcurrent-run・no-historyのbounded smokeです。HEAD不一致のnegative smokeはevidenceを正しくinvalid化し、matching HEAD/input closureのpositive inline stateではpass evidenceを再利用して残作業を選択しました。これは3製品すべてにまたがるpersistent cross-session behaviorの検証ではなく、raw output/artifactも取得していません。
 
 #628/#641はmerge・close済み、#634はP2のexact-text follow-up、#644はpre-existingなimmutable Action pinningの残存リスクを追跡しています。
 
