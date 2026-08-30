@@ -195,6 +195,17 @@ GOVERNANCE_TEST_FILES = {
     "tests/test_public_docs_security.py",
     "tests/test_security_scan_text.py",
 }
+FIXTURE_PREFIX = "tests/fixtures/"
+QUIZ_ALIGNMENT_FIXTURE = "tests/fixtures/quiz_sentence_alignment.json"
+DATA_ANALYSIS_FIXTURES = {
+    "tests/fixtures/data-analysis/in-progress-week.csv",
+    "tests/fixtures/data-analysis/missing-week.csv",
+    "tests/fixtures/data-analysis/organic-decline.csv",
+    "tests/fixtures/data-analysis/surplus-column.csv",
+    "tests/fixtures/data-analysis/unchanged-rate.csv",
+    "tests/fixtures/data-analysis/weekly-metrics.csv",
+}
+PLUGIN_EVAL_FIXTURE = "tests/fixtures/plugin-eval/application-security-before/SKILL.md"
 
 
 @dataclass(frozen=True)
@@ -248,7 +259,7 @@ def _rule(
 
 
 # Order matters only where a path belongs to both a broad and a narrow family.
-# Keep narrow workflow/governance rules before documentation/test skip rules.
+# Keep narrow workflow/governance/fixture rules before documentation/test rules.
 PATH_RULES: tuple[PathRule, ...] = (
     _rule(
         "e2e_visual_snapshots",
@@ -407,6 +418,27 @@ PATH_RULES: tuple[PathRule, ...] = (
         "governance",
         gates={"governance"},
         exact=GOVERNANCE_TEST_FILES,
+    ),
+    _rule(
+        "fixture_quiz_sentence_alignment",
+        "shared_fixture",
+        "shared_runtime",
+        gates={"backend", "frontend"},
+        exact={QUIZ_ALIGNMENT_FIXTURE},
+    ),
+    _rule(
+        "fixture_data_analysis",
+        "governance_fixture",
+        "governance",
+        gates={"governance"},
+        exact=DATA_ANALYSIS_FIXTURES,
+    ),
+    _rule(
+        "fixture_plugin_eval",
+        "governance_fixture",
+        "governance",
+        gates={"governance"},
+        exact={PLUGIN_EVAL_FIXTURE},
     ),
     _rule(
         "governance_dependency_inputs",
@@ -629,12 +661,6 @@ PATH_RULES: tuple[PathRule, ...] = (
         prefixes=("docs/", "plans/", "終了済みor参考ドキュメント/"),
     ),
     _rule(
-        "fixture_non_runtime",
-        "test_only",
-        "non_runtime",
-        prefixes=("tests/fixtures/",),
-    ),
-    _rule(
         "root_backend_tests",
         "backend_test",
         "backend_test",
@@ -819,6 +845,17 @@ def classify_path(path: str) -> PathClassification | None:
     if path.startswith(E2E_PREFIX):
         for rule in PATH_RULES:
             if rule.matches(path) and rule.rule_id.startswith("e2e_"):
+                return PathClassification(
+                    path, rule.rule_id, rule.category, rule.risk, rule.gates
+                )
+        return None
+
+    # Fixtures are inputs to consumers, not automatically non-runtime data.
+    # Keep this family explicitly registered so a new fixture cannot fall
+    # through to the generic tests/ rule and silently skip all gates.
+    if path.startswith(FIXTURE_PREFIX):
+        for rule in PATH_RULES:
+            if rule.rule_id.startswith("fixture_") and rule.matches(path):
                 return PathClassification(
                     path, rule.rule_id, rule.category, rule.risk, rule.gates
                 )

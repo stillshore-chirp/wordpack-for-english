@@ -403,6 +403,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      - name: Run focused deploy behavior tests
+        run: >-
+          python -m pytest -q --no-cov
+          tests/config/test_firebase_config.py
+          tests/test_cloud_build_config.py
+          tests/test_deploy_script_env_guard.py
+          tests/test_firebase_hosting_deploy.py
+          tests/test_promote_cloud_run_revision.py
+          tests/test_deploy_workflow_safety.py
+
       - name: Install shellcheck
         run: |
           sudo apt-get update

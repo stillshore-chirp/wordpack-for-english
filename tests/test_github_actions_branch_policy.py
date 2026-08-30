@@ -252,6 +252,31 @@ def test_ci_does_not_embed_production_deploy_job() -> None:
     )
 
 
+def test_deploy_preflight_runs_focused_behavioral_contracts() -> None:
+    """Deploy-only changes run deploy behavior contracts without backend full pytest."""
+    yml = _read_text(".github/workflows/ci.yml")
+    start = yml.index("\n  deploy_preflight:")
+    end = yml.index("\n  governance:", start)
+    block = yml[start:end]
+
+    _assert_contains_all(
+        block,
+        [
+            "Run focused deploy behavior tests",
+            "needs.verification_scope.outputs.deploy_preflight == 'true'",
+            "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+            "python -m pytest -q --no-cov",
+            "tests/config/test_firebase_config.py",
+            "tests/test_cloud_build_config.py",
+            "tests/test_deploy_script_env_guard.py",
+            "tests/test_firebase_hosting_deploy.py",
+            "tests/test_promote_cloud_run_revision.py",
+            "tests/test_deploy_workflow_safety.py",
+        ],
+    )
+    assert "python -m pytest\n" not in block
+
+
 def test_deploy_production_workflow_requires_successful_ci_or_manual_main() -> None:
     """Production deployment is gated by a successful main CI run or manual main dispatch."""
     yml = _read_text(".github/workflows/deploy-production.yml")

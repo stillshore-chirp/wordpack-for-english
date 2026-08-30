@@ -148,6 +148,46 @@ def test_dependency_review_covers_python_graph_dockerfile_and_dependabot_inputs(
         assert plan.dependency_review is True, path
 
 
+def test_shared_fixtures_follow_bounded_consumer_domain_map() -> None:
+    quiz = classify_paths(["tests/fixtures/quiz_sentence_alignment.json"])
+    plugin_eval = classify_paths(
+        ["tests/fixtures/plugin-eval/application-security-before/SKILL.md"]
+    )
+
+    assert quiz.classification_ok is True
+    assert quiz.backend is True
+    assert quiz.frontend is True
+    assert quiz.backend_container is False
+    assert quiz.playwright_smoke is False
+    assert quiz.playwright_visual is False
+    for fixture in (
+        "in-progress-week.csv",
+        "missing-week.csv",
+        "organic-decline.csv",
+        "surplus-column.csv",
+        "unchanged-rate.csv",
+        "weekly-metrics.csv",
+    ):
+        data_analysis = classify_paths([f"tests/fixtures/data-analysis/{fixture}"])
+        assert data_analysis.classification_ok is True, fixture
+        assert data_analysis.governance is True, fixture
+        assert data_analysis.backend is False, fixture
+        assert data_analysis.frontend is False, fixture
+    assert plugin_eval.classification_ok is True
+    assert plugin_eval.governance is True
+    assert plugin_eval.backend is False
+    assert plugin_eval.frontend is False
+
+
+def test_unknown_fixture_does_not_fall_through_to_gate_free_test_rule() -> None:
+    plan = classify_paths(["tests/fixtures/new-consumer/input.json"])
+
+    assert plan.classification_ok is False
+    assert plan.unknown_path_count == 1
+    assert plan.unknown_paths == ("tests/fixtures/new-consumer/input.json",)
+    assert not any(getattr(plan, field) for field in OUTPUT_FIELDS[:-1])
+
+
 def test_existing_operational_paths_keep_domain_boundaries_without_ui_overtrigger() -> None:
     expected_gates = {
         "Makefile": {"backend_container", "deploy_preflight"},
