@@ -29,6 +29,8 @@ Codexはrootと最寄りの`AGENTS.md`、該当Skillを読みます。Claude Cod
 
 ## task-state route
 
+- Cross-session task-stateのfield sourceは [`docs/ai-governance/templates/task-state.json`](ai-governance/templates/task-state.json) だけとし、この文書はresumeの振る舞いだけを定めます。field名と型はtemplateから読みます。
+- resume時は現在のsnapshotとclosureを確認し、条件が一致するcompleted evidenceをartifact referenceで再利用して、remaining workから開始します。完了済みの長い出力は再取得しません。
 - timeoutは失敗・状態変化・evidence失効ではなく、laneは`running`のままbackoff付きで再待機します。
 - checkpointを逃した時だけ同じownerへ一度partial resultを求め、進展がなければscope shrink、縮小後も進展がなければreassignします。first failureだけでprimaryへ回収しません。
 - `partial` / `unverified`は未確認範囲と再開条件を保持します。`complete`は受け入れ条件と必要gateを満たした場合だけ、`blocked`は権限・外部状態などの真の停止理由がある場合だけ使います。

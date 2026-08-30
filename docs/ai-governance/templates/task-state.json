@@ -1,0 +1,52 @@
+{
+  "schema": "task-state/v1",
+  "status": "running",
+  "goal": "Synthetic resumable task goal.",
+  "acceptance": [
+    "Synthetic acceptance condition is recorded."
+  ],
+  "snapshot": {
+    "base": "base-ref",
+    "head": "head-ref",
+    "phase": "implementation"
+  },
+  "lane": {
+    "id": "lane-1",
+    "owner": "lane-owner",
+    "owned_paths": [
+      "docs/example.md"
+    ]
+  },
+  "completed_evidence": [
+    {
+      "gate": "synthetic-gate",
+      "summary": "Bounded synthetic verification summary.",
+      "result": "pass",
+      "artifact_reference": "artifact-reference/evidence-1"
+    }
+  ],
+  "input_closure": {
+    "paths": [
+      "docs/example.md"
+    ],
+    "config": [
+      "config/example.toml"
+    ],
+    "artifacts": [
+      "artifact-reference/evidence-1"
+    ],
+    "conditions": [
+      "Synthetic verification condition."
+    ]
+  },
+  "invalidated_gates": [],
+  "remaining_work": [
+    "Start the next bounded task from this point."
+  ],
+  "risks_blockers": {
+    "risks": [
+      "Synthetic risk only."
+    ],
+    "blockers": []
+  }
+}
