@@ -36,9 +36,9 @@ maintenanceの基準は、scope、trigger、owner、enforcement、coverage、inc
 - effective route（root + activated Skills 4本）: `373 / 31,884 / 4,436` → `335 / 27,803 / 4,003`。
 - repository instruction sources 30本: `1,073 / 80,703 / 11,201` → `980 / 74,573 / 10,647`。
 
-workflowは4本→4本、declared jobsは20→20、matrixは21。canonical validatorは1本を維持しました。governance core（validator＋contract files）は `4 files / 453 lines / 16,179B` → `5 / 750 / 28,273B`、governance jobのfocused testは0 files→4 filesです。新しいworkflow、job、大規模fixtureは追加していません。
+workflowは4本→4本、declared jobsは20→20、matrixは21。canonical validatorは1本を維持しました。governance core（validator＋contract files）は `4 files / 453 lines / 16,179B` → `5 / 807 / 30,712B`、governance jobのfocused testは0 files→4 filesです。新しいworkflow、job、大規模fixtureは追加していません。
 
-同一環境のlocal wall測定は、base validatorが `0.12s (user 0.06s, sys 0.02s)`、latest code-fix snapshotでの `python3 scripts/validate_governance.py && python -m pytest -q --no-cov tests/test_agent_harness_budget.py tests/test_governance_task_state.py tests/test_public_docs_security.py tests/test_security_scan_text.py` が validator PASS・27 tests pass、wall `1.11s (user 0.42s, sys 0.24s)` でした。変更後CI runnerはpendingで、PR #642の過去runner証跡は同一条件のafter測定ではありません。
+同一環境のlocal wall測定は、base validatorが `0.12s (user 0.06s, sys 0.02s)`、committed public-safety code snapshotでの `python3 scripts/validate_governance.py && python -m pytest -q --no-cov tests/test_agent_harness_budget.py tests/test_governance_task_state.py tests/test_public_docs_security.py tests/test_security_scan_text.py` が validator PASS・29 tests pass、wall `1.09s (user 0.41s, sys 0.23s)` でした。後続のreport-only annotationはこのcombined timing snapshotの測定外です。GitHub Actions結果はPR delivery evidenceとして別途確認し、PR #642の過去runner証跡は同一条件のafter測定ではありません。
 
 ## Task-state と配送状態
 
@@ -48,4 +48,4 @@ workflowは4本→4本、declared jobsは20→20、matrixは21。canonical valid
 
 ## Security、publication、unknowns
 
-公開テキストのsecurity検査対象として本報告を含め、secret、PII、raw log、session ID、local path、攻撃再現情報を掲載していません。未確認・未実行は、3製品の実runtime reader、Hook output、observed token usage、production状態、変更後CI runnerです。これらをstatic検査の成功として扱わず、CI pendingと残るruntime不確実性を完了判断へ引き継ぎます。
+公開テキストのsecurity検査対象として本報告を含め、secret、PII、raw log、session ID、local path、攻撃再現情報を掲載していません。未確認・未実行は、3製品の実runtime reader、Hook output、observed token usage、production状態です。GitHub ActionsはPR delivery evidenceで別途管理し、local/static evidenceと混同しません。残るruntime不確実性を完了判断へ引き継ぎます。
