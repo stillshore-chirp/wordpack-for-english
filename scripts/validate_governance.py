@@ -193,10 +193,20 @@ def _validate_task_state_document(
 
 
 def _task_paths_overlap(left: str, right: str) -> bool:
-    """Return whether two repository path/glob entries can name the same input."""
+    """Return whether two path entries can name the same input.
+
+    Intersecting two independent glob languages needs a solver.  Until one is
+    available, treating glob/glob pairs as overlapping keeps the validator
+    fail-closed while preserving the existing literal and literal/glob rules.
+    """
 
     normalized = lambda value: value.strip().replace("\\", "/").lstrip("./")
     left_path, right_path = normalized(left), normalized(right)
+    glob_magic = frozenset("*?[")
+    if any(char in glob_magic for char in left_path) and any(
+        char in glob_magic for char in right_path
+    ):
+        return True
     return (
         left_path == right_path
         or fnmatchcase(left_path, right_path)

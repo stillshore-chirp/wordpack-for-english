@@ -53,6 +53,7 @@ def test_task_state_v1_without_optional_boundaries_remains_valid(tmp_path: Path)
         (["docs/publication-report.md"], ["docs/publication-report.md"]),
         (["docs/**"], ["docs/publication-report.md"]),
         (["docs/publication-report.md"], ["docs/*.md"]),
+        (["docs/*.md"], ["docs/report-*"]),
     ],
 )
 def test_task_state_rejects_measurement_publication_self_reference(
@@ -64,6 +65,14 @@ def test_task_state_rejects_measurement_publication_self_reference(
 
     with pytest.raises(GovernanceError, match="self-reference"):
         validate_task_state(_write_state(tmp_path, state), tmp_path)
+
+
+def test_task_state_accepts_non_overlapping_literal_paths(tmp_path: Path) -> None:
+    state = _template()
+    state["measurement"]["input_paths"] = ["docs/measurement.md"]
+    state["publication"]["annotation_paths"] = ["docs/report.md"]
+
+    validate_task_state(_write_state(tmp_path, state), tmp_path)
 
 
 def test_task_state_keeps_measurement_evidence_for_publication_only_reacquire(
