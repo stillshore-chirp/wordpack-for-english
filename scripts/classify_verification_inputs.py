@@ -86,6 +86,7 @@ GATE_INPUTS = {
             "scripts/validate_agent_frontmatter.py",
             "scripts/verify_task_skills.py",
             "scripts/measure_effective_instruction_budget.py",
+            "scripts/security_scan_text.py",
             "tests/test_agent_harness_budget.py",
         ),
         ("requirements-agent-harness.txt",),
@@ -105,6 +106,7 @@ GATE_INPUTS = {
             "scripts/validate_agent_frontmatter.py",
             "scripts/verify_task_skills.py",
             "scripts/measure_effective_instruction_budget.py",
+            "scripts/security_scan_text.py",
             "tests/test_agent_harness_budget.py",
         ),
         ("requirements-agent-harness.txt",),
@@ -141,6 +143,8 @@ WORKFLOW_CONTRACT_FILES = {
     "pytest.ini",
     "scripts/classify_verification_inputs.py",
     "tests/test_github_actions_branch_policy.py",
+    "tests/test_llmops_ci_policy.py",
+    "tests/test_scheduled_maintenance_workflow.py",
     "tests/test_verification_inputs.py",
 }
 LEGACY_MIGRATION_FILES = {
@@ -172,11 +176,25 @@ AI_GOVERNANCE_FILES = {
     "scripts/validate_agent_frontmatter.py",
     "scripts/verify_task_skills.py",
     "scripts/measure_effective_instruction_budget.py",
+    "scripts/security_scan_text.py",
     "tests/test_agent_harness_budget.py",
     ".github/pull_request_template.md",
     ".github/dependabot.yml",
 }
 AI_GOVERNANCE_PREFIXES = (".github/ISSUE_TEMPLATE/",)
+
+DEPLOY_TEST_FILES = {
+    "tests/config/test_firebase_config.py",
+    "tests/test_cloud_build_config.py",
+    "tests/test_deploy_script_env_guard.py",
+    "tests/test_firebase_hosting_deploy.py",
+    "tests/test_promote_cloud_run_revision.py",
+}
+DEPLOY_WORKFLOW_TEST_FILES = {"tests/test_deploy_workflow_safety.py"}
+GOVERNANCE_TEST_FILES = {
+    "tests/test_public_docs_security.py",
+    "tests/test_security_scan_text.py",
+}
 
 
 @dataclass(frozen=True)
@@ -377,10 +395,18 @@ PATH_RULES: tuple[PathRule, ...] = (
             "scripts/validate_agent_frontmatter.py",
             "scripts/verify_task_skills.py",
             "scripts/measure_effective_instruction_budget.py",
+            "scripts/security_scan_text.py",
             "tests/test_agent_harness_budget.py",
             ".github/pull_request_template.md",
         ),
         prefixes=(".github/ISSUE_TEMPLATE/",),
+    ),
+    _rule(
+        "governance_contract_tests",
+        "governance",
+        "governance",
+        gates={"governance"},
+        exact=GOVERNANCE_TEST_FILES,
     ),
     _rule(
         "governance_dependency_inputs",
@@ -397,11 +423,44 @@ PATH_RULES: tuple[PathRule, ...] = (
         prefixes=("scripts/validate_", "scripts/verify-", "scripts/verify_"),
     ),
     _rule(
+        "workflow_contract_tests",
+        "workflow_contract",
+        "workflow_test",
+        gates={"workflow_contract"},
+        exact={
+            "tests/test_github_actions_branch_policy.py",
+            "tests/test_llmops_ci_policy.py",
+            "tests/test_scheduled_maintenance_workflow.py",
+            "tests/test_verification_inputs.py",
+        },
+    ),
+    _rule(
+        "deploy_contract_tests",
+        "deploy",
+        "deploy_test",
+        gates={"deploy_preflight"},
+        exact=DEPLOY_TEST_FILES,
+    ),
+    _rule(
+        "deploy_workflow_contract_test",
+        "deploy",
+        "deploy_workflow_test",
+        gates={"deploy_preflight", "workflow_contract"},
+        exact=DEPLOY_WORKFLOW_TEST_FILES,
+    ),
+    _rule(
         "deploy_scripts",
         "deploy",
         "deploy",
         gates={"deploy_preflight"},
         prefixes=("scripts/deploy", "scripts/promote"),
+    ),
+    _rule(
+        "deployment_project_config",
+        "deploy",
+        "deploy_config",
+        gates={"deploy_preflight"},
+        exact={".firebaserc"},
     ),
     _rule(
         "deploy_configuration",
@@ -412,12 +471,26 @@ PATH_RULES: tuple[PathRule, ...] = (
         exact={"firebase.json", "firestore.indexes.json"},
     ),
     _rule(
+        "deployment_orchestration",
+        "deploy",
+        "deploy_orchestration",
+        gates={"deploy_preflight", "backend_container"},
+        exact={"Makefile"},
+    ),
+    _rule(
         "container_definition",
         "container",
         "container",
         gates={"backend_container", "dependency_review"},
         exact={"Dockerfile.backend", "cloudbuild.backend.yaml", ".dockerignore"},
         prefixes=("Dockerfile", "docker/"),
+    ),
+    _rule(
+        "container_orchestration",
+        "container",
+        "runtime_orchestration",
+        gates={"backend", "frontend", "backend_container"},
+        exact={"docker-compose.yml"},
     ),
     _rule(
         "dependency_backend",
@@ -501,7 +574,22 @@ PATH_RULES: tuple[PathRule, ...] = (
             "apps/frontend/tsconfig.json",
             "apps/frontend/tsconfig.node.json",
             "apps/frontend/vite.config.ts",
+            "apps/frontend/vitest.setup.ts",
         },
+    ),
+    _rule(
+        "frontend_container_entrypoint",
+        "frontend_container",
+        "frontend_runtime",
+        gates={"frontend"},
+        exact={"apps/frontend/docker-entrypoint.sh"},
+    ),
+    _rule(
+        "frontend_architecture_contract",
+        "frontend_contract",
+        "frontend_architecture",
+        gates={"frontend"},
+        exact={"scripts/check_frontend_architecture_boundaries.mjs"},
     ),
     _rule(
         "backend_config",
@@ -516,7 +604,14 @@ PATH_RULES: tuple[PathRule, ...] = (
         "backend_test",
         "backend_test",
         gates={"backend"},
-        prefixes=("tests/backend/", "tests/integration/"),
+        prefixes=("tests/backend/", "tests/integration/", "tests/llmops/"),
+    ),
+    _rule(
+        "backend_test_helpers",
+        "backend_test",
+        "backend_test",
+        gates={"backend"},
+        exact={"tests/__init__.py", "tests/conftest.py", "tests/firestore_fakes.py"},
     ),
     _rule(
         "docs_non_runtime",
@@ -538,6 +633,55 @@ PATH_RULES: tuple[PathRule, ...] = (
         "test_only",
         "non_runtime",
         prefixes=("tests/fixtures/",),
+    ),
+    _rule(
+        "root_backend_tests",
+        "backend_test",
+        "backend_test",
+        gates={"backend"},
+        prefixes=("tests/test_",),
+        suffixes=(".py",),
+    ),
+    _rule(
+        "backend_demo_data",
+        "backend_fixture",
+        "backend_data",
+        gates={"backend"},
+        prefixes=(".data_demo/",),
+    ),
+    _rule(
+        "offline_evaluation",
+        "offline_evaluation",
+        "evaluation",
+        gates={"backend"},
+        prefixes=("evals/", "scripts/llmops/"),
+    ),
+    _rule(
+        "backend_example_runtime",
+        "example_runtime",
+        "backend_example",
+        gates={"backend"},
+        prefixes=("examples/static-ui/static-app/", "static/"),
+    ),
+    _rule(
+        "backend_infrastructure_script",
+        "backend_infrastructure",
+        "backend_container",
+        gates={"backend", "backend_container"},
+        exact={"scripts/seed_firestore_demo.py", "scripts/start_firestore_emulator.sh"},
+    ),
+    _rule(
+        "execution_environment",
+        "environment",
+        "build_environment",
+        gates={"backend", "frontend", "backend_container"},
+        prefixes=(".codex/environments/",),
+    ),
+    _rule(
+        "repository_metadata",
+        "repository_config",
+        "non_runtime",
+        exact={".gitignore", "packages/shared/.gitkeep"},
     ),
     _rule(
         "generic_test_non_runtime",

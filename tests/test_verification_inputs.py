@@ -148,6 +148,59 @@ def test_dependency_review_covers_python_graph_dockerfile_and_dependabot_inputs(
         assert plan.dependency_review is True, path
 
 
+def test_existing_operational_paths_keep_domain_boundaries_without_ui_overtrigger() -> None:
+    expected_gates = {
+        "Makefile": {"backend_container", "deploy_preflight"},
+        ".firebaserc": {"deploy_preflight"},
+        "docker-compose.yml": {"backend", "frontend", "backend_container"},
+        "apps/frontend/docker-entrypoint.sh": {"frontend"},
+        "scripts/check_frontend_architecture_boundaries.mjs": {"frontend"},
+        "scripts/security_scan_text.py": {"governance"},
+    }
+
+    for path, gates in expected_gates.items():
+        plan = classify_paths([path])
+        assert plan.classification_ok is True, path
+        assert set(plan.path_classifications[0].gates) == gates
+        assert plan.playwright_smoke is False, path
+        assert plan.playwright_visual is False, path
+
+
+def test_backend_and_dedicated_contract_tests_keep_high_priority_gates() -> None:
+    expected_gates = {
+        "tests/test_api.py": {"backend"},
+        "tests/conftest.py": {"backend"},
+        "tests/firestore_fakes.py": {"backend"},
+        "tests/test_public_docs_security.py": {"governance"},
+        "tests/test_security_scan_text.py": {"governance"},
+        "tests/test_github_actions_branch_policy.py": {"workflow_contract"},
+        "tests/test_scheduled_maintenance_workflow.py": {"workflow_contract"},
+        "tests/test_deploy_script_env_guard.py": {"deploy_preflight"},
+        "tests/test_deploy_workflow_safety.py": {"deploy_preflight", "workflow_contract"},
+    }
+
+    for path, gates in expected_gates.items():
+        plan = classify_paths([path])
+        assert plan.classification_ok is True, path
+        assert set(plan.path_classifications[0].gates) == gates
+        assert plan.playwright_smoke is False, path
+        assert plan.playwright_visual is False, path
+
+
+def test_every_tracked_path_is_registered_by_a_domain_rule() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    tracked = subprocess.check_output(
+        ["git", "ls-files", "-z"], cwd=repo_root
+    ).split(b"\0")
+    unknown = [
+        path.decode("utf-8", errors="surrogateescape")
+        for path in tracked
+        if path and classify_path(path.decode("utf-8", errors="surrogateescape")) is None
+    ]
+
+    assert unknown == []
+
+
 def test_registered_e2e_specs_map_to_their_gate() -> None:
     smoke = classify_paths(["tests/e2e/auth.spec.ts"])
     visual = classify_paths(["tests/e2e/visual.spec.ts"])
