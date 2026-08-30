@@ -38,6 +38,7 @@ OUTPUT_FIELDS = (
     "deploy_preflight",
     "governance",
     "workflow_contract",
+    "dependency_review",
     "playwright_smoke",
     "playwright_visual",
     "classification_ok",
@@ -52,6 +53,7 @@ ALL_GATES = frozenset(
         "deploy_preflight",
         "governance",
         "workflow_contract",
+        "dependency_review",
         "playwright_smoke",
         "playwright_visual",
     }
@@ -134,18 +136,7 @@ BACKEND_FILES = {
     "Dockerfile.backend",
 }
 WORKFLOW_PREFIX = ".github/workflows/"
-WORKFLOW_GATES = frozenset(
-    {
-        "backend",
-        "frontend",
-        "backend_container",
-        "deploy_preflight",
-        "governance",
-        "workflow_contract",
-        "playwright_smoke",
-        "playwright_visual",
-    }
-)
+WORKFLOW_GATES = ALL_GATES - {"dependency_review"}
 WORKFLOW_CONTRACT_FILES = {
     "pytest.ini",
     "scripts/classify_verification_inputs.py",
@@ -376,11 +367,16 @@ PATH_RULES: tuple[PathRule, ...] = (
             "scripts/verify_task_skills.py",
             "scripts/measure_effective_instruction_budget.py",
             "tests/test_agent_harness_budget.py",
-            "requirements-agent-harness.txt",
             ".github/pull_request_template.md",
-            ".github/dependabot.yml",
         ),
         prefixes=(".github/ISSUE_TEMPLATE/",),
+    ),
+    _rule(
+        "governance_dependency_inputs",
+        "governance",
+        "governance_dependency",
+        gates={"governance", "dependency_review"},
+        exact={"requirements-agent-harness.txt", ".github/dependabot.yml"},
     ),
     _rule(
         "governance_validation_prefixes",
@@ -408,7 +404,7 @@ PATH_RULES: tuple[PathRule, ...] = (
         "container_definition",
         "container",
         "container",
-        gates={"backend_container"},
+        gates={"backend_container", "dependency_review"},
         exact={"Dockerfile.backend", "cloudbuild.backend.yaml", ".dockerignore"},
         prefixes=("Dockerfile", "docker/"),
     ),
@@ -416,14 +412,22 @@ PATH_RULES: tuple[PathRule, ...] = (
         "dependency_backend",
         "dependency",
         "backend_dependency",
-        gates={"backend", "backend_container"},
+        gates={"backend", "backend_container", "dependency_review"},
         exact={"requirements.txt"},
+    ),
+    _rule(
+        "dependency_python_requirements",
+        "dependency",
+        "python_dependency",
+        gates={"backend", "backend_container", "dependency_review"},
+        prefixes=("requirements", "apps/backend/requirements"),
+        suffixes=(".txt",),
     ),
     _rule(
         "dependency_root_playwright",
         "dependency",
         "ui_dependency",
-        gates=UI_GATES,
+        gates=UI_GATES | {"dependency_review"},
         exact={
             "package.json",
             "package-lock.json",
@@ -436,8 +440,31 @@ PATH_RULES: tuple[PathRule, ...] = (
         "dependency_frontend",
         "dependency",
         "frontend_dependency",
-        gates={"frontend"},
-        exact={"apps/frontend/package.json", "apps/frontend/package-lock.json"},
+        gates={"frontend", "dependency_review"},
+        exact={
+            "apps/frontend/package.json",
+            "apps/frontend/package-lock.json",
+            "apps/frontend/pnpm-lock.yaml",
+            "apps/frontend/yarn.lock",
+        },
+    ),
+    _rule(
+        "dependency_python_graph",
+        "dependency",
+        "python_dependency",
+        gates={"backend", "backend_container", "dependency_review"},
+        exact={
+            "pyproject.toml",
+            "poetry.lock",
+            "Pipfile",
+            "Pipfile.lock",
+            "uv.lock",
+            "setup.py",
+            "setup.cfg",
+            "tox.ini",
+            "apps/backend/pyproject.toml",
+            "apps/backend/poetry.lock",
+        },
     ),
     _rule(
         "shared_runtime",
@@ -706,6 +733,7 @@ class GatePlan:
     deploy_preflight: bool = False
     governance: bool = False
     workflow_contract: bool = False
+    dependency_review: bool = False
     playwright_smoke: bool = False
     playwright_visual: bool = False
     classification_ok: bool = True
@@ -757,6 +785,9 @@ def _full_plan(changed_path_count: int = 0) -> GatePlan:
         deploy_preflight=True,
         governance=True,
         workflow_contract=True,
+        # Dependency review is a PR-only check; main uses the full runtime
+        # profile and does not publish a dependency-review job selection.
+        dependency_review=False,
         playwright_smoke=True,
         playwright_visual=True,
         classification_ok=True,
@@ -847,6 +878,7 @@ def classify_paths(
         deploy_preflight="deploy_preflight" in gates,
         governance="governance" in gates,
         workflow_contract="workflow_contract" in gates,
+        dependency_review="dependency_review" in gates,
         playwright_smoke="playwright_smoke" in gates,
         playwright_visual="playwright_visual" in gates,
         classification_ok=classification_ok,

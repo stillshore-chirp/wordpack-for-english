@@ -43,6 +43,7 @@ def test_governance_only_is_governance_without_runtime_gates() -> None:
     assert plan.frontend is False
     assert plan.backend_container is False
     assert plan.deploy_preflight is False
+    assert plan.dependency_review is False
     assert plan.playwright_smoke is False
     assert plan.playwright_visual is False
     assert set(plan.categories) == {"governance", "skill"}
@@ -55,6 +56,7 @@ def test_backend_runtime_and_tests_keep_container_boundary() -> None:
     assert runtime.classification_ok is True
     assert runtime.backend is True
     assert runtime.backend_container is True
+    assert runtime.dependency_review is False
     assert runtime.frontend is False
     assert runtime.deploy_preflight is False
     assert runtime.playwright_smoke is False
@@ -62,6 +64,7 @@ def test_backend_runtime_and_tests_keep_container_boundary() -> None:
     assert runtime.categories == ("backend_runtime",)
     assert test_only.backend is True
     assert test_only.backend_container is False
+    assert test_only.dependency_review is False
     assert test_only.categories == ("backend_test",)
 
 
@@ -107,12 +110,15 @@ def test_deploy_container_and_dependency_categories_are_explicit() -> None:
 
     assert deploy.deploy_preflight is True
     assert deploy.workflow_contract is False
+    assert deploy.dependency_review is False
     assert deploy.categories == ("deploy",)
     assert container.backend_container is True
+    assert container.dependency_review is True
     assert container.backend is False
     assert container.categories == ("container",)
     assert dependency.backend is True
     assert dependency.backend_container is True
+    assert dependency.dependency_review is True
     assert dependency.categories == ("dependency",)
 
 
@@ -122,10 +128,24 @@ def test_dependency_scope_distinguishes_root_playwright_and_frontend_packages() 
 
     assert root.playwright_smoke is True
     assert root.playwright_visual is True
+    assert root.dependency_review is True
     assert root.frontend is False
     assert frontend.frontend is True
     assert frontend.playwright_smoke is False
     assert frontend.playwright_visual is False
+    assert frontend.dependency_review is True
+
+
+def test_dependency_review_covers_python_graph_dockerfile_and_dependabot_inputs() -> None:
+    for path in (
+        "requirements-dev.txt",
+        "pyproject.toml",
+        "poetry.lock",
+        "Dockerfile",
+        ".github/dependabot.yml",
+    ):
+        plan = classify_paths([path])
+        assert plan.dependency_review is True, path
 
 
 def test_registered_e2e_specs_map_to_their_gate() -> None:
@@ -250,7 +270,12 @@ def test_full_profile_selects_all_major_gates() -> None:
     plan = classify_paths([], profile="full")
 
     assert plan.classification_ok is True
-    assert all(getattr(plan, field) is True for field in OUTPUT_FIELDS)
+    assert all(
+        getattr(plan, field) is True
+        for field in OUTPUT_FIELDS
+        if field != "dependency_review"
+    )
+    assert plan.dependency_review is False
     assert plan.categories == ("full_profile",)
     assert plan.unknown_path_count == 0
 
@@ -262,7 +287,12 @@ def test_main_full_profile_and_github_output_include_all_boolean_fields(
 
     assert main(["--full", "--github-output", str(output_path)]) == 0
     payload = json.loads(capsys.readouterr().out)
-    assert all(payload[field] is True for field in OUTPUT_FIELDS)
+    assert all(
+        payload[field] is True
+        for field in OUTPUT_FIELDS
+        if field != "dependency_review"
+    )
+    assert payload["dependency_review"] is False
     output_fields = {
         line.split("=", 1)[0]
         for line in output_path.read_text(encoding="utf-8").splitlines()
@@ -314,7 +344,12 @@ def test_deleted_visual_workflow_uses_generic_workflow_contract() -> None:
     plan = classify_paths([".github/workflows/playwright-visual.yml"])
 
     assert plan.classification_ok is True
-    assert all(getattr(plan, field) is True for field in OUTPUT_FIELDS)
+    assert all(
+        getattr(plan, field) is True
+        for field in OUTPUT_FIELDS
+        if field not in {"dependency_review"}
+    )
+    assert plan.dependency_review is False
     assert plan.categories == ("workflow",)
 
 
@@ -322,7 +357,12 @@ def test_ci_workflow_change_selects_all_major_gates() -> None:
     plan = classify_paths([".github/workflows/ci.yml"])
 
     assert plan.classification_ok is True
-    assert all(getattr(plan, field) is True for field in OUTPUT_FIELDS)
+    assert all(
+        getattr(plan, field) is True
+        for field in OUTPUT_FIELDS
+        if field != "dependency_review"
+    )
+    assert plan.dependency_review is False
     assert plan.categories == ("workflow",)
 
 
