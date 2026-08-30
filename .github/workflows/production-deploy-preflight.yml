@@ -1,134 +1,33 @@
 name: Production deploy preflight
 
 on:
-  pull_request:
-    branches: [ main ]
-  pull_request_target:
-    branches: [ main ]
-    types: [ opened, synchronize, reopened, ready_for_review ]
+  schedule:
+    - cron: "17 3 * * *"
   workflow_dispatch:
 
 concurrency:
-  group: production-deploy-preflight-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: production-deploy-preflight-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  static_preflight:
-    name: Static deploy preflight
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Set up Node.js for frontend artifact
-        uses: actions/setup-node@v7
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: apps/frontend/package-lock.json
-
-      - name: Install frontend dependencies
-        env:
-          NPM_CONFIG_PRODUCTION: "false"
-        run: npm ci --prefix ./apps/frontend
-
-      - name: Build frontend artifact
-        run: npm --prefix ./apps/frontend run build
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.14'
-
-      - name: Install backend dependencies for Cloud Run dry-run
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Run Cloud Run dry-run preflight
-        run: |
-          ./scripts/deploy_cloud_run.sh \
-            --dry-run \
-            --env-file configs/cloud-run/ci.env \
-            --project-id ci-placeholder-project \
-            --region asia-northeast1 \
-            --service wordpack-backend \
-            --no-traffic \
-            --traffic-tag candidate
-
-      - name: Plan Firebase Hosting API deploy without writes
-        run: |
-          python scripts/deploy_firebase_hosting.py \
-            --project ci-placeholder-project \
-            --site ci-placeholder-project \
-            --public apps/frontend/dist \
-            --plan-only
-
-      - name: Guard production deploy contract
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-          import sys
-
-          forbidden = {
-              "gcloud " + "alpha": "Production deploy preflight forbids alpha gcloud commands because CI images may prompt for components.",
-              "firebase deploy --only " + "hosting": "Production Hosting deploy must use scripts/deploy_firebase_hosting.py, not Firebase CLI Hosting deploy.",
-              "FIREBASE" + "_TOKEN": "Production deploy must not depend on Firebase CLI token credentials.",
-          }
-          files = [
-              Path(".github/workflows/deploy-production.yml"),
-              Path("scripts/deploy_cloud_run.sh"),
-              Path("scripts/promote_cloud_run_revision.sh"),
-              Path("scripts/deploy_firestore_indexes.sh"),
-              Path("scripts/deploy_firebase_hosting.py"),
-              Path("Makefile"),
-          ]
-
-          failed = False
-          for path in files:
-              for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-                  stripped = line.strip()
-                  if not stripped or stripped.startswith("#"):
-                      continue
-                  for needle, message in forbidden.items():
-                      if needle in line:
-                          print(f"::error file={path},line={number}::{message}")
-                          failed = True
-
-          if failed:
-              sys.exit(1)
-          PY
-
   authenticated_read_only_probe:
     name: Authenticated deploy read-only probe
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
     env:
       CLOUD_RUN_PROJECT_ID: ${{ secrets.GCP_SA_PROJECT_ID }}
       FIREBASE_PROJECT_ID: ${{ secrets.GCP_SA_PROJECT_ID }}
       GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
       FIRESTORE_DATABASE_ID: "(default)"
     steps:
-      - name: Checkout trusted base code
-        if: github.event_name == 'pull_request_target'
+      - name: Checkout trusted main code
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
-          persist-credentials: false
-
-      - name: Checkout selected ref
-        if: github.event_name != 'pull_request_target'
-        uses: actions/checkout@v4
-        with:
+          ref: main
           persist-credentials: false
 
       - name: Validate probe secrets

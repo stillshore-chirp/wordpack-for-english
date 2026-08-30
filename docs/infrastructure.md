@@ -132,12 +132,11 @@ flowchart LR
         PlaywrightSmoke["Playwright smoke<br/>(PR critical flows)"]
         VisualRegression["Playwright visual<br/>(rendering changes)"]
         CloudRunGuard["Cloud Run config guard<br/>(dry-run)"]
-        DeployPreflight["Production deploy preflight<br/>(no deploy)"]
     end
 
-    subgraph CD["CD"]
-        DryRun["CD / Cloud Run dry-run<br/>(main push)"]
-        ProductionDeploy["Deploy to production<br/>(main push)"]
+    subgraph CD["CD / preflight"]
+        ProductionDeploy["Deploy to production<br/>(CI success workflow_run / manual SHA)"]
+        DeployPreflight["Production deploy preflight<br/>(schedule/manual main, read-only)"]
         FirestoreIndex["Firestore インデックス同期"]
         CloudBuild["Cloud Build"]
         CloudRun["Cloud Run デプロイ"]
@@ -153,9 +152,8 @@ flowchart LR
     UiTestScope --> PlaywrightSmoke
     UiTestScope --> VisualRegression
     SecurityTest --> CloudRunGuard
-    Actions -->|PR| DeployPreflight
-    Actions -->|main push| DryRun
-    Actions -->|main push| ProductionDeploy
+    Actions -->|schedule / main manual| DeployPreflight
+    Actions -->|CI completed successfully| ProductionDeploy
     ProductionDeploy --> FirestoreIndex
     FirestoreIndex --> CloudBuild
     CloudBuild --> CloudRun
@@ -173,13 +171,12 @@ flowchart LR
 | **UI test selection gate** | push / PR | changed path分類、Backend／Frontend、選択されたPlaywright smokeの結果を集約し、前提失敗によるsmoke skipを成功扱いにしない |
 | **Visual test selection gate** | `pull_request` | changed path分類と選択されたVisual Regressionの結果を集約し、分類失敗や予期しないskipを成功扱いにしない |
 | **Cloud Run config guard** | Security headers 成功後 | デプロイスクリプトの lint と dry-run 検証 |
-| **Production deploy preflight** | `pull_request` / `pull_request_target` / 手動実行 | PR コードでは secrets なしの frontend build、Cloud Run dry-run、Hosting API plan を実行し、secrets を使う read-only probe は base branch の信頼済みコードだけで実行 |
-| **Cloud Run dry-run** | `main` push | `CD / Cloud Run dry-run` として main に取り込まれた commit のチェック一覧に表示し、`make release-cloud-run` の dry-run モードを実行 |
-| **Deploy to production** | `main` push / 手動実行 | `deploy-production.yml` が `make release-cloud-run` と Firebase Hosting deploy を実行。PR では本番デプロイ job を作らない |
+| **Production deploy preflight** | schedule / `workflow_dispatch`（main refのみ） | 信頼済み main code で gcloud、Firestore、Firebase Hosting の read-only probe。credential 欠如は fail-closed |
+| **Deploy to production** | `CI` `workflow_run`（success / push / main / 同一SHA）または `workflow_dispatch`（target SHA必須） | GitHub APIでCI成功を照合し、対象SHAへcheckoutして `make release-cloud-run` と Firebase Hosting deploy を実行。PRでは本番デプロイ job を作らない |
 
-Cloud Run dry-run と `Deploy to production` は `main` ブランチへの push で直接起動し、GitHub のコミットチェック一覧に CD の状態を表示する。PR では本番デプロイ job を作らず、`Production deploy preflight` で非破壊の事前検証を行う。CI 成功を必須にする場合は main ブランチ保護でチェックを必須化する。
+静的な Cloud Run dry-run と deploy contract 検証は `CI` lane に集約し、重複する `deploy-dry-run.yml` workflow は置かない。本番デプロイは `CI` の同一SHA成功を `workflow_run` 側で再検証してから開始する。PR では本番デプロイ job を作らず、認証済み probe は schedule または main ref の手動実行に限定する。
 
-CD のチェック表示は GitHub Actions に集約する。main への push または手動リリース時は `Deploy to production` ワークフローが起動し、その job の成功/失敗で本番デプロイの状態を確認する。Cloud Build は `cloudbuild.backend.yaml` でバックエンド image build のみを担当し、GitHub Checks API への通知は行わない。これにより Cloud Build 内の外部通知が詰まって Cloud Run デプロイ開始前に止まるリスクを避ける。
+CD のチェック表示は GitHub Actions に集約する。`workflow_run` は検証済み `workflow_run.head_sha` を checkout し、manual break-glass は GitHub API で指定 SHA の成功CIを照合する。Cloud Build は `cloudbuild.backend.yaml` でバックエンド image build のみを担当し、GitHub Checks API への通知は行わない。これにより Cloud Build 内の外部通知が詰まって Cloud Run デプロイ開始前に止まるリスクを避ける。
 
 ### E2E 実行レイヤ（Playwright）
 
@@ -214,10 +211,10 @@ sequenceDiagram
     Dev->>GitHub: git push main
     GitHub->>Actions: CI トリガー
     Actions->>Actions: pytest / vitest / Playwright smoke
-    Actions->>GCloud: dry-run 検証
-    GCloud-->>Actions: 設定 OK
+    Actions-->>Actions: CI success / target SHA確定
+    Actions->>Actions: workflow_run が同一SHAを検証
 
-    Note over Dev: 手動デプロイ or CI 本番ジョブ
+    Note over Dev: manual break-glass は target SHA と成功CIを要求
     Dev->>GCloud: make release-cloud-run
     GCloud->>FS: Firestore インデックス同期
     GCloud->>AR: Cloud Build (イメージ push)

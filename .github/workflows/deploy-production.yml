@@ -1,25 +1,113 @@
 name: Deploy to production
 
 on:
-  push:
-    branches: [ main ]
-  # 手動実行のフォールバックを残しておく。
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
   workflow_dispatch:
+    inputs:
+      target_sha:
+        description: 40文字のコミットSHA（同SHAのCI成功runが必須）
+        required: true
+        type: string
 
 concurrency:
-  group: deploy-production-${{ github.workflow }}-${{ github.ref }}
+  group: deploy-production-${{ github.workflow }}-${{ github.event.workflow_run.head_sha || inputs.target_sha || github.ref }}
   # canary 中断で traffic split を残さないよう、進行中の本番リリースは完走させて次を待機させる。
   cancel-in-progress: false
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
+  verify-target:
+    name: Verify deployment target
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      target_sha: ${{ steps.verify.outputs.target_sha }}
+    permissions:
+      contents: read
+      actions: read
+    env:
+      TARGET_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.target_sha }}
+      WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
+      WORKFLOW_RUN_NAME: ${{ github.event.workflow_run.name }}
+      WORKFLOW_RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+      WORKFLOW_RUN_EVENT: ${{ github.event.workflow_run.event }}
+      WORKFLOW_RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
+      WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - name: Verify target trigger and successful CI
+        id: verify
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "${TARGET_SHA}" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "::error::target_sha must be a 40-character commit SHA."
+            exit 1
+          fi
+          TARGET_SHA="${TARGET_SHA,,}"
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" && "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            echo "::error::Manual production deployment must be dispatched from the trusted main ref."
+            exit 1
+          fi
+
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" ]]; then
+            [[ "${WORKFLOW_RUN_ID}" =~ ^[0-9]+$ ]] || {
+              echo "::error::workflow_run id is invalid."
+              exit 1
+            }
+            if [[ "${WORKFLOW_RUN_NAME}" != "CI" ||
+                  "${WORKFLOW_RUN_CONCLUSION}" != "success" ||
+                  "${WORKFLOW_RUN_EVENT}" != "push" ||
+                  "${WORKFLOW_RUN_BRANCH}" != "main" ||
+                  "${WORKFLOW_RUN_HEAD_SHA,,}" != "${TARGET_SHA}" ]]; then
+              echo "::error::The completed workflow_run is not a successful CI push on main for target_sha."
+              exit 1
+            fi
+
+            run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${WORKFLOW_RUN_ID}")"
+            jq -e --arg target "${TARGET_SHA}" \
+              '.name == "CI" and .event == "push" and .head_branch == "main" and .head_sha == $target and .conclusion == "success"' \
+              <<<"${run_json}" >/dev/null || {
+                echo "::error::GitHub API did not confirm the successful CI run for target_sha."
+                exit 1
+              }
+          else
+            successful_runs="$(gh api \
+              --method GET \
+              "repos/${GITHUB_REPOSITORY}/actions/runs" \
+              -f "head_sha=${TARGET_SHA}" \
+              -f "event=push" \
+              -f "branch=main" \
+              -f "status=success" \
+              -f "per_page=100")"
+            jq -e --arg target "${TARGET_SHA}" \
+              '[.workflow_runs[] | select(.name == "CI" and .event == "push" and .head_branch == "main" and .head_sha == $target and .conclusion == "success")] | length > 0' \
+              <<<"${successful_runs}" >/dev/null || {
+                echo "::error::No successful CI push on main was found for target_sha."
+                exit 1
+              }
+          fi
+
+          echo "target_sha=${TARGET_SHA}" >> "${GITHUB_OUTPUT}"
+
   deploy:
     name: Deploy to production
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    needs: verify-target
+    if: needs.verify-target.result == 'success'
     environment: production
+    permissions:
+      contents: read
     env:
       CLOUD_RUN_PROJECT_ID: ${{ secrets.GCP_SA_PROJECT_ID }}
       CLOUD_RUN_REGION: asia-northeast1
@@ -33,15 +121,26 @@ jobs:
       CLOUD_RUN_CANARY_REQUESTS_PER_ATTEMPT: "10"
       SKIP_FIRESTORE_INDEX_SYNC: "false"
       FIREBASE_PROJECT_ID: ${{ secrets.GCP_SA_PROJECT_ID }}
-      TRIGGER_BRANCH: ${{ github.ref_name }}
-      TRIGGER_SHA: ${{ github.sha }}
+      TRIGGER_BRANCH: main
+      TRIGGER_SHA: ${{ needs.verify-target.outputs.target_sha }}
       GITHUB_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ env.TRIGGER_SHA }}
+          ref: ${{ needs.verify-target.outputs.target_sha }}
+          fetch-depth: 1
           persist-credentials: false
+
+      - name: Assert checked out target SHA
+        run: |
+          set -euo pipefail
+          checked_out_sha="$(git rev-parse HEAD)"
+          if [[ "${checked_out_sha}" != "${TRIGGER_SHA}" ]]; then
+            echo "::error::Checked out HEAD ${checked_out_sha} does not match target SHA ${TRIGGER_SHA}."
+            exit 1
+          fi
+          echo "Checked out authoritative deployment SHA ${checked_out_sha}."
 
       - name: Materialize production env file
         # シークレットに保存した base64 文字列から .env.deploy を復元し、後続の検証に備える。
@@ -92,7 +191,7 @@ jobs:
           echo "Inputs validated. Proceeding to authenticated deployment."
 
       - name: Authenticate to Google Cloud with service account key
-        # CI 成功後にのみ実行される本番デプロイなので、サービスアカウントキーで明示的に認証する。
+        # Verify target jobで同一SHAのCI成功を確認した後、サービスアカウントキーで認証する。
         # gcloud / Cloud Run 用の認証は auth action の credentials file を使う。
         id: gcp-auth
         uses: google-github-actions/auth@v2
@@ -156,6 +255,7 @@ jobs:
             REGION="${CLOUD_RUN_REGION}" \
             SERVICE="${CLOUD_RUN_SERVICE}" \
             ENV_FILE="${CLOUD_RUN_ENV_FILE}" \
+            IMAGE_TAG="${TRIGGER_SHA}" \
             MIN_INSTANCES="${CLOUD_RUN_MIN_INSTANCES}" \
             NO_TRAFFIC=true \
             TRAFFIC_TAG="${CLOUD_RUN_TRAFFIC_TAG}" \
