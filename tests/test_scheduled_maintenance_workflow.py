@@ -57,8 +57,8 @@ def test_scheduled_maintenance_contract():
 
     codeql = _job_block(workflow, "codeql")
     assert "security-events: write" in codeql
-    assert "github/codeql-action/init@v4" in codeql
-    assert "github/codeql-action/analyze@v4" in codeql
+    assert "uses: github/codeql-action/init@" in codeql
+    assert "uses: github/codeql-action/analyze@" in codeql
     assert "queries: +security-extended,security-and-quality" in codeql
     assert "javascript-typescript" in codeql and "python" in codeql
 
@@ -66,7 +66,7 @@ def test_scheduled_maintenance_contract():
     assert "actions: read" in scorecard
     assert "security-events: write" in scorecard
     assert "id-token: write" in scorecard
-    assert "ossf/scorecard-action@v2.4.3" in scorecard
+    assert "uses: ossf/scorecard-action@" in scorecard
     assert "results_file: scorecard-results.sarif" in scorecard
     assert "results_format: sarif" in scorecard
     assert "retention-days: 30" in scorecard

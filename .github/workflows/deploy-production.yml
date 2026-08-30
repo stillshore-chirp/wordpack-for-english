@@ -187,7 +187,7 @@ jobs:
       GITHUB_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ needs.verify-target.outputs.target_sha }}
           fetch-depth: 1
@@ -255,7 +255,7 @@ jobs:
         # Verify target jobで同一SHAのCI成功を確認した後、サービスアカウントキーで認証する。
         # gcloud / Cloud Run 用の認証は auth action の credentials file を使う。
         id: gcp-auth
-        uses: google-github-actions/auth@v2
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
           create_credentials_file: true
@@ -263,13 +263,13 @@ jobs:
 
       - name: Set up gcloud SDK
         # gcloud CLI をプロジェクト/リージョンに合わせて準備する。Cloud Run / Cloud Build は GA コマンドのみ使用。
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
         with:
           project_id: ${{ env.CLOUD_RUN_PROJECT_ID }}
 
       - name: Set up Node.js for frontend build
         # Firebase Hosting の公開 artifact を作るため Node.js を用意する。
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22'
 
@@ -281,7 +281,7 @@ jobs:
 
       - name: Set up Python
         # デプロイスクリプトが python -m apps.backend.backend.config で設定を検証するため Python 環境を用意する。
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.14'
 
