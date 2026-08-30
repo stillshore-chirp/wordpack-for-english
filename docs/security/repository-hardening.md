@@ -1,6 +1,6 @@
 # Repository Hardening Checklist
 
-Last reviewed: 2026-06-21
+Last reviewed: 2026-08-30
 
 This checklist tracks GitHub repository settings that cannot be fully changed from the repository contents. Keep exact secret values, production identifiers, and private log details out of this document.
 
@@ -35,6 +35,18 @@ This checklist tracks GitHub repository settings that cannot be fully changed fr
 - [ ] `production` environment is protected.
 - [ ] Deployment secrets are scoped to the production environment where possible.
 - [ ] Long-lived `GCP_SA_KEY` migration to Workload Identity Federation is tracked separately.
+
+## Production Deployment Invariants
+
+The source-controlled deployment contract is:
+
+- `Deploy to production` accepts an automatic `workflow_run` only when the completed workflow is `CI` with `success`, `push`, `main`, and the requested `head_sha`.
+- CI authorization also pins `.github/workflows/ci.yml` to live workflow ID `187172373` and requires the same run's canonical `Quality gate` job to be completed successfully; a recreated workflow requires an explicit constant update.
+- Manual break-glass requires an explicit `target_sha` and a dispatch from the trusted `main` ref; the workflow queries GitHub Actions for a matching successful `CI` push on `main` before entering the `production` environment.
+- The deploy job checks out that exact SHA and asserts `git rev-parse HEAD`. `IMAGE_TAG` and runtime `GIT_SHA` are derived from that checkout and cannot be overridden by the deployment env file.
+- Authenticated preflight runs from scheduled or `main`-ref manual execution only, always checks out trusted `main`, and fails closed when credentials are unavailable. Static validation belongs to the `CI` lane.
+
+The live branch rules, environment approvals, secret scope, and identity-provider configuration remain operational settings and must be verified in GitHub/GCP; this file does not claim those settings are currently enabled.
 
 ## Manual Review Notes
 

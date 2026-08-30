@@ -1,50 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
-import re
 
 
 def _read(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
-def test_manual_live_workflow_is_dispatch_only_and_bounded() -> None:
-    workflow = _read(".github/workflows/llm-live-evaluation.yml")
-    on_block = re.search(r"(?ms)^on:\s*\n(.*?)(?=^permissions:)", workflow)
-    assert on_block is not None
-    assert "workflow_dispatch:" in on_block.group(1)
-    for forbidden in ("push:", "pull_request:", "schedule:", "workflow_call:"):
-        assert forbidden not in on_block.group(1)
-    for required in (
-        "RUN_PAID_LIVE_EVALUATION",
-        "environment: llm-live-evaluation",
-        "hard limit 5",
-        "hard limit 30",
-        "hard limit 150000",
-        "Paid LLM requests: 0",
-    ):
-        assert required in workflow
-    assert "LIVE_EVALUATION_CONFIRM: ${{ inputs.confirm }}" in workflow
-    assert '--confirm "${LIVE_EVALUATION_CONFIRM}"' in workflow
-    live_run = workflow.split("run: |", 2)[-1]
-    assert "${{ inputs.confirm }}" not in live_run
-    live_job = workflow.split("\n  live:\n", 1)[1]
-    job_env = re.search(r"(?ms)^    env:\s*\n(.*?)(?=^    steps:)", live_job)
-    assert job_env is not None
-    assert "OPENAI_API_KEY" not in job_env.group(1)
-    evaluation_step = live_job.split(
-        "      - name: Run explicitly confirmed bounded live evaluation", 1
-    )[1]
-    assert "OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}" in evaluation_step
-
-
 def test_normal_ci_and_deploy_do_not_reference_llmops_secrets_or_live_eval() -> None:
-    normal_workflows = [
-        path
-        for path in Path(".github/workflows").glob("*.yml")
-        if path.name != "llm-live-evaluation.yml"
-    ]
-    for path in normal_workflows:
+    for path in Path(".github/workflows").glob("*.yml"):
         text = path.read_text(encoding="utf-8")
         assert "scripts/llmops/live_eval.py" not in text, path
         assert "secrets.OPENAI_API_KEY" not in text, path
@@ -55,9 +19,22 @@ def test_normal_ci_and_deploy_do_not_reference_llmops_secrets_or_live_eval() -> 
     assert "continue-on-error: true" in ci
 
 
-def test_production_deploy_keeps_existing_trigger_and_does_not_depend_on_evaluation() -> None:
+def test_production_deploy_is_ci_authorized_and_does_not_depend_on_evaluation() -> None:
     deploy = _read(".github/workflows/deploy-production.yml")
-    assert "branches: [ main ]" in deploy
+    assert "push:" not in deploy
+    assert "workflow_run:" in deploy
+    assert "- CI" in deploy
+    assert "- completed" in deploy
     assert "workflow_dispatch:" in deploy
+    assert "target_sha:" in deploy
+    assert "github.event.workflow_run.head_sha" in deploy
+    assert 'head_sha=${TARGET_SHA}' in deploy
+    assert ".head_sha == $target" in deploy
+    assert "CI_WORKFLOW_PATH: .github/workflows/ci.yml" in deploy
+    assert 'CI_WORKFLOW_ID: "187172373"' in deploy
+    assert "actions/runs/${run_id}/jobs?per_page=100" in deploy
+    assert "Quality gate" in deploy
+    assert '.conclusion == "success"' in deploy
+    assert "needs: verify-target" in deploy
+    assert "environment: production" in deploy
     assert "llm-live-evaluation" not in deploy
-    assert "needs:" not in deploy

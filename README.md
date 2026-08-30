@@ -68,7 +68,7 @@ npm run dev
 | インフラ構成、CI/CD の全体像 | [docs/infrastructure.md](docs/infrastructure.md) |
 | AI 処理フロー | [docs/flows.md](docs/flows.md) |
 | OpenAI モデル設定 | [docs/models.md](docs/models.md) |
-| LLMOps、生成来歴、オフライン・手動評価 | [docs/llmops/index.md](docs/llmops/index.md) |
+| LLMOps、生成来歴、オフライン評価 | [docs/llmops/index.md](docs/llmops/index.md) |
 | 環境変数 | [docs/環境変数の意味.md](docs/環境変数の意味.md) |
 | Google OAuth / セッション / ゲスト認証 | [docs/authentication.md](docs/authentication.md) |
 | Firestore インデックス、エミュレータ、シード | [docs/firestore.md](docs/firestore.md) |

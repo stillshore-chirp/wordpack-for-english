@@ -7,8 +7,8 @@
 - backend は `Dockerfile.backend` でビルドし、Cloud Run にデプロイします。
 - frontend は React + Vite の build artifact を Firebase Hosting API で配置します。
 - Firestore の複合インデックスと single-field override は `firestore.indexes.json` を同期します。既定の `gcloud` 経路は gcloud の認証情報で Firestore Admin API を直接呼び、Firebase CLI と `gcloud alpha` component には依存しません。
-- GitHub Actions の本番デプロイは `main` への push と `workflow_dispatch` をトリガーにします。
-- PR では本番デプロイ job を作らず、production deploy preflight で Cloud Run dry-run、Firebase Hosting API plan、認証済み read-only probe を非破壊で確認します。
+- GitHub Actions の本番デプロイは `CI` の完了を受ける `workflow_run` 経路と、対象 SHA を明示する `workflow_dispatch` 経路だけです。自動経路は `conclusion=success`、`event=push`、`head_branch=main` を満たし、対象 SHA の一致を検証します。
+- 静的なデプロイ設定検証は `CI` の Cloud Run config guard などで行い、重複する dry-run workflow は持ちません。認証済み production deploy preflight は schedule と main ref の手動実行だけで、信頼済み main code の read-only probe を行います。
 
 ## 事前準備
 
@@ -93,7 +93,7 @@ make deploy-cloud-run PROJECT_ID=<project-id> REGION=asia-northeast1
 
 ## release-cloud-run
 
-本番リリースでは `make release-cloud-run` を使うと、Firestore インデックス同期、Cloud Run dry-run、本番デプロイの順序を固定できます。
+本番リリースでは `make release-cloud-run` を使うと、Firestore インデックス同期、Cloud Run dry-run、本番デプロイの順序を固定できます。`scripts/deploy_cloud_run.sh` の `IMAGE_TAG` と `GIT_SHA` は checkout 済み HEAD の完全 SHA を正本とし、`.env.deploy` や外部環境変数による上書きを受け付けません。`--image-tag` を渡す場合も同じ SHA の確認値である必要があります。
 
 ```bash
 DEPLOYMENT_VERSION="$(openssl rand -hex 16)"
@@ -201,10 +201,12 @@ firebase deploy --only hosting --project <firebase-project-id>
 
 本番自動デプロイは `.github/workflows/deploy-production.yml` が担当します。
 
-- `main` への push で起動します。
-- 手動実行用に `workflow_dispatch` もあります。
+- `CI` workflow の完了を受けて起動します。自動経路は completed event の `name=CI`、`conclusion=success`、`event=push`、`head_branch=main` を検証し、`workflow_run.head_sha` をそのまま対象にします。
+- CI workflow identity は固定 path `.github/workflows/ci.yml` と、live repository の API で解決した immutable workflow ID `187172373` を照合します。同一runの詳細と jobs API で canonical `Quality gate`（現行表示名: `Quality gate (selected checks)`）の completed/success も確認します。workflowを再作成してIDが変わった場合は、この定数を明示的に更新してから再開します。
+- 手動の break-glass 実行は trusted `main` ref からのみ起動でき、必須入力 `target_sha` を受け取ります。completed状態の候補runをGitHub APIで取得し、同一 SHA の `CI` 成功・push・main runを1件確定した後、自動経路と同じrun詳細／Quality gate検証を通過してから `production` environment job へ進みます。
+- checkout は検証済み対象 SHA に固定し、checkout 後の `git rev-parse HEAD` との一致を assert します。
+- 自動／手動の全 production release は単一の stable concurrency group に入り、`cancel-in-progress=false` でFIFO待機します。candidate tag、traffic、rollback操作を異なるSHA間で並行させません。
 - PR では本番 deploy job を作りません。
-- CI 成功を必須にする場合は、GitHub の branch protection で必要な check を指定します。
 - Cloud Run は traffic 0% の候補作成、tag URL の health check、10% canary、60 秒の継続確認、100% 昇格の順に進みます。canary 失敗時は直前の traffic 配分へ自動復旧します。
 - Cloud Run の minimum instances は repository variable `CLOUD_RUN_MIN_INSTANCES` で上書きできます。未設定時は紹介用 URL の初回体験を優先して `1` を使います。費用優先へ戻す場合は `0` を設定します。
 - Reader文章インポートなどレスポンス後も継続する非同期ジョブのため、デプロイ環境ファイルでは `CLOUD_RUN_NO_CPU_THROTTLING=true` を設定します。`false` のままでは202応答後にバックグラウンド処理が停止し得ます。
@@ -221,14 +223,13 @@ Firestore index 同期は `gcloud` 認証の Firestore Admin API 経由で行い
 
 ### Production deploy preflight
 
-`.github/workflows/production-deploy-preflight.yml` は、PR 時点で本番デプロイの主要な前提を非破壊で確認します。
+`.github/workflows/production-deploy-preflight.yml` は、信頼済み main code に対する認証済みの read-only probe を定期または main ref の手動実行で確認します。静的な preflight は `CI` lane が担当します。
 
-- `pull_request` では PR コードを checkout し、secrets なしで frontend build、Cloud Run dry-run、Firebase Hosting API の `--plan-only`、production deploy contract guard を実行します。
-- `pull_request_target` では secrets を使うため、PR コードは checkout せず、base branch の信頼済みコードだけで read-only probe を実行します。
+- trigger は schedule と `workflow_dispatch` です。手動実行では `refs/heads/main` の場合だけ authenticated job が実行され、常に `main` を checkout します。
 - read-only probe は `gcloud auth print-access-token`、Firestore Admin API の index list、Firebase Hosting API の releases list を確認します。
-- `workflow_dispatch` では選択した ref に対して同じ静的 preflight と read-only probe を手動実行できます。
+- GCP credential が欠けている場合は skip せず fail-closed で停止します。
 
-この preflight は Hosting version 作成、file upload、version finalize、release 作成、Firestore index 作成/更新、Cloud Run 実デプロイを実行しません。そのため write 権限、quota、release 作成時の最終検証までは完全保証できません。実デプロイを伴わない範囲で、API path、認証前提、build artifact、dry-run 可能な設定、禁止 CLI 依存を先に検知するための check です。
+この preflight は Hosting version 作成、file upload、version finalize、release 作成、Firestore index 作成/更新、Cloud Run 実デプロイを実行しません。そのため write 権限、quota、release 作成時の最終検証までは完全保証できません。API path と認証前提の read-only 到達性を確認するもので、frontend build、Cloud Run dry-run、deploy contract の静的検証は `CI` lane で行います。
 
 サービスアカウントに必要な代表ロール:
 

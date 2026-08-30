@@ -37,7 +37,7 @@ Options:
   --region <region>          Artifact Registry / Cloud Run region
   --service <name>           Cloud Run service name (default: wordpack-backend)
   --artifact-repo <path>     Artifact Registry repo path (default: wordpack/backend)
-  --image-tag <tag>          Image tag (default: git rev-parse --short HEAD)
+  --image-tag <tag>          Optional assertion; must equal the checked-out commit SHA
   --build-arg KEY=VALUE      Additional docker build arg (repeatable)
   --env-file <path>          Explicit env file (default: .env.deploy or .env)
   --run-timeout <duration>   Cloud Run request timeout, e.g. 360s, 10m (default: use existing service setting)
@@ -117,6 +117,7 @@ REGION_ARG=""
 SERVICE_NAME="wordpack-backend"
 ARTIFACT_REPOSITORY="wordpack/backend"
 IMAGE_TAG=""
+IMAGE_TAG_ARG=""
 SECRET_LENGTH=48
 GENERATE_SECRET=false
 DRY_RUN=false
@@ -131,7 +132,7 @@ declare -a EXTRA_BUILD_ARGS=()
 declare -a CONFIG_PYTHON_CMD=()
 
 declare -A DEPLOY_ENV_KEYS=()
-declare -a IGNORE_DEPLOY_KEYS=(PROJECT_ID REGION CLOUD_RUN_SERVICE ARTIFACT_REPOSITORY IMAGE_TAG MACHINE_TYPE BUILD_TIMEOUT CLOUD_RUN_TIMEOUT CLOUD_RUN_MIN_INSTANCES CLOUD_RUN_NO_CPU_THROTTLING)
+declare -a IGNORE_DEPLOY_KEYS=(PROJECT_ID REGION CLOUD_RUN_SERVICE ARTIFACT_REPOSITORY IMAGE_TAG IMAGE_TAG_ARG GIT_SHA MACHINE_TYPE BUILD_TIMEOUT CLOUD_RUN_TIMEOUT CLOUD_RUN_MIN_INSTANCES CLOUD_RUN_NO_CPU_THROTTLING)
 declare -a REQUIRED_DEPLOY_KEYS=(ADMIN_EMAIL_ALLOWLIST SESSION_SECRET_KEY CORS_ALLOWED_ORIGINS TRUSTED_PROXY_IPS ALLOWED_HOSTS)
 GCLOUD_CMD_CHECKED=false
 
@@ -194,7 +195,7 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --image-tag)
-      IMAGE_TAG="$2"
+      IMAGE_TAG_ARG="$2"
       shift 2
       ;;
     --env-file)
@@ -389,7 +390,17 @@ fi
 
 # ここから先は、デプロイに必要な Git / Python / gcloud を使っていきます。
 require_cmd git
-IMAGE_TAG="${IMAGE_TAG:-$(git rev-parse --short HEAD)}"
+CHECKED_OUT_SHA="$(git rev-parse HEAD)"
+if [[ ! "$CHECKED_OUT_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+  err "Could not resolve the checked-out commit SHA"
+  exit 1
+fi
+if [[ -n "$IMAGE_TAG_ARG" && "$IMAGE_TAG_ARG" != "$CHECKED_OUT_SHA" ]]; then
+  err "--image-tag must equal the checked-out commit SHA"
+  exit 1
+fi
+# Image tag と GIT_SHA は env file / 外部環境変数を信頼せず、checkout済みHEADを正本にする。
+IMAGE_TAG="$CHECKED_OUT_SHA"
 IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}:${IMAGE_TAG}"
 DEPLOYMENT_VERSION="${DEPLOYMENT_VERSION:-$IMAGE_TAG}"
 if [[ ! "$DEPLOYMENT_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
@@ -398,7 +409,7 @@ if [[ ! "$DEPLOYMENT_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
 fi
 export DEPLOYMENT_VERSION
 add_env_key "DEPLOYMENT_VERSION"
-GIT_SHA="${GIT_SHA:-$(git rev-parse HEAD)}"
+GIT_SHA="$CHECKED_OUT_SHA"
 export GIT_SHA
 add_env_key "GIT_SHA"
 

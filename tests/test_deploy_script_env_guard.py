@@ -25,7 +25,6 @@ def test_deploy_script_supports_cloud_run_min_instances() -> None:
     deploy_script = Path("scripts/deploy_cloud_run.sh").read_text(encoding="utf-8")
     makefile = Path("Makefile").read_text(encoding="utf-8")
     ci_workflow = Path(".github/workflows/ci.yml").read_text(encoding="utf-8")
-    dry_run_workflow = Path(".github/workflows/deploy-dry-run.yml").read_text(encoding="utf-8")
     production_workflow = Path(".github/workflows/deploy-production.yml").read_text(encoding="utf-8")
     deploy_env_example = Path("env.deploy.example").read_text(encoding="utf-8")
 
@@ -33,9 +32,13 @@ def test_deploy_script_supports_cloud_run_min_instances() -> None:
     assert "CLOUD_RUN_MIN_INSTANCES: 例 0, 1, default" in deploy_script
     assert 'RUN_ARGS+=(--min "$MIN_INSTANCES")' in deploy_script
     assert "$(if $(MIN_INSTANCES),--min-instances $(MIN_INSTANCES),)" in makefile
+    assert not Path(".github/workflows/deploy-dry-run.yml").exists()
+    assert "deploy_preflight:" in ci_workflow
+    assert "name: Static deploy preflight" in ci_workflow
+    assert "shellcheck scripts/deploy_cloud_run.sh scripts/promote_cloud_run_revision.sh" in ci_workflow
+    assert "./scripts/deploy_cloud_run.sh --dry-run" in ci_workflow
     assert "--min-instances 1" in ci_workflow
-    assert 'CLOUD_RUN_MIN_INSTANCES: "1"' in dry_run_workflow
-    assert "MIN_INSTANCES=${{ env.CLOUD_RUN_MIN_INSTANCES }}" in dry_run_workflow
+    assert "--no-traffic --traffic-tag candidate" in ci_workflow
     assert "CLOUD_RUN_MIN_INSTANCES: ${{ vars.CLOUD_RUN_MIN_INSTANCES || '1' }}" in production_workflow
     assert 'MIN_INSTANCES="${CLOUD_RUN_MIN_INSTANCES}"' in production_workflow
     assert "CLOUD_RUN_MIN_INSTANCES=1" in deploy_env_example
