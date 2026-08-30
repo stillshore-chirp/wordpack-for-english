@@ -294,6 +294,30 @@ def test_classifier_contract_paths_invalidate_workflow_contract() -> None:
     assert plan.retained_evidence == (WORKFLOW_YAML_EVIDENCE,)
 
 
+def test_deleted_legacy_classifier_paths_are_known_non_ui_migrations() -> None:
+    for path in (
+        "scripts/classify_ui_test_changes.py",
+        "tests/test_ui_test_change_classifier.py",
+    ):
+        plan = classify_paths([path])
+
+        assert plan.classification_ok is True
+        assert plan.workflow_contract is True
+        assert plan.playwright_smoke is False
+        assert plan.playwright_visual is False
+        assert plan.categories == ("legacy_migration",)
+
+
+def test_deleted_visual_workflow_uses_generic_workflow_contract() -> None:
+    plan = classify_paths([".github/workflows/playwright-visual.yml"])
+
+    assert plan.classification_ok is True
+    assert plan.workflow_contract is True
+    assert plan.playwright_smoke is False
+    assert plan.playwright_visual is False
+    assert plan.categories == ("workflow",)
+
+
 def test_governance_evidence_plan_separates_harness_and_ai_governance() -> None:
     harness = classify_paths([".agents/skills/example/SKILL.md"])
     governance = classify_paths(["docs/ai-governance/policy.md"])

@@ -136,11 +136,13 @@ BACKEND_FILES = {
 WORKFLOW_PREFIX = ".github/workflows/"
 WORKFLOW_CONTRACT_FILES = {
     "pytest.ini",
-    "scripts/classify_ui_test_changes.py",
     "scripts/classify_verification_inputs.py",
-    "tests/test_ui_test_change_classifier.py",
     "tests/test_github_actions_branch_policy.py",
     "tests/test_verification_inputs.py",
+}
+LEGACY_MIGRATION_FILES = {
+    "scripts/classify_ui_test_changes.py",
+    "tests/test_ui_test_change_classifier.py",
 }
 HARNESS_PREFIXES = (".agents/", ".claude/", ".cursor/")
 HARNESS_FILES = {
@@ -266,13 +268,6 @@ PATH_RULES: tuple[PathRule, ...] = (
         },
     ),
     _rule(
-        "workflow_visual",
-        "workflow",
-        "visual_workflow",
-        gates={"workflow_contract", "playwright_visual"},
-        exact={".github/workflows/playwright-visual.yml"},
-    ),
-    _rule(
         "workflow_smoke",
         "workflow",
         "smoke_workflow",
@@ -299,6 +294,13 @@ PATH_RULES: tuple[PathRule, ...] = (
         "workflow_contract",
         gates={"workflow_contract"},
         prefixes={WORKFLOW_PREFIX},
+    ),
+    _rule(
+        "legacy_ui_classifier_migration",
+        "legacy_migration",
+        "workflow_contract",
+        gates={"workflow_contract"},
+        exact=LEGACY_MIGRATION_FILES,
     ),
     _rule(
         "backend_pytest_config",
