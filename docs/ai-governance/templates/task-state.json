@@ -41,6 +41,18 @@
       "Publication annotation is outside the measurement scope."
     ]
   },
+  "measurement": {
+    "gate": "measurement",
+    "input_paths": [
+      "docs/example.md"
+    ]
+  },
+  "publication": {
+    "gate": "publication",
+    "annotation_paths": [
+      "docs/publication-report.md"
+    ]
+  },
   "invalidated_gates": [],
   "remaining_work": [
     "Record publication freeze and external gate state in the next bounded step."
