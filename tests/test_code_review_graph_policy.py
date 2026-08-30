@@ -81,6 +81,21 @@ def test_policy_document_rejects_peer_h3_before_required_policy() -> None:
             lambda case: case.update(route="skip"),
             "route must be graph",
         ),
+        (
+            "documentation-only",
+            lambda case: case.update(scope="copy-only"),
+            "scope must be documentation-only",
+        ),
+        (
+            "copy-only",
+            lambda case: case.update(scope="documentation-only"),
+            "scope must be copy-only",
+        ),
+        (
+            "isolated-local-css",
+            lambda case: case.update(scope="documentation-only"),
+            "scope must be isolated-local-css",
+        ),
     ),
 )
 def test_policy_matrix_rejects_routing_regressions(case_id: str, mutation, message: str) -> None:

@@ -34,6 +34,21 @@ EXPECTED_CASES = {
     "graph-analysis-failure": "fallback",
     "graph-insufficient-result": "fallback",
 }
+EXPECTED_SCOPES = {
+    "backend-logic-change": "nontrivial-code",
+    "frontend-shared-processing-change": "nontrivial-code",
+    "api-contract-change": "nontrivial-code",
+    "cross-layer-refactor": "nontrivial-code",
+    "documentation-only": "documentation-only",
+    "copy-only": "copy-only",
+    "isolated-local-css": "isolated-local-css",
+    "combined-skip-scope": "combined-skip-scope",
+    "graph-unavailable": "nontrivial-code",
+    "graph-unconfigured": "nontrivial-code",
+    "graph-stale": "nontrivial-code",
+    "graph-analysis-failure": "nontrivial-code",
+    "graph-insufficient-result": "nontrivial-code",
+}
 GRAPH_TARGETS = {
     "related-code",
     "callers",
@@ -170,6 +185,10 @@ def _validate_case(case: Any, index: int) -> None:
         f"{label} contains unsupported fields",
     )
     scope = _nonempty_string(item.get("scope"), f"{label}.scope")
+    _require(
+        scope == EXPECTED_SCOPES[case_id],
+        f"{label} scope must be {EXPECTED_SCOPES[case_id]}",
+    )
     _string_set(item.get("paths"), f"{label}.paths")
     route = _nonempty_string(item.get("route"), f"{label}.route")
     _require(route == EXPECTED_CASES[case_id], f"{label} route must be {EXPECTED_CASES[case_id]}")
@@ -309,6 +328,16 @@ def _self_test(fixture: Mapping[str, Any]) -> None:
         pass
     else:
         _fail("self-test accepted skipping a combined scope")
+
+    skip_scope_case = next(case for case in cases if case["id"] == "documentation-only")
+    broken_scope = dict(skip_scope_case)
+    broken_scope["scope"] = "copy-only"
+    try:
+        _validate_case(broken_scope, 0)
+    except PolicyValidationError:
+        pass
+    else:
+        _fail("self-test accepted a mismatched skip scope")
 
 
 def main(argv: list[str] | None = None) -> int:
