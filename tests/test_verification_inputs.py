@@ -216,6 +216,7 @@ def test_backend_and_dedicated_contract_tests_keep_high_priority_gates() -> None
         "tests/firestore_fakes.py": {"backend"},
         "tests/test_public_docs_security.py": {"governance"},
         "tests/test_security_scan_text.py": {"governance"},
+        "tests/test_validate_governance.py": {"governance"},
         "tests/test_github_actions_branch_policy.py": {"workflow_contract"},
         "tests/test_scheduled_maintenance_workflow.py": {"workflow_contract"},
         "tests/test_deploy_script_env_guard.py": {"deploy_preflight"},
@@ -502,6 +503,7 @@ def test_task_state_template_and_test_route_to_governance() -> None:
         [
             "docs/ai-governance/templates/task-state.json",
             "tests/test_governance_task_state.py",
+            "tests/test_validate_governance.py",
         ]
     )
 
