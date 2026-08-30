@@ -84,6 +84,27 @@ def test_task_state_rejects_completed_and_invalidated_gate_overlap(tmp_path: Pat
         validate_task_state(_write_state(tmp_path, state), tmp_path)
 
 
+def test_task_state_accepts_complete_with_passing_evidence(tmp_path: Path) -> None:
+    state = _template()
+    state["status"] = "complete"
+    state["remaining_work"] = []
+
+    validate_task_state(_write_state(tmp_path, state), tmp_path)
+
+
+@pytest.mark.parametrize("result", ["fail", "partial", "unverified"])
+def test_task_state_rejects_non_passing_complete_evidence(
+    tmp_path: Path, result: str
+) -> None:
+    state = _template()
+    state["status"] = "complete"
+    state["remaining_work"] = []
+    state["completed_evidence"][0]["result"] = result
+
+    with pytest.raises(GovernanceError):
+        validate_task_state(_write_state(tmp_path, state), tmp_path)
+
+
 @pytest.mark.parametrize("bound", ["size", "list", "string"])
 def test_task_state_rejects_size_list_or_string_bound(tmp_path: Path, bound: str) -> None:
     state = _template()

@@ -61,7 +61,7 @@ TASK_STATE_SHAPE: dict[str, object] = {
         {"gate": "string", "reason": "string", "reacquire_scope": _TASK_REQUIRED_STRING_LIST},
         True,
     ),
-    "remaining_work": _TASK_REQUIRED_STRING_LIST,
+    "remaining_work": _TASK_STRING_LIST,
     "risks_blockers": {"risks": _TASK_STRING_LIST, "blockers": _TASK_STRING_LIST},
 }
 REQUIRED_FILES = (
@@ -190,11 +190,19 @@ def validate_task_state(path: Path, root: Path = ROOT) -> None:
     if completed_gates & invalidated_gates:
         fail(f"{rel(path, root)} a gate cannot be completed and invalidated")
     blockers = state["risks_blockers"]["blockers"]
-    if state["status"] == "complete" and (
+    status = state["status"]
+    if status in {"planned", "running", "partial"} and not state["remaining_work"]:
+        fail(f"{rel(path, root)} active task-state requires remaining work")
+    if status == "complete" and (
         state["remaining_work"] or state["invalidated_gates"] or blockers
     ):
         fail(f"{rel(path, root)} complete task-state must have no remaining work, invalidated gates, or blockers")
-    if state["status"] == "blocked" and not blockers:
+    if status == "complete" and (
+        not state["completed_evidence"]
+        or any(entry["result"] != "pass" for entry in state["completed_evidence"])
+    ):
+        fail(f"{rel(path, root)} complete task-state requires only passing evidence")
+    if status == "blocked" and not blockers:
         fail(f"{rel(path, root)} blocked task-state requires a blocker")
     for entry in state["completed_evidence"]:
         if entry["result"] not in TASK_STATE_RESULTS:
