@@ -134,6 +134,27 @@ def test_governance_script_selects_containing_gate() -> None:
     assert plan.invalidated_gates == (AI_GOVERNANCE_FULL,)
 
 
+def test_github_collaboration_policy_paths_are_governance_closure() -> None:
+    declared_paths = {
+        ".github/ISSUE_TEMPLATE/**",
+        ".github/pull_request_template.md",
+        ".github/dependabot.yml",
+    }
+    assert declared_paths <= set(GATE_INPUTS[AI_GOVERNANCE_FULL].paths)
+
+    for path in (
+        ".github/ISSUE_TEMPLATE/review-follow-up.md",
+        ".github/pull_request_template.md",
+        ".github/dependabot.yml",
+    ):
+        plan = classify_paths([path])
+        assert plan.invalidated_gates == (AI_GOVERNANCE_FULL,)
+        assert plan.selected_checks == ()
+        assert plan.retained_evidence == (WORKFLOW_YAML_EVIDENCE,)
+        assert plan.fallback_reason is None
+        assert plan.unknown_path_count == 0
+
+
 def test_unknown_path_uses_reasoned_conservative_fallback() -> None:
     plan = classify_paths(["new-runtime/config.toml"])
 

@@ -343,6 +343,7 @@ def test_agent_harness_triggers_include_graph_policy_inputs() -> None:
         "scripts/validate_code_review_graph_policy.py",
         "tests/fixtures/agent-harness/code-review-graph-policy.json",
         "tests/test_code_review_graph_policy.py",
+        ".github/dependabot.yml",
     ]
     for trigger in ("push", "pull_request"):
         _assert_contains_all(_extract_trigger_block(on_block, trigger), required_paths)

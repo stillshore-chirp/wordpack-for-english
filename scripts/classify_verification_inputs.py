@@ -55,6 +55,9 @@ GATE_INPUTS = {
             ".agents/**",
             "docs/agent-harness.md",
             "docs/ai-governance/**",
+            ".github/ISSUE_TEMPLATE/**",
+            ".github/pull_request_template.md",
+            ".github/dependabot.yml",
             "scripts/verify-agent-harness.sh", "scripts/verify-ai-governance.sh",
             "scripts/validate_code_review_graph_policy.py", "tests/fixtures/agent-harness/code-review-graph-policy.json", "tests/test_code_review_graph_policy.py",
         ),
@@ -97,7 +100,10 @@ HARNESS_FILES = {
 AI_GOVERNANCE_FILES = {
     "requirements-agent-harness.txt",
     "scripts/verify-ai-governance.sh",
+    ".github/pull_request_template.md",
+    ".github/dependabot.yml",
 }
+AI_GOVERNANCE_PREFIXES = (".github/ISSUE_TEMPLATE/",)
 
 
 @dataclass(frozen=True)
@@ -132,11 +138,15 @@ def _is_harness(path: str) -> bool:
     return path in HARNESS_FILES or path.startswith(HARNESS_PREFIXES)
 
 
+def _is_ai_governance(path: str) -> bool:
+    return path in AI_GOVERNANCE_FILES or path.startswith(AI_GOVERNANCE_PREFIXES)
+
+
 def _is_known(path: str) -> bool:
     return (
         _is_backend(path)
         or _is_harness(path)
-        or path in AI_GOVERNANCE_FILES
+        or _is_ai_governance(path)
         or path in WORKFLOW_CONTRACT_FILES
         or path.startswith(WORKFLOW_PREFIX)
         or path.startswith("docs/")
@@ -165,7 +175,7 @@ def classify_paths(
         if any(_is_backend(path) for path in changed):
             invalidated.add(BACKEND_FULL)
         if any(
-            path.startswith("docs/ai-governance/") or path in AI_GOVERNANCE_FILES
+            path.startswith("docs/ai-governance/") or _is_ai_governance(path)
             for path in changed
         ):
             invalidated.add(AI_GOVERNANCE_FULL)

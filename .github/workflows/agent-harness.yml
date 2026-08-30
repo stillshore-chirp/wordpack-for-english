@@ -36,6 +36,7 @@ on:
       - 'scripts/verify-ai-governance.sh'
       - '.github/ISSUE_TEMPLATE/**'
       - '.github/pull_request_template.md'
+      - '.github/dependabot.yml'
       - '.github/workflows/agent-harness.yml'
   pull_request:
     branches: [main, develop, 'agent/**']
@@ -72,6 +73,7 @@ on:
       - 'scripts/verify-ai-governance.sh'
       - '.github/ISSUE_TEMPLATE/**'
       - '.github/pull_request_template.md'
+      - '.github/dependabot.yml'
       - '.github/workflows/agent-harness.yml'
 
 concurrency:

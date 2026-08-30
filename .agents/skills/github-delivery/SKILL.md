@@ -23,6 +23,8 @@ description: "ソースコード変更とIssue、branch、commit、push、PR、C
 - ソースコード変更は規模や種類にかかわらず主Issueを必須とし、既存Issueがなければ編集前に作成する。同一PR内のreview修正は、そのPRの主Issueを継続して使う。
 - ソースコードを含まない文書やメタデータだけの軽微な変更でIssueを省略する場合は、PR本文へ短い理由を書く。
 - [`docs/ai-governance/14-issue-quality-gate.md`](../../../docs/ai-governance/14-issue-quality-gate.md)に従い、理由、根拠、現在と目標、範囲、非対象、受け入れ条件、検証、リスクを書く。
+- Issueのタイトルと本文は日本語を原則とし、タイトルは対象と変更または問題が判別できる具体的な日本語にする。固有名詞、製品名・ライブラリ名、code identifier、version/path、GitHub構文は正本の例外に従って維持できる。
+- レビュー結果を主因として別Issue化する場合は、正本の `[レビュー指摘]` title、`レビュー指摘` label、由来・severity・観測事実・影響・別追跡理由・UX・scope・acceptance・verification・公開安全性を満たす。根拠不足のレビュー起因分類や、同一PRの主Issueからの分離はしない。
 
 ## 3. Branch、実装、commit
 <!-- agent-harness:delivery-stack:start -->
@@ -44,6 +46,7 @@ description: "ソースコード変更とIssue、branch、commit、push、PR、C
 
 - ソースコード変更では非ドラフトPRを作成または更新し、GitHub上の完了ゲートまで継続する。
 - 主Issueは1つに絞る。完全解決は`Closes #123`、部分対応は`Refs #123`を使う。
+- PRのタイトルと本文も日本語を原則とし、Issue欄、変更理由、検証、未実行項目、リスクを日本語で記録する。自動生成bot PRは作成時の完全な日本語化を制御できない場合があるため、agentが更新または配送する前にタイトルと本文を正規化し、未正規化範囲を明記する。
 - PR本文には、変更内容、保持した挙動、検証、未実行項目、対象面の証跡、公開安全性、残るリスクを書く。
 - UI変更ではUI/UX Skill、公開物では公開安全性Skillの成果を反映する。
 
