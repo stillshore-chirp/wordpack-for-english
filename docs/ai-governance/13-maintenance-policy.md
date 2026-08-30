@@ -15,6 +15,10 @@
 
 `CLAUDE.md` は `@AGENTS.md` だけを原則とします。tool adapterは正本を参照するだけで、新しい判断基準を持ちません。
 
+### 正本参照とeffective instruction budget（唯一正本）
+
+実効instruction budgetの定義と計測手順はこの節を唯一の正本とします。`global / user-level`、repository root、nested rule、activated Skill、条件成立時のconditional hook contextを合算して評価し、portableなexplicit-input計測（対象revision、適用path、発動条件、入力資料を明示）を使います。推定値（estimate）と実行で得た値（observed usage）を分離して記録し、Hookが未発動または実測できない場合は実効量を推定値として扱い、runtime enforcementの証拠にしません。
+
 ## 変更時の3製品確認
 
 ルール、Skill、adapter、検証scriptを変更する場合は、同じPRで次を確認します。
@@ -79,7 +83,7 @@ AGENTS.md、Skill、docs、tool専用ruleに同じ長文を複製
 ## Review収束
 <!-- agent-harness:review-maintenance:start -->
 
-- review回数、限定再確認、P2以下の収束、primary ledgerは [`docs/agent-harness.md`](../agent-harness.md)、CI待機、最新snapshot、gate失効は [GitHub配送Skill](../../.agents/skills/github-delivery/SKILL.md) を正本とする。
+- review回数、review decision record、lane liveness、focused review terminal、停止条件、限定再確認、P2以下の収束、primary ledgerは [`docs/agent-harness.md`](../agent-harness.md)、CI待機、最新snapshot、gate失効は [GitHub配送Skill](../../.agents/skills/github-delivery/SKILL.md) を正本とする。
 - root、nested rule、adapterへその本文を複製せず、特定製品のreview名やtool挙動を共有完了条件にしない。
 - review未提供を自己レビューで代替しないこと、未解決thread・mergeability・merge / close権限のhard gateを、上記正本の変更時に維持する。
 <!-- agent-harness:review-maintenance:end -->

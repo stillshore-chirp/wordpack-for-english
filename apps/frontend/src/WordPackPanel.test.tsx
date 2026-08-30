@@ -361,6 +361,7 @@ describe('WordPackPanel E2E (mocked fetch)', () => {
     const dialog = await screen.findByRole('dialog', { name: /WordPack プレビュー: theta/ });
     const queue = await screen.findByRole('region', { name: '生成キュー', hidden: true });
     expect(within(queue).getByLabelText('生成履歴 0件')).toBeInTheDocument();
+    const copyButton = await within(dialog).findByRole('button', { name: 'thetaのDev例文1をコピー' });
     const emptyStatus = within(dialog).getByRole('status', { name: '例文コピー結果' });
     const emptyAlert = within(dialog).getByRole('alert', { name: '例文コピーエラー' });
     expect(emptyStatus).toHaveAttribute('aria-label', '例文コピー結果');
@@ -371,7 +372,6 @@ describe('WordPackPanel E2E (mocked fetch)', () => {
     vi.useFakeTimers();
     const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
     const clipboardWrite = vi.spyOn(navigator.clipboard, 'writeText').mockResolvedValue(undefined);
-    const copyButton = within(dialog).getByRole('button', { name: 'thetaのDev例文1をコピー' });
     copyButton.focus();
     expect(copyButton).toHaveFocus();
     expect(copyButton).not.toBeDisabled();

@@ -93,7 +93,7 @@ indexや全詳細文書を機械的に読み直さず、変更範囲から必要
 
 ### 4.4 併用
 
-併用時の順序は、共通準備、変更scopeの確定、変更前フロー監査、UI変更レビュー、変更後の同一フロー監査です。新規フローなど変更前を取得できない場合は、取得不能な重要ステップごとのblocker、仕様・既存testなどの代替基準、残る比較リスクを示します。
+併用時の順序は、共通準備、変更scopeの確定、変更前フロー監査、UI変更レビュー、変更後の同一フロー監査です。beforeは実装前にbase snapshotから先行取得できますが、review中のafterは`provisional`として扱い、実装と包括reviewの収束後にlatest HEADで取得したものだけを`final`とします。新規フローなど変更前を取得できない場合は、取得不能な重要ステップごとのblocker、仕様・既存testなどの代替基準、残る比較リスクを示します。
 <!-- agent-harness:uiux-change-scope:end -->
 
 ## 5. 証跡
@@ -106,7 +106,13 @@ indexや全詳細文書を機械的に読み直さず、変更範囲から必要
 
 前後screenshotを取得できない場合は、取得不能理由、代替証跡、残るリスク、次に必要な確認を示し、取得必須の変更を完了扱いにしません。
 
-GitHub共同作業面だけの場合は、差分、Markdown / form構造、リンク、公開安全性、未実行項目を証跡とします。GitHubが所有する未変更のfocusやplatform stateまで検査対象に広げません。
+### 証跡の時点とruntime
+
+before / afterの採否、base / headへの束縛、`provisional`から`final`への遷移、失効と再取得の条件は [`03-evidence-and-completion-gates.md`](../../../docs/ai-governance/03-evidence-and-completion-gates.md) を正本とします。latest HEAD、対象path、base、review state、finding / fix、またはruntime条件が変わったafterは失効させ、review中は`provisional`、包括review収束後だけlatest HEADで再取得して`final`にします。
+
+runtimeまたはdev serverを使った証跡は、起動前にownerを確定し、PID、process group、port、readiness確認、cleanup結果を記録します。owner不明、readiness未確認、cleanup未確認のプロセスはcurrent-run証跡へ採用せず、未確認範囲またはblockerとして報告します。記録の詳細はbounded artifactへ置き、公開報告には必要最小限だけを残します。
+
+GitHub共同作業面だけの場合は、差分、Markdown / form構造、リンク、公開安全性、未実行項目を証跡とします。アプリ本体UI用のscreenshot、dev server、runtimeのowner / PID / process group / port / readiness / cleanupは要求しません。GitHubが所有する未変更のfocusやplatform stateまで検査対象に広げません。
 
 ## 6. 完了
 

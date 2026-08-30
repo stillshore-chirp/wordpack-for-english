@@ -18,7 +18,7 @@
 - **Skill**: 特定作業でだけ読む実行手順。常時ルールにはしない。
 - **hard gate**: 違反した状態で完了または公開してはいけない条件。
 - **heuristic**: 文脈に応じて採否を判断する設計・実装上の目安。
-- **instruction budget**: エージェントが常時または対象scopeで読む指示量。
+- **instruction budget**: 詳細は [`13-maintenance-policy.md`](13-maintenance-policy.md) の「正本参照とeffective instruction budget」を参照する指示量。
 
 ## 3. 3エージェントの適用構造
 
@@ -65,6 +65,10 @@
 - Skillから索引を経由して同じSkillへ戻る循環参照を作らない。
 - 1つのSkillへ異なる作業種類を集約しない。
 
+### 5.4 effective instruction budget
+
+定義と計測手順は [`13-maintenance-policy.md`](13-maintenance-policy.md) の「正本参照とeffective instruction budget」を唯一の正本とします。互換性レビューでは、各adapterが同正本の合算対象へ到達できること、portableなexplicit-input計測とestimate / observed usageの分離が保たれることだけを確認します。製品固有のtoken telemetryや、未発動Hookの注入量は互換性の証拠にしません。
+
 ## 6. tool中立性
 
 共通正本では、結果と契約を定義します。特定toolの操作方法はadapterまたはSkillの補足に留めます。
@@ -106,6 +110,8 @@ heuristicを採用しないこと自体を失敗にせず、品質・保守性�
 ## 8. ハーネス変更時の互換性レビュー
 
 エージェントルール、Skill、adapter、検証scriptを変更するPRでは、次を確認します。
+
+review decision record、lane liveness、focused review terminal、停止条件は [`docs/agent-harness.md`](../agent-harness.md) を正本とし、3製品のadapterとrepository verifierが同じmarkerへ到達できることだけを互換性観点で確認します。field定義やレビュー回数の本文は複製せず、app-onlyのstatus surfaceとrole不明Hookの挙動を共有契約へ持ち込みません。
 
 | 観点 | Codex | Claude Code | Cursor |
 |---|---|---|---|

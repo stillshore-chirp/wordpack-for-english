@@ -1,0 +1,170 @@
+{
+  "kind": "agent-harness-scenario-fixture",
+  "schema_version": 1,
+  "scenarios": [
+    {
+      "id": "timeout-no-repeat",
+      "events": [
+        {"type": "wait", "state_key": "ci:head-a", "outcome": "timeout", "operation": "wait", "backoff_seconds": 10},
+        {"type": "wait", "state_key": "ci:head-a", "outcome": "timeout", "operation": "wait", "backoff_seconds": 10},
+        {"type": "signal", "state_key": "ci:head-a", "new_signal": true}
+      ]
+    },
+    {
+      "id": "completed-agent",
+      "output_cap": {"unit": "utf8_bytes", "max_bytes": 2048},
+      "events": [
+        {
+          "type": "heartbeat",
+          "agent_id": "agent-a",
+          "status": "completed",
+          "evidence_package": {
+            "scope": "synthetic harness lane",
+            "acceptance": "bounded evidence",
+            "conclusion": "passed",
+            "verification_results": ["contract"],
+            "unperformed_checks": ["live runtime"],
+            "remaining_risks": ["tool telemetry"],
+            "snapshot": {"base": "base-a", "head": "head-a", "diff": "diff-a"},
+            "input_closure": {"paths": ["scripts/verify-agent-harness.sh"], "config": [], "artifacts": []},
+            "execution_conditions": {"runtime": "static"},
+            "artifact_reference": "artifact:agent-a"
+          },
+          "artifact_reference": "artifact:agent-a"
+        },
+        {"type": "read", "target": "final_output"},
+        {"type": "unknown"}
+      ]
+    },
+    {
+      "id": "provisional-after-final-review",
+      "depends_on": [{"id": "schema-contract", "snapshot_phase": "provisional"}],
+      "events": [
+        {"type": "after", "snapshot_phase": "provisional", "head": "head-a", "latest_head": "head-a", "review_state": "pending"},
+        {"type": "dependency", "id": "schema-contract", "snapshot_phase": "final"},
+        {"type": "review", "status": "converged", "head": "head-b", "latest_head": "head-b", "unresolved_actionable_threads": 0, "mergeability": "clean", "scope": "focused", "terminal": true, "decision_record": {"review_round": 1, "highest_severity": "none", "action": "pass", "exception_reason": null, "invalidated_evidence": [], "follow_up_reference": null}},
+        {"type": "review", "status": "changes_requested", "head": "head-b", "latest_head": "head-b", "unresolved_actionable_threads": 1, "mergeability": "blocked"},
+        {"type": "after", "snapshot_phase": "final", "head": "head-b", "latest_head": "head-b", "review_state": "converged", "unresolved_actionable_threads": 0, "mergeability": "clean"}
+      ]
+    },
+    {
+      "id": "resource-ownership-cleanup",
+      "events": [
+        {"type": "acquire", "resource_type": "runtime", "resource_id": "backend", "owner": "lane-a", "pid": 1001, "process_group": "pg-a", "port": 8000},
+        {"type": "acquire", "resource_type": "port", "resource_id": "unbound-port", "owner": "lane-a"},
+        {"type": "acquire", "resource_type": "runtime", "resource_id": "frontend", "owner": "lane-a", "pid": 1002, "process_group": "pg-b", "port": 8000},
+        {"type": "acquire", "resource_type": "temporary_worktree", "resource_id": "frontend-worktree", "owner": "lane-a", "workspace": "tmp/worktrees/frontend"},
+        {"type": "ready", "resource_id": "frontend-worktree", "owner": "lane-a", "ready": true},
+        {"type": "release", "resource_id": "frontend-worktree", "owner": "lane-b", "cleanup": "complete", "workspace_exists": false},
+        {"type": "release", "resource_id": "frontend-worktree", "owner": "lane-a", "cleanup": "complete", "workspace_exists": true},
+        {"type": "release", "resource_id": "backend", "owner": "lane-a", "cleanup": "complete", "process_alive": false, "port_open": false},
+        {"type": "release", "resource_id": "frontend", "owner": "lane-a", "cleanup": "complete", "process_alive": false, "port_open": false}
+      ]
+    },
+    {
+      "id": "evidence-reuse",
+      "events": [
+        {
+          "type": "evidence_success",
+          "key": "gate-1",
+          "status": "passed",
+          "snapshot": {"base": "base-a", "head": "head-a", "diff": "diff-a"},
+          "input_closure": {"paths": ["scripts/verify-agent-harness.sh"], "config": [], "artifacts": []},
+          "conditions": {"runtime": "static"},
+          "artifact_reference": "artifact:gate-1"
+        },
+        {"type": "path_change", "path": "scripts/verify-agent-harness.sh"},
+        {
+          "type": "evidence_invalidate",
+          "source_key": "gate-1",
+          "reason": "input closure intersects changed path",
+          "reacquire_scope": "agent-harness verifier"
+        },
+        {
+          "type": "evidence_success",
+          "key": "gate-2",
+          "status": "passed",
+          "snapshot": {"base": "base-a", "head": "head-b", "diff": "diff-b"},
+          "input_closure": {"paths": ["scripts/verify-agent-harness.sh"], "config": [], "artifacts": []},
+          "conditions": {"runtime": "static"},
+          "reacquire_source_key": "other-gate",
+          "artifact_reference": "artifact:gate-2"
+        }
+      ]
+    },
+    {
+      "id": "review-budget",
+      "events": [
+        {
+          "type": "evidence_success",
+          "key": "review-gate",
+          "gate": "agent-harness-review-input",
+          "status": "passed",
+          "input_closure": {"paths": ["scripts/verify-agent-harness.sh"], "config": [], "artifacts": []},
+          "conditions": {"runtime": "static"},
+          "artifact_reference": "artifact:review-gate"
+        },
+        {
+          "type": "full_gate",
+          "gate": "agent-harness-final",
+          "phase": "final",
+          "status": "passed",
+          "input_closure": {"paths": ["scripts/verify-agent-harness.sh"], "config": [], "artifacts": []},
+          "conditions": {"runtime": "static"}
+        }
+      ]
+    },
+    {
+      "id": "review-budget-exception",
+      "events": [
+        {
+          "type": "review",
+          "status": "converged",
+          "head": "head-a",
+          "latest_head": "head-a",
+          "unresolved_actionable_threads": 0,
+          "mergeability": "clean",
+          "scope": "focused",
+          "terminal": true,
+          "decision_record": {
+            "review_round": 1,
+            "highest_severity": "P2",
+            "action": "re_review",
+            "exception_reason": null,
+            "invalidated_evidence": [],
+            "follow_up_reference": "review:628/retry"
+          }
+        }
+      ]
+    },
+    {
+      "id": "lane-liveness",
+      "lane_record": {
+        "progress_revision": 1,
+        "checkpoint_condition": "new progress revision is observed",
+        "expected_next_signal": "checkpoint:2",
+        "partial_result_cap": {"unit": "utf8_bytes", "max_bytes": 1024, "max_items": 4},
+        "on_checkpoint_miss": "rewait then one partial request",
+        "scope_shrink_condition": "revision unchanged and continuation unknown",
+        "reassignment_condition": "shrunken scope has no progress",
+        "terminal_reason": "scoped work completed"
+      },
+      "events": [
+        {"type": "lane_start", "owner": "lane-a", "scope": "verifier lane", "progress_revision": 1},
+        {"type": "timeout", "owner": "lane-a", "phase": "before_checkpoint", "operation": "wait", "backoff_seconds": 10},
+        {"type": "timeout", "owner": "lane-a", "phase": "before_checkpoint", "operation": "wait", "backoff_seconds": 10}
+      ]
+    },
+    {
+      "id": "focused-terminal",
+      "review_record": {
+        "reviewed_paths": ["scripts/validate_agent_harness_scenarios.py"],
+        "questions": ["fixed paths are reviewed"]
+      },
+      "events": [
+        {"type": "review_start", "scope": "focused", "reviewed_paths": ["scripts/validate_agent_harness_scenarios.py"], "questions": ["fixed paths are reviewed"]},
+        {"type": "full_gate", "gate": "agent-harness-final", "phase": "final", "status": "passed", "input_closure": {"paths": ["scripts/validate_agent_harness_scenarios.py"], "config": [], "artifacts": []}, "conditions": {"runtime": "static"}}
+      ]
+    }
+  ]
+}

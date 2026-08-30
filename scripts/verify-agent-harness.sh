@@ -103,8 +103,15 @@ if end_index + 1 < len(tokens):
         raise SystemExit(2)
 
 visible_lines: list[str] = []
+allowed_inner_markers = {
+    f"<!-- agent-harness:subagent-orchestration-contract:{index:02d} -->"
+    for index in range(1, 8)
+} if start == "<!-- agent-harness:subagent-orchestration:start -->" else set()
 for token in tokens[start_index + 1 : end_index]:
     if token.type == "html_block":
+        stripped = token.content.strip()
+        if stripped in allowed_inner_markers and "\n" not in stripped:
+            continue
         raise SystemExit(2)
     if token.type != "inline":
         continue
@@ -772,6 +779,12 @@ CANONICAL_HARNESS_PATHS=(
   ".cursor/rules/operations.mdc"
 )
 
+SCENARIO_FIXTURE="tests/fixtures/agent-harness/scenarios.json"
+require_file "scripts/validate_agent_harness_scenarios.py"
+require_file "scripts/validate_agent_harness_markers.py"
+require_file "scripts/measure_effective_instruction_budget.py"
+require_file "$SCENARIO_FIXTURE"
+
 FRONTMATTER_PATHS=()
 CLAUDE_RULE_PATHS=()
 CLAUDE_SKILL_PATHS=()
@@ -827,6 +840,167 @@ done
 
 python3 scripts/validate_agent_frontmatter.py --self-test
 python3 scripts/validate_agent_frontmatter.py "${FRONTMATTER_PATHS[@]}"
+
+python3 scripts/validate_agent_harness_scenarios.py "$SCENARIO_FIXTURE"
+
+budget_dir="$(mktemp -d "${TMPDIR:-/tmp}/agent-harness-budget.XXXXXX")"
+cleanup_budget_artifacts() {
+  rm -rf "$budget_dir"
+}
+trap cleanup_budget_artifacts EXIT
+python3 - "$budget_dir" <<'PY'
+from pathlib import Path
+import sys
+
+root = Path(sys.argv[1])
+contents = {
+    "baseline": {
+        "global": "synthetic global\n",
+        "root": "synthetic root\n",
+        "nested": "synthetic nested\n",
+        "skill": "synthetic activated skill\n",
+        "conditional": "synthetic conditional hook\n",
+    },
+    "synthetic-current": {
+        "global": "synthetic global current\n",
+        "root": "synthetic root current\ncurrent delta\n",
+        "nested": "synthetic nested current\n",
+        "skill": "synthetic activated skill current\n",
+        "conditional": "synthetic conditional hook current\ncurrent delta\n",
+    },
+    "current": {
+        "global-placeholder": "CI placeholder: user-level global AGENTS is unavailable.\n",
+        "hook-placeholder": "CI placeholder: user-level SessionStart/SubagentStart hook context is unavailable.\n",
+    },
+}
+for revision, files in contents.items():
+    revision_dir = root / revision
+    revision_dir.mkdir(parents=True, exist_ok=True)
+    for name, text in files.items():
+        (revision_dir / f"{name}.txt").write_text(text, encoding="utf-8")
+PY
+for revision in baseline synthetic-current; do
+  budget_args=(
+    --revision "$revision"
+    --apply-path "scripts/verify-agent-harness.sh"
+  )
+  budget_args+=(
+    --activation-condition "synthetic before/current budget comparison"
+    --global "$budget_dir/$revision/global.txt"
+    --root "$budget_dir/$revision/root.txt"
+    --nested "$budget_dir/$revision/nested.txt"
+    --activated-skill "$budget_dir/$revision/skill.txt"
+    --conditional-hook-context "$budget_dir/$revision/conditional.txt"
+  )
+  python3 scripts/measure_effective_instruction_budget.py "${budget_args[@]}" > "$budget_dir/$revision.json"
+done
+budget_args=(
+  --revision "current"
+  --apply-path "scripts/verify-agent-harness.sh"
+  --activation-condition "actual repository inputs with synthetic CI placeholders"
+  --activation-condition "global placeholder: user-level AGENTS unavailable in CI"
+  --activation-condition "hook placeholder: SessionStart/SubagentStart context unavailable in CI"
+  --global "$budget_dir/current/global-placeholder.txt"
+  --root "AGENTS.md"
+  --nested "apps/frontend/AGENTS.md"
+  --activated-skill ".agents/skills/github-delivery/SKILL.md"
+  --activated-skill ".agents/skills/ui-ux-review/SKILL.md"
+  --activated-skill ".agents/skills/skill-evaluation/SKILL.md"
+  --activated-skill ".agents/skills/security-publication/SKILL.md"
+  --conditional-hook-context "$budget_dir/current/hook-placeholder.txt"
+)
+python3 scripts/measure_effective_instruction_budget.py "${budget_args[@]}" > "$budget_dir/current.json"
+python3 - "$budget_dir/baseline.json" "$budget_dir/synthetic-current.json" "$budget_dir/current.json" "$budget_dir/comparison.json" <<'PY'
+import json
+from pathlib import Path
+import sys
+
+baseline_path, synthetic_current_path, current_path, comparison_path = map(Path, sys.argv[1:])
+groups = ("global", "root", "nested", "activated_skills", "conditional_hook_contexts")
+fields = ("lines", "utf8_bytes", "estimated_tokens")
+local_markers = ("/Users/", "/home/", "/private/var/", "worktrees/")
+
+def load_report(path: Path) -> dict:
+    serialized = path.read_text(encoding="utf-8")
+    if any(marker in serialized for marker in local_markers):
+        raise SystemExit(f"budget report contains a local path: {path}")
+    report = json.loads(serialized)
+    if report.get("observed_usage") is not None or report.get("estimate", {}).get("observed_usage") is not None:
+        raise SystemExit("budget report must not claim observed usage")
+    if set(report.get("groups", {})) != set(groups):
+        raise SystemExit("budget report must contain all five explicit groups")
+    if any(field not in report.get("totals", {}) for field in fields):
+        raise SystemExit("budget report is missing total fields")
+    for group in groups:
+        section = report["groups"][group]
+        if not section.get("files") or any(field not in section for field in fields):
+            raise SystemExit(f"budget report missing bounded shape for {group}")
+        if any(not isinstance(section[field], int) for field in fields):
+            raise SystemExit(f"budget report has non-integer totals for {group}")
+        for record in section["files"]:
+            if any(field not in record for field in ("path", *fields)):
+                raise SystemExit(f"budget report missing file record fields for {group}")
+    return report
+
+baseline = load_report(baseline_path)
+synthetic_current = load_report(synthetic_current_path)
+current = load_report(current_path)
+current_paths = {
+    group: {record["path"] for record in current["groups"][group]["files"]}
+    for group in groups
+}
+expected_actual = {
+    "root": {"AGENTS.md"},
+    "nested": {"apps/frontend/AGENTS.md"},
+    "activated_skills": {
+        ".agents/skills/github-delivery/SKILL.md",
+        ".agents/skills/ui-ux-review/SKILL.md",
+        ".agents/skills/skill-evaluation/SKILL.md",
+        ".agents/skills/security-publication/SKILL.md",
+    },
+}
+for group, paths in expected_actual.items():
+    if not paths <= current_paths[group]:
+        raise SystemExit(f"current budget report is missing actual repository inputs for {group}")
+if "<external>/global-placeholder.txt" not in current_paths["global"]:
+    raise SystemExit("current budget report is missing the CI global placeholder")
+if "<external>/hook-placeholder.txt" not in current_paths["conditional_hook_contexts"]:
+    raise SystemExit("current budget report is missing the CI hook placeholder")
+conditions = current["conditions"]["activation_conditions"]
+if not any("global placeholder" in value for value in conditions):
+    raise SystemExit("current budget report must label the global placeholder")
+if not any("hook placeholder" in value for value in conditions):
+    raise SystemExit("current budget report must label the hook placeholder")
+delta = {field: synthetic_current["totals"][field] - baseline["totals"][field] for field in fields}
+if not any(value != 0 for value in delta.values()):
+    raise SystemExit("synthetic baseline/current budget delta must be non-zero")
+comparison = {
+    "schema_version": 1,
+    "measurement": "effective-instruction-budget-comparison",
+    "baseline": {"revision": baseline["conditions"]["revision"], "totals": baseline["totals"]},
+    "current": {"revision": current["conditions"]["revision"], "totals": current["totals"]},
+    "synthetic_current": {"revision": synthetic_current["conditions"]["revision"], "totals": synthetic_current["totals"]},
+    "delta": delta,
+    "estimate": {"observed_usage": None},
+}
+comparison_path.write_text(json.dumps(comparison, ensure_ascii=False, sort_keys=True, indent=2) + "\n", encoding="utf-8")
+checked = json.loads(comparison_path.read_text(encoding="utf-8"))
+if set(checked) != {"schema_version", "measurement", "baseline", "current", "synthetic_current", "delta", "estimate"}:
+    raise SystemExit("budget comparison artifact has an unexpected shape")
+if checked["delta"] != delta or not any(value != 0 for value in checked["delta"].values()):
+    raise SystemExit("budget comparison artifact lost the baseline/current delta")
+if checked["current"]["totals"] != current["totals"]:
+    raise SystemExit("budget comparison artifact lost actual current totals")
+if any(marker in comparison_path.read_text(encoding="utf-8") for marker in local_markers):
+    raise SystemExit("budget comparison artifact contains a local path")
+PY
+cleanup_budget_artifacts
+trap - EXIT
+
+
+python3 -m pytest -q --no-cov \
+  tests/test_agent_harness_scenarios.py \
+  tests/test_agent_harness_budget.py
 
 CLAUDE_CONTENT="$(tr -d '\r' < CLAUDE.md | sed '/^[[:space:]]*$/d')"
 [[ "$CLAUDE_CONTENT" == "@AGENTS.md" ]] || fail "CLAUDE.md must contain only @AGENTS.md"
@@ -1048,6 +1222,7 @@ require_text "docs/ai-governance/templates/completion-gate-report.md" "Pre-exist
 require_text "docs/ai-governance/templates/completion-gate-report.md" "standaloneのフロー監査はdiff由来findingがないため、Change statusにN/A / 未分類（standalone）"
 require_block_text "docs/ai-governance/templates/completion-gate-report.md" "## 変更scope（UI変更レビューで差分がある場合）" "uiux-completion-scope" "Target snapshot / ref"
 require_block_text "docs/ai-governance/templates/completion-gate-report.md" "## 変更scope（UI変更レビューで差分がある場合）" "uiux-completion-scope" "Coverage / 未確認consumer / 除外理由"
+python3 scripts/validate_agent_harness_markers.py "$ROOT" "$SCENARIO_FIXTURE"
 require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "初回レビュー1回と指摘修正後の再レビュー1回まで"
 require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "P2以下だけが残る場合"
 require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "primaryが継続保持するcontrol-plane ledger"
@@ -1060,25 +1235,6 @@ require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-c
 require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "HEADが変わっただけでは全gateを失効させず"
 require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "exit code、pass / fail / skip、coverage総計、warning要約、failure箇所、artifact参照"
 require_block_text "docs/agent-harness.md" "## GitHub reviewの収束" "review-convergence" "file別coverageと反復進捗を渡さず"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "専門riskを独立したbounded lane"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "分離可能ならsubagent-default（subagent-first）で委任します"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "単一API、CI watcher、read-only照会、短いthread返信、短い競合解消"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "target HEAD / base、target path、確認する具体的な問い"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "write ownership、completion、verification、invalidation condition"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "分離可能な仕事をprimaryが直接行うのはdirect-primary exceptionに限ります"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "specific reason、context-vs-work"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "full fileやfull logを要求しません"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "同一HEAD・同一risk laneの監査は原則1回"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "製品固有のtool、UI、runtime configを共有契約へ持ち込みません"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "raw log、file全文、full historyは必須にせず"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "進捗がなく同じ結果を反復するlane"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "scope shrink → partial result → reassign → primary"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "first agent failure alone はdirect-primary exceptionの理由にならず"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "停止・scope縮小・primary返却条件"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "部分結果と未確認範囲を返してからownerを再割当します"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "invalidation conditionが成立した場合だけ再開"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| target HEAD / base |"
-require_block_text "docs/agent-harness.md" "## Subagent orchestration" "subagent-orchestration" "| evidence package | scope / acceptance、changed paths、conclusion、verification results、unperformed checks、remaining risks、snapshotまたはdiff identifier |"
 require_block_text "AGENTS.md" "## 作業の進め方" "workflow" "委任、control plane、evidence package、review収束は"
 require_block_text "docs/ai-governance/13-maintenance-policy.md" "## サブエージェント運用" "subagent-maintenance" "docs/agent-harness.md"
 require_block_text "docs/ai-governance/13-maintenance-policy.md" "## サブエージェント運用" "subagent-maintenance" "同一HEADの重複監査"
