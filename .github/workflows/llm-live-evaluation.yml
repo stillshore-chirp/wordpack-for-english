@@ -62,7 +62,7 @@ jobs:
             echo "- Requested max requests: ${{ inputs.max_requests }}"
             echo "- Output token budget: ${{ inputs.max_output_tokens }}"
           } >> "${GITHUB_STEP_SUMMARY}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: llm-live-evaluation-estimate
           path: artifacts/llm-live-evaluation.json
@@ -109,7 +109,7 @@ jobs:
             echo "- Output token budget: ${LIVE_EVALUATION_MAX_OUTPUT_TOKENS}"
             echo "- Quality findings are informational and do not gate normal CI or deploy."
           } >> "${GITHUB_STEP_SUMMARY}"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: llm-live-evaluation-result
