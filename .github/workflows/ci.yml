@@ -473,7 +473,7 @@ jobs:
         run: python -c 'import pathlib,yaml; [yaml.safe_load(p.read_text(encoding="utf-8")) for p in pathlib.Path(".github/workflows").glob("*.y*ml")]'
 
       - name: Run workflow and classifier contract tests
-        run: python -m pytest -q --no-cov tests/test_github_actions_branch_policy.py tests/test_verification_inputs.py
+        run: python -m pytest -q --no-cov tests/test_github_actions_branch_policy.py tests/test_verification_inputs.py tests/test_scheduled_maintenance_workflow.py
 
   playwright_smoke:
     name: Playwright smoke (selected flows)

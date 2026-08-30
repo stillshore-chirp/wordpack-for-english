@@ -103,6 +103,7 @@ def test_ci_selects_runtime_gates_and_keeps_security_in_backend_suite() -> None:
             "DEPENDENCY_SELECTED: ${{ github.event_name == 'pull_request' && needs.verification_scope.outputs.dependency_review == 'true' }}",
             "      - dependency_review",
             'check_selected "${DEPENDENCY_SELECTED}" "${DEPENDENCY_RESULT}" dependency_review',
+            "tests/test_scheduled_maintenance_workflow.py",
             "quality_gate:",
         ],
     )
