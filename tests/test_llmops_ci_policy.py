@@ -55,9 +55,22 @@ def test_normal_ci_and_deploy_do_not_reference_llmops_secrets_or_live_eval() -> 
     assert "continue-on-error: true" in ci
 
 
-def test_production_deploy_keeps_existing_trigger_and_does_not_depend_on_evaluation() -> None:
+def test_production_deploy_is_ci_authorized_and_does_not_depend_on_evaluation() -> None:
     deploy = _read(".github/workflows/deploy-production.yml")
-    assert "branches: [ main ]" in deploy
+    assert "push:" not in deploy
+    assert "workflow_run:" in deploy
+    assert "- CI" in deploy
+    assert "- completed" in deploy
     assert "workflow_dispatch:" in deploy
+    assert "target_sha:" in deploy
+    assert "github.event.workflow_run.head_sha" in deploy
+    assert 'head_sha=${TARGET_SHA}' in deploy
+    assert ".head_sha == $target" in deploy
+    assert "CI_WORKFLOW_PATH: .github/workflows/ci.yml" in deploy
+    assert 'CI_WORKFLOW_ID: "187172373"' in deploy
+    assert "actions/runs/${run_id}/jobs?per_page=100" in deploy
+    assert "Quality gate" in deploy
+    assert '.conclusion == "success"' in deploy
+    assert "needs: verify-target" in deploy
+    assert "environment: production" in deploy
     assert "llm-live-evaluation" not in deploy
-    assert "needs:" not in deploy
