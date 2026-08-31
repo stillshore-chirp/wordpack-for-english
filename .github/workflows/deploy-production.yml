@@ -12,6 +12,11 @@ on:
         description: 40文字のコミットSHA（同SHAのCI成功runが必須）
         required: true
         type: string
+      identity_exchange_only:
+        description: WIFのtoken exchangeだけを確認し、本番デプロイは実行しない
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   # auto/manual を同じ単一キューへ入れ、candidate tag と traffic/rollback 操作を直列化する。
@@ -160,17 +165,111 @@ jobs:
 
           echo "target_sha=${TARGET_SHA}" >> "${GITHUB_OUTPUT}"
 
+  verify-deploy-identity:
+    name: Verify deploy identity exchange
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: verify-target
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.identity_exchange_only == true
+    environment: production
+    permissions:
+      id-token: write
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_DEPLOY_WIF_PROVIDER: ${{ vars.GCP_DEPLOY_WIF_PROVIDER }}
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+    steps:
+      - name: Validate deploy identity inputs
+        run: |
+          set -euo pipefail
+          missing=0
+          if [ -z "${GCP_PROJECT_ID}" ]; then
+            echo "::error::GCP_PROJECT_ID is not set. Register the production project ID as a repository variable." >&2
+            missing=1
+          elif [[ ! "${GCP_PROJECT_ID}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
+            echo "::error::GCP_PROJECT_ID must be a valid Google Cloud project ID." >&2
+            missing=1
+          fi
+          if [ -z "${GCP_DEPLOY_WIF_PROVIDER}" ]; then
+            echo "::error::GCP_DEPLOY_WIF_PROVIDER is not set. Register the full WIF provider resource name as a repository variable." >&2
+            missing=1
+          elif [[ ! "${GCP_DEPLOY_WIF_PROVIDER}" =~ ^projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+$ ]]; then
+            echo "::error::GCP_DEPLOY_WIF_PROVIDER must be a full global Workload Identity Provider resource name." >&2
+            missing=1
+          fi
+          if [ -z "${GCP_DEPLOY_SERVICE_ACCOUNT}" ]; then
+            echo "::error::GCP_DEPLOY_SERVICE_ACCOUNT is not set. Register the deploy service-account email as a repository variable." >&2
+            missing=1
+          elif [[ ! "${GCP_DEPLOY_SERVICE_ACCOUNT}" =~ ^[a-z0-9][a-z0-9-]*@[a-z0-9-]+\.iam\.gserviceaccount\.com$ ]]; then
+            echo "::error::GCP_DEPLOY_SERVICE_ACCOUNT must be a Google service-account email." >&2
+            missing=1
+          fi
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          echo "Deploy identity inputs validated."
+
+      - name: Authenticate to Google Cloud with Workload Identity Federation
+        id: gcp-auth
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_DEPLOY_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          token_format: access_token
+          access_token_lifetime: 300s
+          create_credentials_file: false
+          export_environment_variables: false
+          cleanup_credentials: true
+
+      - name: Confirm WIF token exchange
+        env:
+          WIF_ACCESS_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
+        run: |
+          set -euo pipefail
+          [[ -n "${WIF_ACCESS_TOKEN}" ]] || {
+            echo "::error::WIF access token output is empty." >&2
+            exit 1
+          }
+          echo "WIF token exchange and service-account access-token generation succeeded."
+
+  authorize-deploy-cutover:
+    name: Authorize production deploy cutover
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs: verify-target
+    if: needs.verify-target.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.identity_exchange_only != true)
+    permissions:
+      contents: read
+    env:
+      PRODUCTION_DEPLOY_ENABLED: ${{ vars.PRODUCTION_DEPLOY_ENABLED }}
+    steps:
+      - name: Validate production deploy cutover
+        run: |
+          set -euo pipefail
+          if [[ "${PRODUCTION_DEPLOY_ENABLED:-}" != "true" ]]; then
+            echo "::error::PRODUCTION_DEPLOY_ENABLED must be the repository variable string 'true' before production deployment." >&2
+            exit 1
+          fi
+          echo "Production deploy cutover is enabled."
+
   deploy:
     name: Deploy to production
     runs-on: ubuntu-latest
     timeout-minutes: 45
-    needs: verify-target
-    if: needs.verify-target.result == 'success'
+    needs:
+      - verify-target
+      - authorize-deploy-cutover
+    if: needs.verify-target.result == 'success' && needs.authorize-deploy-cutover.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.identity_exchange_only != true)
     environment: production
     permissions:
       contents: read
+      id-token: write
     env:
-      CLOUD_RUN_PROJECT_ID: ${{ secrets.GCP_SA_PROJECT_ID }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_DEPLOY_WIF_PROVIDER: ${{ vars.GCP_DEPLOY_WIF_PROVIDER }}
+      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      CLOUD_RUN_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       CLOUD_RUN_REGION: asia-northeast1
       CLOUD_RUN_SERVICE: wordpack-backend
       CLOUD_RUN_ENV_FILE: .env.deploy
@@ -181,7 +280,7 @@ jobs:
       CLOUD_RUN_CANARY_DELAY_SECONDS: "10"
       CLOUD_RUN_CANARY_REQUESTS_PER_ATTEMPT: "10"
       SKIP_FIRESTORE_INDEX_SYNC: "false"
-      FIREBASE_PROJECT_ID: ${{ secrets.GCP_SA_PROJECT_ID }}
+      FIREBASE_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       TRIGGER_BRANCH: main
       TRIGGER_SHA: ${{ needs.verify-target.outputs.target_sha }}
       GITHUB_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
@@ -203,8 +302,36 @@ jobs:
           fi
           echo "Checked out authoritative deployment SHA ${checked_out_sha}."
 
+      - name: Set up Node.js for frontend build
+        # Firebase Hosting の公開 artifact を作るため Node.js を用意する。
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+
+      - name: Install frontend dependencies
+        # predeploy の tsc が @types などの devDependencies を必要とするため、事前に導入しておく。
+        env:
+          NPM_CONFIG_PRODUCTION: "false"
+        run: npm ci --prefix ./apps/frontend
+
+      - name: Build frontend artifact
+        # 認証情報を取得する前に、依存関係から公開 artifact を生成する。
+        run: npm --prefix ./apps/frontend run build
+
+      - name: Set up Python
+        # デプロイスクリプトが python -m apps.backend.backend.config で設定を検証するため Python 環境を用意する。
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: '3.14'
+
+      - name: Install Python dependencies
+        # Pydantic 設定検証など、デプロイ前の dry-run に必要な依存をインストールする。
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
       - name: Materialize production env file
-        # シークレットに保存した base64 文字列から .env.deploy を復元し、後続の検証に備える。
+        # 依存関係と frontend artifact の生成後、シークレットから .env.deploy を復元する。
         env:
           CLOUD_RUN_ENV_FILE: ${{ env.CLOUD_RUN_ENV_FILE }}
           CLOUD_RUN_ENV_FILE_BASE64: ${{ secrets.CLOUD_RUN_ENV_FILE_BASE64 }}
@@ -222,28 +349,44 @@ jobs:
           echo "Restored ${CLOUD_RUN_ENV_FILE} from CLOUD_RUN_ENV_FILE_BASE64."
 
       - name: Validate deployment inputs
-        # 秘密情報とデプロイ用の環境ファイルが揃っているか事前に検証し、原因が分かりやすい失敗に変換する。
+        # デプロイ用の環境ファイルと WIF の識別子が揃っているか auth 前に検証する。
         env:
+          GCP_PROJECT_ID: ${{ env.GCP_PROJECT_ID }}
+          GCP_DEPLOY_WIF_PROVIDER: ${{ env.GCP_DEPLOY_WIF_PROVIDER }}
+          GCP_DEPLOY_SERVICE_ACCOUNT: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
           CLOUD_RUN_PROJECT_ID: ${{ env.CLOUD_RUN_PROJECT_ID }}
           CLOUD_RUN_ENV_FILE: ${{ env.CLOUD_RUN_ENV_FILE }}
           FIREBASE_PROJECT_ID: ${{ env.FIREBASE_PROJECT_ID }}
-          GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
         run: |
+          set -euo pipefail
           missing=0
-          if [ -z "${CLOUD_RUN_PROJECT_ID}" ]; then
-            echo "::error::CLOUD_RUN_PROJECT_ID is not set. Register the production project ID as a repository secret or variable." >&2
+          if [ -z "${GCP_PROJECT_ID}" ]; then
+            echo "::error::GCP_PROJECT_ID is not set. Register the production project ID as a repository variable." >&2
+            missing=1
+          elif [[ ! "${GCP_PROJECT_ID}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
+            echo "::error::GCP_PROJECT_ID must be a valid Google Cloud project ID." >&2
             missing=1
           fi
           if [ -z "${FIREBASE_PROJECT_ID}" ]; then
-            echo "::error::FIREBASE_PROJECT_ID is not set. Register the Firebase project ID as a repository secret or variable." >&2
+            echo "::error::FIREBASE_PROJECT_ID is not set. Register the Firebase project ID as a repository variable." >&2
             missing=1
           fi
           if [ ! -f "${CLOUD_RUN_ENV_FILE}" ]; then
             echo "::error::Deployment env file '${CLOUD_RUN_ENV_FILE}' is missing. Create it based on env.deploy.example and store it securely." >&2
             missing=1
           fi
-          if [ -z "${GCP_SA_KEY}" ]; then
-            echo "::error::GCP_SA_KEY is not set. Register the production service account key as a repository secret." >&2
+          if [ -z "${GCP_DEPLOY_WIF_PROVIDER}" ]; then
+            echo "::error::GCP_DEPLOY_WIF_PROVIDER is not set. Register the full WIF provider resource name as a repository variable." >&2
+            missing=1
+          elif [[ ! "${GCP_DEPLOY_WIF_PROVIDER}" =~ ^projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+$ ]]; then
+            echo "::error::GCP_DEPLOY_WIF_PROVIDER must be a full global Workload Identity Provider resource name." >&2
+            missing=1
+          fi
+          if [ -z "${GCP_DEPLOY_SERVICE_ACCOUNT}" ]; then
+            echo "::error::GCP_DEPLOY_SERVICE_ACCOUNT is not set. Register the deploy service-account email as a repository variable." >&2
+            missing=1
+          elif [[ ! "${GCP_DEPLOY_SERVICE_ACCOUNT}" =~ ^[a-z0-9][a-z0-9-]*@[a-z0-9-]+\.iam\.gserviceaccount\.com$ ]]; then
+            echo "::error::GCP_DEPLOY_SERVICE_ACCOUNT must be a Google service-account email." >&2
             missing=1
           fi
           if [ "$missing" -ne 0 ]; then
@@ -251,45 +394,23 @@ jobs:
           fi
           echo "Inputs validated. Proceeding to authenticated deployment."
 
-      - name: Authenticate to Google Cloud with service account key
-        # Verify target jobで同一SHAのCI成功を確認した後、サービスアカウントキーで認証する。
-        # gcloud / Cloud Run 用の認証は auth action の credentials file を使う。
+      - name: Authenticate to Google Cloud with Workload Identity Federation
+        # 依存関係と frontend artifact の生成、入力検証後に短期 credential を取得する。
         id: gcp-auth
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_DEPLOY_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
           create_credentials_file: true
           export_environment_variables: true
+          cleanup_credentials: true
 
       - name: Set up gcloud SDK
         # gcloud CLI をプロジェクト/リージョンに合わせて準備する。Cloud Run / Cloud Build は GA コマンドのみ使用。
         uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
         with:
           project_id: ${{ env.CLOUD_RUN_PROJECT_ID }}
-
-      - name: Set up Node.js for frontend build
-        # Firebase Hosting の公開 artifact を作るため Node.js を用意する。
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: '22'
-
-      - name: Install frontend dependencies
-        # predeploy の tsc が @types などの devDependencies を必要とするため、事前に導入しておく。
-        env:
-          NPM_CONFIG_PRODUCTION: "false"
-        run: npm ci --prefix ./apps/frontend
-
-      - name: Set up Python
-        # デプロイスクリプトが python -m apps.backend.backend.config で設定を検証するため Python 環境を用意する。
-        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
-        with:
-          python-version: '3.14'
-
-      - name: Install Python dependencies
-        # Pydantic 設定検証など、デプロイ前の dry-run に必要な依存をインストールする。
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
 
       - name: Prepare unique deployment marker
         # 同じ commit の再実行でも旧 revision と候補を区別できるよう、実行ごとに新しい marker を生成する。
@@ -355,7 +476,6 @@ jobs:
           FIREBASE_PROJECT_ID: ${{ env.FIREBASE_PROJECT_ID }}
         run: |
           set -euo pipefail
-          npm --prefix ./apps/frontend run build
           python scripts/deploy_firebase_hosting.py \
             --project "${FIREBASE_PROJECT_ID}" \
             --site "${FIREBASE_PROJECT_ID}" \

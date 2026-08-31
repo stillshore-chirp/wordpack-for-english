@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -9,7 +10,7 @@ def _read(path: str) -> str:
 
 def test_production_deploy_is_gated_by_a_successful_same_sha_ci_run() -> None:
     workflow = _read(".github/workflows/deploy-production.yml")
-    verify = workflow[workflow.index("  verify-target:"): workflow.index("  deploy:")]
+    verify = workflow[workflow.index("  verify-target:"): workflow.index("  verify-deploy-identity:")]
     deploy = workflow[workflow.index("  deploy:"):]
     concurrency = workflow[workflow.index("concurrency:"): workflow.index("permissions:")]
 
@@ -40,7 +41,7 @@ def test_production_deploy_is_gated_by_a_successful_same_sha_ci_run() -> None:
     assert 'verify_ci_run "${WORKFLOW_RUN_ID}"' in verify
     assert 'verify_ci_run "${candidate_run_id}"' in verify
     assert "environment: production" not in verify
-    assert "needs: verify-target" in deploy
+    assert "needs:\n      - verify-target\n      - authorize-deploy-cutover" in deploy
     assert "environment: production" in deploy
     assert "ref: ${{ needs.verify-target.outputs.target_sha }}" in deploy
     assert 'checked_out_sha="$(git rev-parse HEAD)"' in deploy
@@ -56,6 +57,48 @@ def test_production_deploy_is_gated_by_a_successful_same_sha_ci_run() -> None:
     assert "Quality gate" in deployment_docs
 
 
+def test_identity_exchange_cutover_is_manual_only_and_fail_closed() -> None:
+    workflow = _read(".github/workflows/deploy-production.yml")
+    identity_start = workflow.index("  verify-deploy-identity:")
+    guard_start = workflow.index("  authorize-deploy-cutover:")
+    deploy_start = workflow.index("  deploy:")
+    identity = workflow[identity_start:guard_start]
+    guard = workflow[guard_start:deploy_start]
+    deploy = workflow[deploy_start:]
+
+    assert "identity_exchange_only:" in workflow
+    assert "required: false" in workflow
+    assert "default: false" in workflow
+    assert "type: boolean" in workflow
+    assert "needs: verify-target" in identity
+    assert "if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.identity_exchange_only == true" in identity
+    assert "environment: production" in identity
+    assert "permissions:\n      id-token: write" in identity
+    assert "token_format: access_token" in identity
+    assert "access_token_lifetime: 300s" in identity
+    assert "create_credentials_file: false" in identity
+    assert "export_environment_variables: false" in identity
+    assert "WIF_ACCESS_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}" in identity
+    assert '[[ -n "${WIF_ACCESS_TOKEN}" ]] ||' in identity
+    assert "Confirm WIF token exchange" in identity
+    assert "gcloud auth print-access-token" not in identity
+    assert "setup-gcloud" not in identity
+    assert 'echo "${WIF_ACCESS_TOKEN}"' not in identity
+    assert "GITHUB_STEP_SUMMARY" not in identity
+    assert "GITHUB_OUTPUT" not in identity
+    assert not re.search(r"actions/checkout@|secrets\.|npm |pip install|make release|promote_cloud_run|deploy_firebase|CLOUD_RUN_ENV_FILE_BASE64|traffic", identity)
+
+    assert "PRODUCTION_DEPLOY_ENABLED: ${{ vars.PRODUCTION_DEPLOY_ENABLED }}" in guard
+    assert "if: needs.verify-target.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.identity_exchange_only != true)" in guard
+    assert "${PRODUCTION_DEPLOY_ENABLED:-}" in guard
+    assert "!= \"true\"" in guard
+    assert "::error::" in guard
+    assert "exit 1" in guard
+    assert "needs:\n      - verify-target\n      - authorize-deploy-cutover" in deploy
+    assert "needs.authorize-deploy-cutover.result == 'success'" in deploy
+    assert "inputs.identity_exchange_only != true" in deploy
+
+
 def test_authenticated_preflight_only_uses_trusted_main() -> None:
     workflow = _read(".github/workflows/production-deploy-preflight.yml")
 
@@ -69,6 +112,28 @@ def test_authenticated_preflight_only_uses_trusted_main() -> None:
     assert "github.ref == 'refs/heads/main'" in workflow
     assert 'if [ "$missing" -ne 0 ]; then' in workflow
     assert 'exit 1' in workflow
+
+
+def test_production_auth_is_wif_key_free_and_job_scoped() -> None:
+    deploy = _read(".github/workflows/deploy-production.yml")
+    preflight = _read(".github/workflows/production-deploy-preflight.yml")
+
+    assert "id-token: write" in deploy
+    verify_target = deploy[deploy.index("  verify-target:"): deploy.index("  verify-deploy-identity:")]
+    assert "id-token: write" not in verify_target
+    assert "permissions:\n      contents: read\n      id-token: write" in deploy[deploy.index("  deploy:"):]
+    assert "permissions:\n      contents: read\n      id-token: write" in preflight
+    assert "GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}" in deploy
+    assert "GCP_PREFLIGHT_SERVICE_ACCOUNT: ${{ vars.GCP_PREFLIGHT_SERVICE_ACCOUNT }}" in preflight
+    assert "GCP_DEPLOY_SERVICE_ACCOUNT" not in preflight
+    for workflow in (deploy, preflight):
+        assert "credentials_json" not in workflow
+        assert "GCP_SA_KEY" not in workflow
+        assert "workload_identity_provider:" in workflow
+        assert "service_account:" in workflow
+        assert "cleanup_credentials: true" in workflow
+
+    assert "gha-creds-*.json" in _read(".gitignore")
 
 
 def test_duplicate_dry_run_workflow_is_removed() -> None:
