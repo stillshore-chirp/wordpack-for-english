@@ -1,0 +1,185 @@
+{
+  "artifact_version": 1,
+  "snapshot_repository": "stillshore-chirp/wordpack-for-english",
+  "snapshot_main_commit": "d765021cd053e4d12a98cea8a549b3af6957ca50",
+  "metric_derivation": {
+    "text": "All offsets are seconds from PR-created origin. workflow_to_quality_seconds = quality_completed - workflow_started; pr_created_to_quality_seconds = quality_completed - pr_created.",
+    "keys": {
+      "pr_created": "PR createdAt origin",
+      "workflow_started": "CI run_started_at origin",
+      "quality_completed": "Quality gate completed_at",
+      "workflow_to_quality": "quality_completed - workflow_started",
+      "pr_created_to_quality": "quality_completed - pr_created"
+    }
+  },
+  "rows": [
+    {
+      "pr": 645,
+      "head_sha": "516de185e3f30a5b5e41b8deacb2343e4a74d83e",
+      "category": "governance",
+      "offsets_seconds": {
+        "pr_created": 0,
+        "workflow_started": 1424,
+        "quality_completed": 1580
+      },
+      "checks": {
+        "success": 11,
+        "skipped": 2,
+        "failure": 0,
+        "pending": 0
+      },
+      "workflow": {
+        "attempts": 1,
+        "reruns": 0
+      },
+      "playwright": {
+        "smoke": "selected",
+        "visual": "selected"
+      }
+    },
+    {
+      "pr": 647,
+      "head_sha": "e9db9f51a7e998a15ab231ec00bfa90f79615c7d",
+      "category": "governance/delivery",
+      "offsets_seconds": {
+        "pr_created": 0,
+        "workflow_started": 835,
+        "quality_completed": 861
+      },
+      "checks": {
+        "success": 5,
+        "skipped": 8,
+        "failure": 0,
+        "pending": 0
+      },
+      "workflow": {
+        "attempts": 1,
+        "reruns": 0
+      },
+      "playwright": {
+        "smoke": "skipped",
+        "visual": "skipped"
+      }
+    },
+    {
+      "pr": 648,
+      "head_sha": "db5caea94981a49381374b0c605a347e6b3efb7a",
+      "category": "workflow/security",
+      "offsets_seconds": {
+        "pr_created": 0,
+        "workflow_started": 4,
+        "quality_completed": 182
+      },
+      "checks": {
+        "success": 11,
+        "skipped": 2,
+        "failure": 0,
+        "pending": 0
+      },
+      "workflow": {
+        "attempts": 1,
+        "reruns": 0
+      },
+      "playwright": {
+        "smoke": "selected",
+        "visual": "selected"
+      }
+    },
+    {
+      "pr": 650,
+      "head_sha": "fb2a217679e850c0e589e58105312238bd32db8c",
+      "category": "governance/validator",
+      "offsets_seconds": {
+        "pr_created": 0,
+        "workflow_started": 4,
+        "quality_completed": 163
+      },
+      "checks": {
+        "success": 11,
+        "skipped": 2,
+        "failure": 0,
+        "pending": 0
+      },
+      "workflow": {
+        "attempts": 1,
+        "reruns": 0
+      },
+      "playwright": {
+        "smoke": "selected",
+        "visual": "selected"
+      }
+    },
+    {
+      "pr": 659,
+      "head_sha": "f9adc5d443cc45a1953139eb92e9b5c2f60b4ecc",
+      "category": "governance/monitor",
+      "offsets_seconds": {
+        "pr_created": 0,
+        "workflow_started": 3,
+        "quality_completed": 36
+      },
+      "checks": {
+        "success": 4,
+        "skipped": 9,
+        "failure": 0,
+        "pending": 0
+      },
+      "workflow": {
+        "attempts": 1,
+        "reruns": 0
+      },
+      "playwright": {
+        "smoke": "skipped",
+        "visual": "skipped"
+      }
+    },
+    {
+      "pr": 660,
+      "head_sha": "2c75606c6ffc043e0505c5c737f325aef2b48306",
+      "category": "workflow/E2E",
+      "offsets_seconds": {
+        "pr_created": 0,
+        "workflow_started": 3,
+        "quality_completed": 169
+      },
+      "checks": {
+        "success": 11,
+        "skipped": 2,
+        "failure": 0,
+        "pending": 0
+      },
+      "workflow": {
+        "attempts": 1,
+        "reruns": 0
+      },
+      "playwright": {
+        "smoke": "selected",
+        "visual": "selected"
+      }
+    },
+    {
+      "pr": 661,
+      "head_sha": "37181cc62ae3838d6616027b4eff60c55756264d",
+      "category": "environment/cleanup",
+      "offsets_seconds": {
+        "pr_created": 0,
+        "workflow_started": 3,
+        "quality_completed": 170
+      },
+      "checks": {
+        "success": 6,
+        "skipped": 7,
+        "failure": 0,
+        "pending": 0
+      },
+      "workflow": {
+        "attempts": 1,
+        "reruns": 0
+      },
+      "playwright": {
+        "smoke": "skipped",
+        "visual": "skipped"
+      }
+    }
+  ]
+}

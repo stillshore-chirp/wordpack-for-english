@@ -12,6 +12,8 @@
 
 再現用のquery outlineは、PRの`number/state/baseRefName/headRefOid/mergedAt/statusCheckRollup`、Actions runの`name/head_sha/run_started_at/run_attempt`、check runの`name/conclusion/completed_at`、Issue timelineの`event/created_at/source`を読むものとする。認証情報とraw logは取得・転載せず、run/job IDと秒単位のtimestampは本報告へ掲載しない。
 
+相対offsetは [派生データartifact](./low-cost-pr-observation-2026-08-31.json) に固定し、絶対秒単位timestampを公開せずに再現性を保つ。
+
 ## Data-quality gate
 
 - 7件はいずれも`main`へmerge済みで、各headの公開CI runはattempt 1、rerun 0。check rollupは各13件で、failureはない。
