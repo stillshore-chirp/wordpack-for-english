@@ -256,33 +256,84 @@ def _run_backend_artifact_helper(
         "if [[ \"${1:-}\" == diff || \"${1:-}\" == ls-files || \"${1:-}\" == status ]]; then\n"
         "  exit 0\n"
         "fi\n"
-        "if [[ \"${INJECT_ARCHIVE_HAZARDS:-false}\" == true && \"${1:-}\" == archive ]]; then\n"
+        "if [[ \"${INJECT_ARCHIVE_HAZARDS:-false}\" == true && ( \"${1:-}\" == archive || \"${1:-}\" == ls-tree ) ]]; then\n"
+        "  rewritten_arguments=()\n"
         "  archive_output=''\n"
         "  for argument in \"$@\"; do\n"
+        "    if [[ \"${argument}\" =~ ^[0-9a-f]{40}$ ]]; then\n"
+        "      rewritten_arguments+=(HEAD)\n"
+        "    else\n"
+        "      rewritten_arguments+=(\"${argument}\")\n"
+        "    fi\n"
         "    case \"${argument}\" in --output=*) archive_output=\"${argument#--output=}\" ;; esac\n"
         "  done\n"
-        "  [[ -n \"${archive_output}\" ]] || exit 3\n"
-        f'  "{real_git}" "$@"\n'
-        "  injection_root=\"$(mktemp -d)\"\n"
-        "  mkdir -p \"${injection_root}/apps/backend/backend/PRIVATE\"\n"
-        "  ln -s 'missing-malformed-target' \"${injection_root}/apps/backend/backend/malformed_link.py\"\n"
-        "  printf 'synthetic fixture only\\n' > \"${injection_root}/apps/backend/backend/PRIVATE/SECRET_contract.py\"\n"
-        "  tar --append --file=\"${archive_output}\" --directory=\"${injection_root}\" -- \\\n"
-        "    apps/backend/backend/malformed_link.py \\\n"
-        "    apps/backend/backend/PRIVATE/SECRET_contract.py\n"
-        "  rm -rf -- \"${injection_root}\"\n"
-        "  exit 0\n"
-        "fi\n"
-        "if [[ \"${INJECT_ARCHIVE_HAZARDS:-false}\" == true && \"${1:-}\" == ls-tree ]]; then\n"
-        f'  "{real_git}" "$@"\n'
-        "  printf '120000\\tapps/backend/backend/malformed_link.py\\0'\n"
-        "  printf '100644\\tapps/backend/backend/PRIVATE/SECRET_contract.py\\0'\n"
+        f'  "{real_git}" -C "${{HAZARD_REPO}}" "${{rewritten_arguments[@]}}"\n'
+        "  if [[ \"${1:-}\" == archive ]]; then\n"
+        "    [[ -n \"${archive_output}\" ]] || exit 3\n"
+        "    tar --list --file=\"${archive_output}\" > \"${ARCHIVE_MEMBERS}\"\n"
+        "  fi\n"
         "  exit 0\n"
         "fi\n"
         f'exec "{real_git}" "$@"\n',
         encoding="utf-8",
     )
     fake_git.chmod(0o755)
+
+    hazard_repo = tmp_path / "hazard-repo"
+    archive_members_path = tmp_path / "archive-members"
+    if inject_archive_hazards:
+        for relative_path in (
+            ".dockerignore",
+            "Dockerfile.backend",
+            "cloudbuild.backend.yaml",
+            "requirements.txt",
+            "apps/backend/backend/main.py",
+        ):
+            destination = hazard_repo / relative_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            source = Path(relative_path)
+            if source.is_file():
+                shutil.copyfile(source, destination)
+            else:
+                destination.write_text("synthetic fixture only\n", encoding="utf-8")
+        malformed_link = hazard_repo / "apps/backend/backend/malformed_link.py"
+        malformed_link.symlink_to("missing-malformed-target")
+        uppercase_secret = hazard_repo / "apps/backend/backend/PRIVATE/SECRET_contract.py"
+        uppercase_secret.parent.mkdir(parents=True, exist_ok=True)
+        uppercase_secret.write_text("synthetic fixture only\n", encoding="utf-8")
+        subprocess.run(["git", "init", "--quiet", str(hazard_repo)], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(hazard_repo),
+                "add",
+                ".dockerignore",
+                "Dockerfile.backend",
+                "cloudbuild.backend.yaml",
+                "requirements.txt",
+                "apps/backend/backend/main.py",
+                "apps/backend/backend/malformed_link.py",
+                "apps/backend/backend/PRIVATE/SECRET_contract.py",
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(hazard_repo),
+                "-c",
+                "user.name=Contract Fixture",
+                "-c",
+                "user.email=contract-fixture@example.invalid",
+                "commit",
+                "--quiet",
+                "-m",
+                "fixture",
+            ],
+            check=True,
+        )
 
     target_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     build_digest = "sha256:" + "a" * 64
@@ -414,6 +465,8 @@ def _run_backend_artifact_helper(
             "FAKE_GIT_DIRTY": "true" if dirty_tree else "false",
             "FAKE_GIT_DIRTY_KIND": dirty_tree_kind,
             "INJECT_ARCHIVE_HAZARDS": "true" if inject_archive_hazards else "false",
+            "HAZARD_REPO": str(hazard_repo),
+            "ARCHIVE_MEMBERS": str(archive_members_path),
         },
     )
     return proc, docker_log
@@ -525,9 +578,22 @@ def test_backend_artifact_helper_materializes_exact_physical_allowlist(tmp_path:
     assert not any(path.is_symlink() for path in captured_context.rglob("*"))
     assert not (captured_context / "apps/backend/backend/malformed_link.py").exists()
     assert not (captured_context / "apps/backend/backend/PRIVATE/SECRET_contract.py").exists()
+    archive_members = (tmp_path / "archive-members").read_text(encoding="utf-8")
+    assert "malformed_link.py" in archive_members
+    assert "SECRET_contract.py" not in archive_members
 
     target_entries = subprocess.check_output(
-        ["git", "ls-tree", "-r", "--format=%(objectmode)\t%(path)", "HEAD", "--", "apps/backend/backend"],
+        [
+            "git",
+            "-C",
+            str(tmp_path / "hazard-repo"),
+            "ls-tree",
+            "-r",
+            "--format=%(objectmode)\t%(path)",
+            "HEAD",
+            "--",
+            "apps/backend/backend",
+        ],
         text=True,
     ).splitlines()
     expected_files = {
