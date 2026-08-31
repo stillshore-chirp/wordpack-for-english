@@ -748,6 +748,30 @@ def test_deploy_auth_starts_after_dependency_install_and_before_gcloud_setup() -
     assert "npm --prefix ./apps/frontend run build" not in hosting_block
 
 
+def test_cloud_build_service_account_is_explicit_and_deploy_scoped() -> None:
+    """Only the authenticated deploy job may consume the dedicated build SA variable."""
+    deploy_path = ".github/workflows/deploy-production.yml"
+    deploy_workflow = yaml.safe_load(_read_text(deploy_path))
+    deploy_job = _read_workflow_job(deploy_path, "deploy")
+    identity_job = _read_workflow_job(deploy_path, "verify-deploy-identity")
+    preflight_workflow = yaml.safe_load(_read_text(".github/workflows/production-deploy-preflight.yml"))
+    ci_workflow = yaml.safe_load(_read_text(".github/workflows/ci.yml"))
+
+    assert deploy_job["env"]["GCP_BUILD_SERVICE_ACCOUNT"] == "${{ vars.GCP_BUILD_SERVICE_ACCOUNT }}"
+    assert "GCP_BUILD_SERVICE_ACCOUNT" not in identity_job.get("env", {})
+    assert all("GCP_BUILD_SERVICE_ACCOUNT" not in job.get("env", {}) for job in preflight_workflow["jobs"].values())
+    assert all("GCP_BUILD_SERVICE_ACCOUNT" not in job.get("env", {}) for job in ci_workflow["jobs"].values())
+
+    deploy_text = _read_text(deploy_path)
+    deploy_start = deploy_text.index("  deploy:")
+    deploy_block = deploy_text[deploy_start:]
+    assert 'BUILD_SERVICE_ACCOUNT="${GCP_BUILD_SERVICE_ACCOUNT}"' in deploy_block
+    assert "GCP_BUILD_SERVICE_ACCOUNT is not set" in deploy_block
+    assert "GCP_BUILD_SERVICE_ACCOUNT must be a service-account email in GCP_PROJECT_ID's project." in deploy_block
+    assert r"^[a-z][a-z0-9-]{4,28}[a-z0-9]@${GCP_PROJECT_ID}\.iam\.gserviceaccount\.com" in deploy_block
+    assert "--build-service-account" not in _read_text(".github/workflows/production-deploy-preflight.yml")
+
+
 def test_external_step_actions_are_full_sha_pinned_and_version_documented() -> None:
     violations: list[str] = []
     for path in sorted(Path(".github/workflows").glob("*.y*ml")):

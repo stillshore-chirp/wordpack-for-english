@@ -269,6 +269,7 @@ jobs:
       GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       GCP_DEPLOY_WIF_PROVIDER: ${{ vars.GCP_DEPLOY_WIF_PROVIDER }}
       GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+      GCP_BUILD_SERVICE_ACCOUNT: ${{ vars.GCP_BUILD_SERVICE_ACCOUNT }}
       CLOUD_RUN_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       CLOUD_RUN_REGION: asia-northeast1
       CLOUD_RUN_SERVICE: wordpack-backend
@@ -354,6 +355,7 @@ jobs:
           GCP_PROJECT_ID: ${{ env.GCP_PROJECT_ID }}
           GCP_DEPLOY_WIF_PROVIDER: ${{ env.GCP_DEPLOY_WIF_PROVIDER }}
           GCP_DEPLOY_SERVICE_ACCOUNT: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          GCP_BUILD_SERVICE_ACCOUNT: ${{ env.GCP_BUILD_SERVICE_ACCOUNT }}
           CLOUD_RUN_PROJECT_ID: ${{ env.CLOUD_RUN_PROJECT_ID }}
           CLOUD_RUN_ENV_FILE: ${{ env.CLOUD_RUN_ENV_FILE }}
           FIREBASE_PROJECT_ID: ${{ env.FIREBASE_PROJECT_ID }}
@@ -387,6 +389,13 @@ jobs:
             missing=1
           elif [[ ! "${GCP_DEPLOY_SERVICE_ACCOUNT}" =~ ^[a-z0-9][a-z0-9-]*@[a-z0-9-]+\.iam\.gserviceaccount\.com$ ]]; then
             echo "::error::GCP_DEPLOY_SERVICE_ACCOUNT must be a Google service-account email." >&2
+            missing=1
+          fi
+          if [ -z "${GCP_BUILD_SERVICE_ACCOUNT}" ]; then
+            echo "::error::GCP_BUILD_SERVICE_ACCOUNT is not set. Register the dedicated Cloud Build service-account email as a repository variable." >&2
+            missing=1
+          elif [[ ! "${GCP_BUILD_SERVICE_ACCOUNT}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]@${GCP_PROJECT_ID}\.iam\.gserviceaccount\.com$ ]]; then
+            echo "::error::GCP_BUILD_SERVICE_ACCOUNT must be a service-account email in GCP_PROJECT_ID's project." >&2
             missing=1
           fi
           if [ "$missing" -ne 0 ]; then
@@ -442,6 +451,7 @@ jobs:
             NO_TRAFFIC=true \
             TRAFFIC_TAG="${CLOUD_RUN_TRAFFIC_TAG}" \
             SKIP_FIRESTORE_INDEX_SYNC="${SKIP_FIRESTORE_INDEX_SYNC}" \
+            BUILD_SERVICE_ACCOUNT="${GCP_BUILD_SERVICE_ACCOUNT}" \
             TOOL=gcloud
 
       - name: Promote staged Cloud Run revision

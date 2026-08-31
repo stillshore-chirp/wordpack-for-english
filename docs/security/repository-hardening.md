@@ -35,6 +35,7 @@ This checklist tracks GitHub repository settings that cannot be fully changed fr
 - [x] `production` environment requires a reviewer and limits deployments to `main`.
 - [ ] Deployment secrets are scoped to the production environment where possible.
 - [x] Repository variables `GCP_PROJECT_ID`, `GCP_DEPLOY_WIF_PROVIDER`, `GCP_PREFLIGHT_WIF_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT`, and `GCP_PREFLIGHT_SERVICE_ACCOUNT` are configured without putting their values in source control.
+- [ ] Repository variable `GCP_BUILD_SERVICE_ACCOUNT` is configured as a dedicated, non-secret, deploy-only service-account email.
 - [x] Repository variable `PRODUCTION_DEPLOY_ENABLED` is the string `false` and remains fail-closed until the main merge, identity-only exchange, production preflight, and deploy IAM disposition checks are complete.
 - [ ] `CLOUD_RUN_ENV_FILE_BASE64` remains the only production deployment secret referenced by the workflows.
 - [ ] The legacy long-lived `GCP_SA_KEY` is disabled and deleted only after the WIF exchange and rollback checks documented in [`docs/deployment.md`](../deployment.md) pass.
@@ -50,6 +51,7 @@ The source-controlled deployment contract is:
 - The deploy job checks out that exact SHA and asserts `git rev-parse HEAD`. `IMAGE_TAG` and runtime `GIT_SHA` are derived from that checkout and cannot be overridden by the deployment env file.
 - The deploy job, authenticated preflight, and manual main identity-only job use the pinned `google-github-actions/auth` action with Workload Identity Federation; `id-token: write` is scoped to those three jobs, and `verify-target` does not receive it.
 - Both production workflows are key-free: deploy uses `GCP_DEPLOY_SERVICE_ACCOUNT`, preflight uses the separate `GCP_PREFLIGHT_SERVICE_ACCOUNT`, and neither contains `credentials_json` or `GCP_SA_KEY` fallback. The existing full-SHA action pins, CI/Quality gate authorization, canary, health check, rollback, and materialized env-file cleanup remain part of the contract.
+- Cloud Build is submitted with the explicit `projects/<PROJECT_ID>/serviceAccounts/<GCP_BUILD_SERVICE_ACCOUNT>` resource; the project default service account is not selected implicitly. Static and generated configs set `options.logging: CLOUD_LOGGING_ONLY`, and the dedicated build service account is expected to have `roles/logging.logWriter`. Identity-only, preflight, and PR/CI jobs do not receive the build service account variable.
 - Authenticated preflight runs from scheduled or `main`-ref manual execution only, always checks out trusted `main`, and fails closed when WIF inputs are unavailable or malformed. Static validation belongs to the `CI` lane.
 
 ## External configuration checks
@@ -61,6 +63,7 @@ Checked items were verified against live GitHub/GCP configuration on the review 
 - [x] The Workload Identity Pool and separate deploy/preflight providers are active, with numeric repository/owner IDs, exact `workflow_ref`, main ref, and deploy-only `production` environment conditions documented in [`docs/deployment.md`](../deployment.md).
 - [x] `roles/iam.workloadIdentityUser` uses separate exact deploy-environment/preflight-main subjects, and the preflight service account has only the custom Firestore index-list role plus `roles/firebasehosting.viewer`.
 - [ ] The deploy service account's existing Cloud Run / Cloud Build / Artifact Registry / Firestore / Firebase Hosting roles are reduced to demonstrated requirements; broad legacy viewer, storage admin, and service-usage admin roles still require evidence-led review.
+- [ ] The dedicated build service account has `roles/logging.logWriter` and only the additional build input/output roles confirmed by live IAM inventory.
 - [ ] Successful token exchange and authenticated preflight against the configured project, plus production canary/health/rollback behavior after WIF is enabled.
 - [ ] Disable/delete state of the legacy `GCP_SA_KEY`; retain it only for an explicitly authorized rollback window until the external WIF checks complete.
 

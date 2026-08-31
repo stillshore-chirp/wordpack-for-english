@@ -12,3 +12,7 @@ steps:
 
 images:
   - $_IMAGE_URI
+
+options:
+  # Dedicated build service accounts must use Cloud Logging instead of the default log bucket.
+  logging: CLOUD_LOGGING_ONLY
