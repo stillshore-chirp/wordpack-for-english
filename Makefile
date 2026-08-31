@@ -14,6 +14,7 @@ DEPLOY_CLOUD_RUN_ARGS = $(if $(PROJECT_ID),--project-id $(PROJECT_ID),) \
         $(if $(ARTIFACT_REPO),--artifact-repo $(ARTIFACT_REPO),) \
         $(if $(IMAGE_TAG),--image-tag $(IMAGE_TAG),) \
         $(if $(BUILD_ARG),--build-arg $(BUILD_ARG),) \
+        $(if $(BUILD_SERVICE_ACCOUNT),--build-service-account "$(BUILD_SERVICE_ACCOUNT)",) \
         $(if $(MACHINE_TYPE),--machine-type $(MACHINE_TYPE),) \
         $(if $(BUILD_TIMEOUT),--timeout $(BUILD_TIMEOUT),) \
         $(if $(RUN_TIMEOUT),--run-timeout $(RUN_TIMEOUT),) \

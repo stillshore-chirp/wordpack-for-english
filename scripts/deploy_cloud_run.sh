@@ -39,6 +39,8 @@ Options:
   --artifact-repo <path>     Artifact Registry repo path (default: wordpack/backend)
   --image-tag <tag>          Optional assertion; must equal the checked-out commit SHA
   --build-arg KEY=VALUE      Additional docker build arg (repeatable)
+  --build-service-account <email>
+                              Dedicated Cloud Build service-account email (required for builds)
   --env-file <path>          Explicit env file (default: .env.deploy or .env)
   --run-timeout <duration>   Cloud Run request timeout, e.g. 360s, 10m (default: use existing service setting)
   --min-instances <count>    Cloud Run minimum instances, e.g. 0, 1, default (default: keep current)
@@ -114,6 +116,7 @@ escape_yaml_value() {
 ENV_FILE=""
 PROJECT_ID_ARG=""
 REGION_ARG=""
+BUILD_SERVICE_ACCOUNT_ARG=""
 SERVICE_NAME="wordpack-backend"
 ARTIFACT_REPOSITORY="wordpack/backend"
 IMAGE_TAG=""
@@ -132,9 +135,23 @@ declare -a EXTRA_BUILD_ARGS=()
 declare -a CONFIG_PYTHON_CMD=()
 
 declare -A DEPLOY_ENV_KEYS=()
-declare -a IGNORE_DEPLOY_KEYS=(PROJECT_ID REGION CLOUD_RUN_SERVICE ARTIFACT_REPOSITORY IMAGE_TAG IMAGE_TAG_ARG GIT_SHA MACHINE_TYPE BUILD_TIMEOUT CLOUD_RUN_TIMEOUT CLOUD_RUN_MIN_INSTANCES CLOUD_RUN_NO_CPU_THROTTLING)
+declare -a IGNORE_DEPLOY_KEYS=(PROJECT_ID REGION CLOUD_RUN_SERVICE ARTIFACT_REPOSITORY IMAGE_TAG IMAGE_TAG_ARG GIT_SHA BUILD_SERVICE_ACCOUNT GCP_BUILD_SERVICE_ACCOUNT MACHINE_TYPE BUILD_TIMEOUT CLOUD_RUN_TIMEOUT CLOUD_RUN_MIN_INSTANCES CLOUD_RUN_NO_CPU_THROTTLING)
 declare -a REQUIRED_DEPLOY_KEYS=(ADMIN_EMAIL_ALLOWLIST SESSION_SECRET_KEY CORS_ALLOWED_ORIGINS TRUSTED_PROXY_IPS ALLOWED_HOSTS)
 GCLOUD_CMD_CHECKED=false
+GENERATED_BUILDCONFIG=""
+ENV_VARS_FILE=""
+
+cleanup_temp_files() {
+  local previous_status=$?
+  if [[ -n "${GENERATED_BUILDCONFIG:-}" && -f "$GENERATED_BUILDCONFIG" ]]; then
+    rm -f "$GENERATED_BUILDCONFIG" || true
+  fi
+  if [[ -n "${ENV_VARS_FILE:-}" && -f "$ENV_VARS_FILE" ]]; then
+    rm -f "$ENV_VARS_FILE" || true
+  fi
+  return "$previous_status"
+}
+trap cleanup_temp_files EXIT
 
 validate_min_instances() {
   local value="$1"
@@ -224,6 +241,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --build-arg)
       EXTRA_BUILD_ARGS+=("$2")
+      shift 2
+      ;;
+    --build-service-account)
+      BUILD_SERVICE_ACCOUNT_ARG="$2"
       shift 2
       ;;
     --generate-secret)
@@ -341,6 +362,11 @@ if [[ -z "$REGION" ]]; then
   exit 1
 fi
 
+if [[ ! "$PROJECT_ID" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
+  err "PROJECT_ID must be a valid Google Cloud project ID"
+  exit 1
+fi
+
 add_env_key "ENVIRONMENT"
 add_env_key "ADMIN_EMAIL_ALLOWLIST"
 add_env_key "SESSION_SECRET_KEY"
@@ -421,11 +447,27 @@ log "Validating backend settings via ${CONFIG_PYTHON_CMD[*]} -m apps.backend.bac
 PYTHONPATH="$REPO_ROOT" "${CONFIG_PYTHON_CMD[@]}" -m apps.backend.backend.config >/dev/null
 log "Backend configuration validated successfully"
 
+BUILD_SA="$BUILD_SERVICE_ACCOUNT_ARG"
+if [[ -n "$BUILD_SA" ]]; then
+  if [[ ! "$BUILD_SA" =~ ^[a-z0-9][a-z0-9-]*@${PROJECT_ID}\.iam\.gserviceaccount\.com$ ]]; then
+    err "--build-service-account must be a service-account email in PROJECT_ID's project"
+    exit 1
+  fi
+elif [[ "$DRY_RUN" != true ]]; then
+  err "--build-service-account is required for Cloud Build submissions"
+  exit 1
+fi
+
 # dry-run モードでは Cloud Build / Cloud Run には触らず、
 # 「設定読み込み〜バリデーション」までを実行して即終了します。
 if [[ "$DRY_RUN" == true ]]; then
   log "Dry run mode: skipping gcloud build/deploy"
   log "Prepared image URI: $IMAGE_URI"
+  if [[ -n "$BUILD_SA" ]]; then
+    log "Prepared Cloud Build service-account resource: projects/${PROJECT_ID}/serviceAccounts/${BUILD_SA}"
+  else
+    log "Prepared Cloud Build service-account resource: <not provided; dry-run skips build submission>"
+  fi
   if [[ -n "$MIN_INSTANCES" ]]; then
     log "Prepared Cloud Run minimum instances: $MIN_INSTANCES"
   fi
@@ -459,18 +501,13 @@ if [[ ! -f "$BUILDCONFIG_PATH" ]]; then
   exit 1
 fi
 
-GENERATED_BUILDCONFIG=""
-cleanup_generated_buildconfig() {
-  [[ -n "$GENERATED_BUILDCONFIG" && -f "$GENERATED_BUILDCONFIG" ]] && rm -f "$GENERATED_BUILDCONFIG"
-}
-trap cleanup_generated_buildconfig EXIT
-
 SUBSTITUTIONS=("_IMAGE_URI=${IMAGE_URI}")
 CONFIG_TO_USE="$BUILDCONFIG_PATH"
 
 if [[ ${#EXTRA_BUILD_ARGS[@]} -gt 0 ]]; then
   # --build-arg を指定された場合は Cloud Build config を一時生成して docker build args に反映します。
-  GENERATED_BUILDCONFIG="$(mktemp "${REPO_ROOT}/.cloudbuild.backend.XXXXXX.yaml")"
+  # macOS の mktemp は XXXXXX を template の末尾に要求するため、拡張子は付けずに生成する。
+  GENERATED_BUILDCONFIG="$(mktemp "${REPO_ROOT}/.cloudbuild.backend.XXXXXX")"
   {
     echo "steps:"
     echo "  - name: gcr.io/cloud-builders/docker"
@@ -488,6 +525,9 @@ if [[ ${#EXTRA_BUILD_ARGS[@]} -gt 0 ]]; then
     echo ""
     echo "images:"
     echo "  - \$_IMAGE_URI"
+    echo ""
+    echo "options:"
+    echo "  logging: CLOUD_LOGGING_ONLY"
   } >"$GENERATED_BUILDCONFIG"
   CONFIG_TO_USE="$GENERATED_BUILDCONFIG"
 fi
@@ -495,6 +535,7 @@ fi
 BUILD_CMD=(
   gcloud builds submit
   --project "$PROJECT_ID"
+  "--service-account=projects/${PROJECT_ID}/serviceAccounts/${BUILD_SA}"
   --config "$CONFIG_TO_USE"
   --substitutions "$(IFS=,; echo "${SUBSTITUTIONS[*]}")"
   --machine-type "$MACHINE_TYPE"
@@ -508,10 +549,6 @@ log "Preparing environment variable file for Cloud Run"
 # mktemp で生成した一時ファイルは trap により必ず削除し、秘密情報が
 # リポジトリやディスク上に残らないようにします。
 ENV_VARS_FILE="$(mktemp "${REPO_ROOT}/.cloudrun.env.XXXXXX")"
-cleanup_env_file() {
-  [[ -f "$ENV_VARS_FILE" ]] && rm -f "$ENV_VARS_FILE"
-}
-trap cleanup_env_file EXIT
 
 mapfile -t SORTED_DEPLOY_KEYS < <(printf '%s\n' "${!DEPLOY_ENV_KEYS[@]}" | sort)
 {

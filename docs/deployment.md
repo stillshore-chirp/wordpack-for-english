@@ -70,6 +70,7 @@ cp env.deploy.example .env.deploy
 ```
 
 この段階で Pydantic 設定、必須環境変数、Cloud Run 向け env 変換を確認します。`ENVIRONMENT=production` で `ADMIN_EMAIL_ALLOWLIST`、`TRUSTED_PROXY_IPS`、`ALLOWED_HOSTS` などが不足している場合、または `DISABLE_SESSION_AUTH=true` / `CSRF_PROTECTION_ENABLED=false` が指定されている場合は、gcloud 実行前に失敗します。
+実ビルドでは `--build-service-account <build-service-account-email>` が必須です。dry-run は Cloud Build を送信しないため、この引数を省略できます。指定した場合も表示するのは専用 service account の resource 名だけで、credential や token は出力しません。
 
 ## Cloud Run デプロイ
 
@@ -81,20 +82,21 @@ cp env.deploy.example .env.deploy
   --region asia-northeast1 \
   --service wordpack-backend \
   --artifact-repo wordpack/backend \
+  --build-service-account <build-service-account-email> \
   --generate-secret
 ```
 
 Makefile から実行する場合:
 
 ```bash
-make deploy-cloud-run PROJECT_ID=<project-id> REGION=asia-northeast1
+make deploy-cloud-run PROJECT_ID=<project-id> REGION=asia-northeast1 BUILD_SERVICE_ACCOUNT=<build-service-account-email>
 ```
 
 `--generate-secret` は `SESSION_SECRET_KEY` が未設定のときだけ乱数値を補完します。既存値を維持したい場合は `.env.deploy` にあらかじめ設定しておきます。
 
 ## release-cloud-run
 
-本番リリースでは `make release-cloud-run` を使うと、Firestore インデックス同期、Cloud Run dry-run、本番デプロイの順序を固定できます。`scripts/deploy_cloud_run.sh` の `IMAGE_TAG` と `GIT_SHA` は checkout 済み HEAD の完全 SHA を正本とし、`.env.deploy` や外部環境変数による上書きを受け付けません。`--image-tag` を渡す場合も同じ SHA の確認値である必要があります。
+本番リリースでは `make release-cloud-run` を使うと、Firestore インデックス同期、Cloud Run dry-run、本番デプロイの順序を固定できます。実ビルドを伴うため、`BUILD_SERVICE_ACCOUNT=<build-service-account-email>` を必ず指定します。`scripts/deploy_cloud_run.sh` の `IMAGE_TAG` と `GIT_SHA` は checkout 済み HEAD の完全 SHA を正本とし、`.env.deploy` や外部環境変数による上書きを受け付けません。`--image-tag` を渡す場合も同じ SHA の確認値である必要があります。
 
 ```bash
 DEPLOYMENT_VERSION="$(openssl rand -hex 16)"
@@ -103,7 +105,8 @@ export DEPLOYMENT_VERSION
 make release-cloud-run \
   PROJECT_ID=<project-id> \
   REGION=asia-northeast1 \
-  ENV_FILE=.env.deploy
+  ENV_FILE=.env.deploy \
+  BUILD_SERVICE_ACCOUNT=<build-service-account-email>
 ```
 
 Cloud Run のリクエストタイムアウトを明示する場合:
@@ -113,7 +116,8 @@ make release-cloud-run \
   PROJECT_ID=<project-id> \
   REGION=asia-northeast1 \
   ENV_FILE=.env.deploy \
-  RUN_TIMEOUT=360s
+  RUN_TIMEOUT=360s \
+  BUILD_SERVICE_ACCOUNT=<build-service-account-email>
 ```
 
 紹介用の本番 URL で cold start による初回待ち時間を避けたい場合は、Cloud Run の minimum instances を `1` にします。後で費用優先へ戻す場合は `0` を指定します。
@@ -123,7 +127,8 @@ make release-cloud-run \
   PROJECT_ID=<project-id> \
   REGION=asia-northeast1 \
   ENV_FILE=.env.deploy \
-  MIN_INSTANCES=1
+  MIN_INSTANCES=1 \
+  BUILD_SERVICE_ACCOUNT=<build-service-account-email>
 ```
 
 `MIN_INSTANCES=0` は Cloud Run service の minimum instances を 0 に戻します。`MIN_INSTANCES=default` を指定すると gcloud の `--min default` に渡し、Cloud Run 側の既定値へ戻します。
@@ -134,7 +139,8 @@ make release-cloud-run \
 SKIP_FIRESTORE_INDEX_SYNC=true make release-cloud-run \
   PROJECT_ID=<project-id> \
   REGION=asia-northeast1 \
-  ENV_FILE=configs/cloud-run/ci.env
+  ENV_FILE=configs/cloud-run/ci.env \
+  BUILD_SERVICE_ACCOUNT=<build-service-account-email>
 ```
 
 ### Cloud Run の段階リリース
@@ -216,7 +222,7 @@ firebase deploy --only hosting --project <firebase-project-id>
 
 ### GitHub Actions の WIF 設定
 
-repository variables（秘密ではない値）を、deploy と preflight の両 workflow から参照できる範囲へ登録します。
+repository variables（秘密ではない値）を、WIF variables は deploy と preflight の両 workflow から参照できる範囲へ、build service account は deploy job だけが参照できる範囲へ登録します。
 
 | Variable | 用途 |
 |---|---|
@@ -224,6 +230,7 @@ repository variables（秘密ではない値）を、deploy と preflight の両
 | `GCP_DEPLOY_WIF_PROVIDER` | production deploy 用の full Workload Identity Provider resource name |
 | `GCP_PREFLIGHT_WIF_PROVIDER` | authenticated preflight 用の full Workload Identity Provider resource name |
 | `GCP_DEPLOY_SERVICE_ACCOUNT` | production deploy provider が impersonate する service-account email |
+| `GCP_BUILD_SERVICE_ACCOUNT` | production deploy が Cloud Build に明示する dedicated build service-account email（秘密ではない値） |
 | `GCP_PREFLIGHT_SERVICE_ACCOUNT` | authenticated preflight provider が impersonate する read-only service-account email |
 | `PRODUCTION_DEPLOY_ENABLED` | 通常の production deploy cutover guard。初期値は `false` とし、許可時だけ文字列 `true` |
 
@@ -235,11 +242,13 @@ repository secret は次のとおりです。
 
 `PRODUCTION_DEPLOY_ENABLED` は初期値 `false` にします。main へこの変更を反映した後、`identity_exchange_only=true` の手動実行と Production deploy preflight が成功し、deploy service account の IAM disposition が完了するまで `true` に変更しません。これらの外部設定と確認が揃うまでは、通常の自動／手動 production deploy は cutover guard で停止します。
 
+`GCP_BUILD_SERVICE_ACCOUNT` は deploy job だけが読み、`projects/<PROJECT_ID>/serviceAccounts/<GCP_BUILD_SERVICE_ACCOUNT>` 形式で `gcloud builds submit` へ渡します。identity-only、authenticated preflight、通常の PR/CI job には build service account や OIDC 権限を渡しません。
+
 `GCP_SA_KEY` と `GCP_SA_PROJECT_ID` は移行後の workflow から参照しません。旧 key は WIF 経路の検証が完了するまで無効化・削除せず、workflow に自動 fallback を追加しないでください。
 
 外部設定は次の順に準備します。ここに書く placeholder は実値へ置き換え、実値をこのリポジトリへコミットしません。
 
-1. `deploy_cloud_run.sh`、Firestore Admin API、Firebase Hosting API、Cloud Run promotion、Cloud Build が実際に呼ぶ API と、deploy service account の IAM 権限を inventory します。preflight は Firestore index list と Firebase Hosting release list だけを呼ぶため、その read-only service account の権限を分けて確認します。repository の role 一覧は候補であり、live IAM の証拠ではありません。
+1. `deploy_cloud_run.sh`、Firestore Admin API、Firebase Hosting API、Cloud Run promotion、Cloud Build が実際に呼ぶ API と、deploy service account の IAM 権限を inventory します。Cloud Build の dedicated service account については `roles/logging.logWriter` と build が実際に必要とする Artifact Registry / Storage 権限を分離して確認します。preflight は Firestore index list と Firebase Hosting release list だけを呼ぶため、その read-only service account の権限を分けて確認します。repository の role 一覧は候補であり、live IAM の証拠ではありません。
 2. Google Cloud に Workload Identity Pool と deploy / preflight それぞれの OIDC provider を作成します。issuer は `https://token.actions.githubusercontent.com/` とし、共通の claim を次のように mapping します。
 
    ```text
@@ -279,8 +288,8 @@ repository secret は次のとおりです。
    principal://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL_ID>/subject/repo:stillshore-chirp/wordpack-for-english:ref:refs/heads/main
    ```
 
-   deploy service account の Cloud Run、Cloud Build、Artifact Registry、Firestore index、Firebase Hosting の resource role は手順 1 の inventory と実 API の権限エラーを根拠に最小限へ確定します。preflight service account には Firestore index list の `datastore.indexes.list` だけを含む project custom role と、Firebase Hosting の最小の定義済みread-only roleである `roles/firebasehosting.viewer` を付与します。`roles/datastore.viewer` は entity read も含むためpreflightには付与しません。deploy 用の write role（`roles/run.admin`、`roles/artifactregistry.writer`、`roles/cloudbuild.builds.editor`、`roles/datastore.indexAdmin`、`roles/firebasehosting.admin` など）も付与しません。role の適用範囲と実効権限は live IAM inventory で確認します。
-5. provider resource name、対象 service account email、project ID を上記 variables へ登録し、両 workflow の安全な token exchange と preflight read-only probe を確認します。provider、variables、IAM binding、exchange が準備できるまで、この repository 変更を merge-ready と判断しません。
+   deploy service account の Cloud Run、Cloud Build submit、Artifact Registry reader、Firestore index、Firebase Hosting の resource role は手順 1 の inventory と実 API の権限エラーを根拠に最小限へ確定します。deploy service account に Artifact Registry writer は付与せず、必要な image read は `roles/artifactregistry.reader` の範囲で確認します。Cloud Build は `projects/<PROJECT_ID>/serviceAccounts/<GCP_BUILD_SERVICE_ACCOUNT>` を指定し、dedicated build service account には `roles/logging.logWriter` と Artifact Registry writer を想定します。`cloudbuild.backend.yaml` と build arg 用の生成 config は `options.logging: CLOUD_LOGGING_ONLY` を設定します。build service account の追加 role と実効権限は live IAM inventory で確認します。preflight service account には Firestore index list の `datastore.indexes.list` だけを含む project custom role と、Firebase Hosting の最小の定義済みread-only roleである `roles/firebasehosting.viewer` を付与します。`roles/datastore.viewer` は entity read も含むためpreflightには付与しません。deploy 用の write role（`roles/run.admin`、`roles/cloudbuild.builds.editor`、`roles/datastore.indexAdmin`、`roles/firebasehosting.admin` など）も付与しません。role の適用範囲と実効権限は live IAM inventory で確認します。
+5. provider resource name、deploy / preflight / dedicated build の対象 service account email、project ID を上記 variables へ登録し、両 workflow の安全な token exchange と preflight read-only probe を確認します。provider、variables、IAM binding、exchange が準備できるまで、この repository 変更を merge-ready と判断しません。
 
 deploy と preflight は専用 provider と専用 service account を使います。preflight service account は Firestore index list と Firebase Hosting release list の read-only probe に必要な権限だけを持たせ、Cloud Run deploy、Cloud Build、Artifact Registry upload、Firestore index update、Hosting release write の権限を付与しません。
 
@@ -299,12 +308,18 @@ Firestore index 同期は `gcloud` 認証の Firestore Admin API 経由で行い
 production deploy service account に必要な代表ロール:
 
 - `roles/run.admin`
-- `roles/artifactregistry.writer`
+- `roles/artifactregistry.reader`（deploy側のimage readが必要な場合）
 - `roles/cloudbuild.builds.editor`
 - `roles/datastore.indexAdmin`
 - `roles/firebasehosting.admin`
-- `roles/serviceusage.serviceUsageViewer`
+- `roles/serviceusage.serviceUsageConsumer`（API利用に必要な `serviceusage.services.use` を含み、service の enable/disable 管理権限は含まない）
 - `roles/iam.serviceAccountUser`
+
+dedicated Cloud Build service account に必要な代表ロール:
+
+- `roles/logging.logWriter`（`options.logging: CLOUD_LOGGING_ONLY` のログ書き込み）
+- `roles/artifactregistry.writer`（Cloud Build が生成 image を Artifact Registry へ push）
+- Artifact Registry / Cloud Storage など、実際の build 入出力に必要な resource role（live IAM inventory で確定）
 
 authenticated preflight service account は次の read-only role に限定します。
 
@@ -313,7 +328,7 @@ authenticated preflight service account は次の read-only role に限定しま
 
 preflight service account に `roles/datastore.viewer`やproduction deploy 用 roleを追加しないことが repository 外部設定の hardening 条件です。safe exchange / read-only probe が不足permissionで失敗した場合だけ、エラーで要求されたpermissionを個別に確認します。
 
-Cloud Build のソースアップロードやログ閲覧には、環境によって Cloud Storage / Cloud Build viewer 系の追加権限が必要です。権限は最小権限を基本とし、広い `roles/viewer` は切り分け目的に限ります。
+Cloud Build の submit 呼び出しは専用 build service account resource を明示し、project の既定 service account へ暗黙委譲しません。ソースアップロードやログ閲覧には、環境によって Cloud Storage / Cloud Build viewer 系の追加権限が必要です。権限は最小権限を基本とし、広い `roles/viewer` は切り分け目的に限ります。
 
 ### WIF 移行後の rollback と旧 key の扱い
 

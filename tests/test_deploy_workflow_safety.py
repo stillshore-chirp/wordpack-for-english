@@ -136,6 +136,28 @@ def test_production_auth_is_wif_key_free_and_job_scoped() -> None:
     assert "gha-creds-*.json" in _read(".gitignore")
 
 
+def test_dedicated_cloud_build_service_account_is_deploy_only() -> None:
+    """Cloud Build receives an explicit non-secret SA only on the deploy path."""
+    deploy = _read(".github/workflows/deploy-production.yml")
+    preflight = _read(".github/workflows/production-deploy-preflight.yml")
+    identity = deploy[deploy.index("  verify-deploy-identity:"): deploy.index("  authorize-deploy-cutover:")]
+    deploy_job = deploy[deploy.index("  deploy:"):]
+
+    assert "GCP_BUILD_SERVICE_ACCOUNT: ${{ vars.GCP_BUILD_SERVICE_ACCOUNT }}" in deploy_job
+    assert "GCP_BUILD_SERVICE_ACCOUNT" not in identity
+    assert "GCP_BUILD_SERVICE_ACCOUNT" not in preflight
+    assert "GCP_BUILD_SERVICE_ACCOUNT" not in deploy[deploy.index("  verify-target:"): deploy.index("  deploy:")]
+    assert 'BUILD_SERVICE_ACCOUNT="${GCP_BUILD_SERVICE_ACCOUNT}"' in deploy_job
+    assert "GCP_BUILD_SERVICE_ACCOUNT is not set" in deploy_job
+    assert "must be a service-account email in GCP_PROJECT_ID's project" in deploy_job
+    assert r"@${GCP_PROJECT_ID}\.iam\.gserviceaccount\.com" in deploy_job
+
+    script = _read("scripts/deploy_cloud_run.sh")
+    makefile = _read("Makefile")
+    assert '"--service-account=projects/${PROJECT_ID}/serviceAccounts/${BUILD_SA}"' in script
+    assert '$(if $(BUILD_SERVICE_ACCOUNT),--build-service-account "$(BUILD_SERVICE_ACCOUNT)",)' in makefile
+
+
 def test_duplicate_dry_run_workflow_is_removed() -> None:
     assert not Path(".github/workflows/deploy-dry-run.yml").exists()
 
