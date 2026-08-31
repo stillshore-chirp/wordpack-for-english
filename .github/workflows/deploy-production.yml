@@ -394,7 +394,7 @@ jobs:
           if [ -z "${GCP_BUILD_SERVICE_ACCOUNT}" ]; then
             echo "::error::GCP_BUILD_SERVICE_ACCOUNT is not set. Register the dedicated Cloud Build service-account email as a repository variable." >&2
             missing=1
-          elif [[ ! "${GCP_BUILD_SERVICE_ACCOUNT}" =~ ^[a-z0-9][a-z0-9-]*@${GCP_PROJECT_ID}\.iam\.gserviceaccount\.com$ ]]; then
+          elif [[ ! "${GCP_BUILD_SERVICE_ACCOUNT}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]@${GCP_PROJECT_ID}\.iam\.gserviceaccount\.com$ ]]; then
             echo "::error::GCP_BUILD_SERVICE_ACCOUNT must be a service-account email in GCP_PROJECT_ID's project." >&2
             missing=1
           fi

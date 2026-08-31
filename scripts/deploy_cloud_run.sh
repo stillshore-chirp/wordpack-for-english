@@ -449,7 +449,7 @@ log "Backend configuration validated successfully"
 
 BUILD_SA="$BUILD_SERVICE_ACCOUNT_ARG"
 if [[ -n "$BUILD_SA" ]]; then
-  if [[ ! "$BUILD_SA" =~ ^[a-z0-9][a-z0-9-]*@${PROJECT_ID}\.iam\.gserviceaccount\.com$ ]]; then
+  if [[ ! "$BUILD_SA" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]@${PROJECT_ID}\.iam\.gserviceaccount\.com$ ]]; then
     err "--build-service-account must be a service-account email in PROJECT_ID's project"
     exit 1
   fi

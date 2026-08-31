@@ -768,7 +768,7 @@ def test_cloud_build_service_account_is_explicit_and_deploy_scoped() -> None:
     assert 'BUILD_SERVICE_ACCOUNT="${GCP_BUILD_SERVICE_ACCOUNT}"' in deploy_block
     assert "GCP_BUILD_SERVICE_ACCOUNT is not set" in deploy_block
     assert "GCP_BUILD_SERVICE_ACCOUNT must be a service-account email in GCP_PROJECT_ID's project." in deploy_block
-    assert r"@${GCP_PROJECT_ID}\.iam\.gserviceaccount\.com" in deploy_block
+    assert r"^[a-z][a-z0-9-]{4,28}[a-z0-9]@${GCP_PROJECT_ID}\.iam\.gserviceaccount\.com" in deploy_block
     assert "--build-service-account" not in _read_text(".github/workflows/production-deploy-preflight.yml")
 
 

@@ -150,7 +150,7 @@ def test_dedicated_cloud_build_service_account_is_deploy_only() -> None:
     assert 'BUILD_SERVICE_ACCOUNT="${GCP_BUILD_SERVICE_ACCOUNT}"' in deploy_job
     assert "GCP_BUILD_SERVICE_ACCOUNT is not set" in deploy_job
     assert "must be a service-account email in GCP_PROJECT_ID's project" in deploy_job
-    assert r"@${GCP_PROJECT_ID}\.iam\.gserviceaccount\.com" in deploy_job
+    assert r"^[a-z][a-z0-9-]{4,28}[a-z0-9]@${GCP_PROJECT_ID}\.iam\.gserviceaccount\.com" in deploy_job
 
     script = _read("scripts/deploy_cloud_run.sh")
     makefile = _read("Makefile")

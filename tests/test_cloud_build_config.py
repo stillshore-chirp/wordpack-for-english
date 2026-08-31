@@ -267,6 +267,50 @@ def test_build_service_account_must_belong_to_project() -> None:
         assert "--build-service-account must be a service-account email in PROJECT_ID's project" in proc.stderr
 
 
+def test_build_service_account_account_id_boundaries_are_fail_closed() -> None:
+    """The account ID must be 6-30 chars, lowercase-led, and alphanumeric-ended."""
+    project_id = "ci-placeholder-project"
+
+    def run_dry_run(account_id: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [
+                "scripts/deploy_cloud_run.sh",
+                "--dry-run",
+                "--env-file",
+                "configs/cloud-run/ci.env",
+                "--project-id",
+                project_id,
+                "--region",
+                "asia-northeast1",
+                "--build-service-account",
+                f"{account_id}@{project_id}.iam.gserviceaccount.com",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env={
+                **os.environ,
+                "PYTHONDONTWRITEBYTECODE": "1",
+                "DISABLE_SESSION_AUTH": "false",
+                "SKIP_FIRESTORE_INDEX_SYNC": "true",
+            },
+        )
+
+    valid_account_ids = ("a0000b", "a" + ("0" * 28) + "b")
+    invalid_account_ids = ("a000b", "a" + ("0" * 29) + "b", "a0000-")
+    assert [len(account_id) for account_id in valid_account_ids] == [6, 30]
+    assert [len(account_id) for account_id in invalid_account_ids] == [5, 31, 6]
+
+    for account_id in valid_account_ids:
+        proc = run_dry_run(account_id)
+        assert proc.returncode == 0, proc.stdout + proc.stderr
+
+    for account_id in invalid_account_ids:
+        proc = run_dry_run(account_id)
+        assert proc.returncode != 0
+        assert "--build-service-account must be a service-account email in PROJECT_ID's project" in proc.stderr
+
+
 def test_cloud_build_does_not_call_github_checks_api() -> None:
     """
     Contract: production deploy visibility is owned by GitHub Actions. Cloud
