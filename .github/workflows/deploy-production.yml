@@ -26,7 +26,6 @@ concurrency:
 
 permissions:
   contents: read
-  actions: read
 
 jobs:
   verify-target:
@@ -253,6 +252,337 @@ jobs:
           fi
           echo "Production deploy cutover is enabled."
 
+  prepare-release-artifacts:
+    name: Prepare release artifacts
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs:
+      - verify-target
+      - authorize-deploy-cutover
+    if: needs.verify-target.result == 'success' && needs.authorize-deploy-cutover.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.identity_exchange_only != true)
+    permissions:
+      contents: read
+    env:
+      TRIGGER_SHA: ${{ needs.verify-target.outputs.target_sha }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.verify-target.outputs.target_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Assert checked out target SHA
+        run: |
+          set -euo pipefail
+          checked_out_sha="$(git rev-parse HEAD)"
+          if [[ "${checked_out_sha}" != "${TRIGGER_SHA}" ]]; then
+            echo "::error::Checked out HEAD does not match target SHA." >&2
+            exit 1
+          fi
+
+      - name: Set up Node.js for frontend build
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        with:
+          node-version: '22'
+
+      - name: Install frontend dependencies
+        env:
+          NPM_CONFIG_PRODUCTION: "false"
+        run: npm ci --prefix ./apps/frontend
+
+      - name: Build frontend artifact
+        run: npm --prefix ./apps/frontend run build
+
+      - name: Upload frontend release artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: frontend-release-dist
+          path: apps/frontend/dist
+          if-no-files-found: error
+          retention-days: 1
+
+  build-backend-artifact:
+    name: Build backend artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    needs:
+      - verify-target
+      - authorize-deploy-cutover
+    if: needs.verify-target.result == 'success' && needs.authorize-deploy-cutover.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.identity_exchange_only != true)
+    environment: production
+    outputs:
+      image_name: ${{ steps.backend-artifact.outputs.image_name }}
+      image_digest: ${{ steps.backend-artifact.outputs.image_digest }}
+      image_uri: ${{ steps.backend-artifact.outputs.image_uri }}
+      native_provenance_snapshot_sha256: ${{ steps.backend-artifact.outputs.native_provenance_snapshot_sha256 }}
+      target_sha: ${{ steps.export-target.outputs.target_sha }}
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.verify-target.outputs.target_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Assert checked out target SHA
+        run: |
+          set -euo pipefail
+          checked_out_sha="$(git rev-parse HEAD)"
+          if [[ "${checked_out_sha}" != "${TARGET_SHA}" ]]; then
+            echo "::error::Checked out HEAD does not match target SHA." >&2
+            exit 1
+          fi
+        env:
+          TARGET_SHA: ${{ needs.verify-target.outputs.target_sha }}
+
+      - name: Validate authenticated build inputs
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_DEPLOY_WIF_PROVIDER: ${{ vars.GCP_DEPLOY_WIF_PROVIDER }}
+          GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          GCP_BUILD_SERVICE_ACCOUNT: ${{ vars.GCP_BUILD_SERVICE_ACCOUNT }}
+        run: |
+          set -euo pipefail
+          missing=0
+          if [[ ! "${GCP_PROJECT_ID}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
+            echo "::error::GCP_PROJECT_ID must be a valid Google Cloud project ID." >&2
+            missing=1
+          fi
+          if [[ ! "${GCP_DEPLOY_WIF_PROVIDER}" =~ ^projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+$ ]]; then
+            echo "::error::GCP_DEPLOY_WIF_PROVIDER must be a full global Workload Identity Provider resource name." >&2
+            missing=1
+          fi
+          if [[ ! "${GCP_DEPLOY_SERVICE_ACCOUNT}" =~ ^[a-z0-9][a-z0-9-]*@[a-z0-9-]+\.iam\.gserviceaccount\.com$ ]]; then
+            echo "::error::GCP_DEPLOY_SERVICE_ACCOUNT must be a Google service-account email." >&2
+            missing=1
+          fi
+          if [[ ! "${GCP_BUILD_SERVICE_ACCOUNT}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]@${GCP_PROJECT_ID}\.iam\.gserviceaccount\.com$ ]]; then
+            echo "::error::GCP_BUILD_SERVICE_ACCOUNT must be a service-account email in GCP_PROJECT_ID's project." >&2
+            missing=1
+          fi
+          if (( missing != 0 )); then
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud with Workload Identity Federation
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_DEPLOY_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+          cleanup_credentials: true
+
+      - name: Set up gcloud SDK
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Build backend artifact once with Cloud Build (VERIFIED / CLOUD_LOGGING_ONLY)
+        id: backend-artifact
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_BUILD_SERVICE_ACCOUNT: ${{ vars.GCP_BUILD_SERVICE_ACCOUNT }}
+          TRIGGER_SHA: ${{ needs.verify-target.outputs.target_sha }}
+        run: |
+          set -euo pipefail
+          scripts/build_backend_artifact.sh \
+            --project-id "${GCP_PROJECT_ID}" \
+            --region asia-northeast1 \
+            --artifact-repo wordpack/backend \
+            --repository "${GITHUB_REPOSITORY}" \
+            --target-sha "${TRIGGER_SHA}" \
+            --builder-workflow "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/deploy-production.yml@refs/heads/main" \
+            --build-service-account "${GCP_BUILD_SERVICE_ACCOUNT}"
+
+      - name: Export target SHA and build-result digest handoff
+        id: export-target
+        env:
+          TARGET_SHA: ${{ needs.verify-target.outputs.target_sha }}
+        run: printf 'target_sha=%s\n' "${TARGET_SHA}" >> "${GITHUB_OUTPUT}"
+
+      - name: Archive exact backend image
+        env:
+          IMAGE_URI: ${{ steps.backend-artifact.outputs.image_uri }}
+          ARCHIVE_PATH: ${{ runner.temp }}/backend-image.tar.zst
+        run: |
+          set -euo pipefail
+          command -v zstd >/dev/null 2>&1 || {
+            echo "::error::zstd is required for the backend image handoff archive." >&2
+            exit 1
+          }
+          docker image inspect "${IMAGE_URI}" >/dev/null 2>&1
+          docker save "${IMAGE_URI}" | zstd -T0 -q -o "${ARCHIVE_PATH}"
+          test -s "${ARCHIVE_PATH}"
+
+      - name: Cleanup Google credentials before artifact upload
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          for variable in GOOGLE_APPLICATION_CREDENTIALS CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE GOOGLE_GHA_CREDS_PATH CLOUDSDK_AUTH_ACCESS_TOKEN; do
+            credential_file="${!variable:-}"
+            if [ -n "${credential_file}" ]; then
+              case "${credential_file}" in
+                "${RUNNER_TEMP}"/*|"${GITHUB_WORKSPACE}"/*) rm -f -- "${credential_file}" ;;
+              esac
+            fi
+            printf '%s=\n' "${variable}" >>"${GITHUB_ENV}"
+          done
+          rm -f -- "${RUNNER_TEMP}"/gha-creds-*.json "${GITHUB_WORKSPACE}"/gha-creds-*.json
+
+      - name: Upload backend image archive
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-image-archive
+          path: ${{ runner.temp }}/backend-image.tar.zst
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Cleanup backend build metadata
+        if: ${{ always() }}
+        run: rm -f "${RUNNER_TEMP}/backend-image.tar.zst"
+
+  attest-backend-artifact:
+    name: Attest backend artifact
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    needs: build-backend-artifact
+    if: needs.build-backend-artifact.result == 'success'
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Download backend image archive
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: backend-image-archive
+          path: ${{ runner.temp }}/backend-image
+
+      - name: Load exact backend image
+        env:
+          IMAGE_URI: ${{ needs.build-backend-artifact.outputs.image_uri }}
+          ARCHIVE_PATH: ${{ runner.temp }}/backend-image/backend-image.tar.zst
+        run: |
+          set -euo pipefail
+          zstd -d -q -c "${ARCHIVE_PATH}" | docker load >/dev/null 2>&1
+          docker image inspect --format='{{json .RepoDigests}}' "${IMAGE_URI}" \
+            | jq -e --arg image "${IMAGE_URI}" 'index($image) != null' >/dev/null
+
+      - name: Prepare backend delivery provenance predicate
+        env:
+          SOURCE_REPOSITORY: https://github.com/${{ github.repository }}
+          TARGET_SHA: ${{ needs.build-backend-artifact.outputs.target_sha }}
+          BUILDER_WORKFLOW: https://github.com/${{ github.repository }}/.github/workflows/deploy-production.yml@refs/heads/main
+          NATIVE_PROVENANCE_SNAPSHOT_SHA256: ${{ needs.build-backend-artifact.outputs.native_provenance_snapshot_sha256 }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import re
+          from pathlib import Path
+
+          native_snapshot = os.environ["NATIVE_PROVENANCE_SNAPSHOT_SHA256"].strip()
+          if not re.fullmatch(r"sha256:[0-9a-f]{64}", native_snapshot):
+              raise SystemExit("native provenance snapshot digest is invalid")
+          predicate = {
+              "buildDefinition": {
+                  "buildType": f"{os.environ['BUILDER_WORKFLOW']}#backend-cloud-build-v1",
+                  "externalParameters": {
+                      "sourceRepository": os.environ["SOURCE_REPOSITORY"],
+                      "targetSha": os.environ["TARGET_SHA"],
+                      "builderWorkflow": os.environ["BUILDER_WORKFLOW"],
+                      "underlyingBuilder": "https://cloudbuild.googleapis.com/GoogleHostedWorker",
+                      "cloudBuildProvenance": "required",
+                      "nativeProvenanceSnapshotSha256": native_snapshot,
+                  },
+                  "resolvedDependencies": [
+                      {
+                          "uri": os.environ["SOURCE_REPOSITORY"],
+                          "digest": {"gitCommit": os.environ["TARGET_SHA"]},
+                      }
+                  ],
+              },
+              "runDetails": {"builder": {"id": os.environ["BUILDER_WORKFLOW"]}},
+          }
+          Path("backend-provenance.json").write_text(
+              json.dumps(predicate, sort_keys=True, separators=(",", ":")) + "\n",
+              encoding="utf-8",
+          )
+          PY
+          test -s backend-provenance.json
+
+      - name: Download and run checksum-pinned Syft
+        env:
+          IMAGE_URI: ${{ needs.build-backend-artifact.outputs.image_uri }}
+          SYFT_ROOT: ${{ runner.temp }}/syft-1.51.1
+          SBOM_PATH: backend-image.sbom.spdx.json
+        run: |
+          set -euo pipefail
+          SYFT_ARCHIVE="${RUNNER_TEMP}/syft_1.51.1_linux_amd64.tar.gz"
+          SYFT_URL="https://github.com/anchore/syft/releases/download/v1.51.1/syft_1.51.1_linux_amd64.tar.gz"
+          SYFT_SHA256="8fcb33017a0dc1058298c923c436d19dfa68ae93968e0b423248542e3afb9fc3"
+          mkdir -p "${SYFT_ROOT}"
+          curl --fail --silent --show-error --location --proto '=https' --tlsv1.2 \
+            "${SYFT_URL}" --output "${SYFT_ARCHIVE}"
+          printf '%s  %s\n' "${SYFT_SHA256}" "${SYFT_ARCHIVE}" | sha256sum --check --strict >/dev/null
+          tar -xzf "${SYFT_ARCHIVE}" -C "${SYFT_ROOT}"
+          chmod 755 "${SYFT_ROOT}/syft"
+          unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN
+          "${SYFT_ROOT}/syft" scan "docker:${IMAGE_URI}" \
+            -o "spdx-json=${SBOM_PATH}" >/dev/null
+          test -s "${SBOM_PATH}"
+
+      - name: Validate strict SPDX 2.3 document
+        run: |
+          set -euo pipefail
+          jq -e '
+            .spdxVersion == "SPDX-2.3"
+            and (.name | type == "string" and length > 0)
+            and (.packages | type == "array")
+            and (.relationships | type == "array")
+          ' backend-image.sbom.spdx.json >/dev/null
+
+      - name: Attest backend delivery provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ needs.build-backend-artifact.outputs.image_name }}
+          subject-digest: ${{ needs.build-backend-artifact.outputs.image_digest }}
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate-path: backend-provenance.json
+          push-to-registry: false
+
+      - name: Attest backend SPDX SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ needs.build-backend-artifact.outputs.image_name }}
+          subject-digest: ${{ needs.build-backend-artifact.outputs.image_digest }}
+          sbom-path: backend-image.sbom.spdx.json
+          push-to-registry: false
+
+      - name: Upload backend attestation metadata
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: backend-attestation-metadata
+          path: |
+            backend-provenance.json
+            backend-image.sbom.spdx.json
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Cleanup backend attestation metadata
+        if: ${{ always() }}
+        run: |
+          rm -f backend-provenance.json backend-image.sbom.spdx.json
+          rm -rf "${RUNNER_TEMP}/backend-image" "${RUNNER_TEMP}/syft-1.51.1" "${RUNNER_TEMP}/syft_1.51.1_linux_amd64.tar.gz"
+
   deploy:
     name: Deploy to production
     runs-on: ubuntu-latest
@@ -260,17 +590,19 @@ jobs:
     needs:
       - verify-target
       - authorize-deploy-cutover
-    if: needs.verify-target.result == 'success' && needs.authorize-deploy-cutover.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.identity_exchange_only != true)
+      - prepare-release-artifacts
+      - build-backend-artifact
+      - attest-backend-artifact
+    if: needs.verify-target.result == 'success' && needs.authorize-deploy-cutover.result == 'success' && needs.prepare-release-artifacts.result == 'success' && needs.build-backend-artifact.result == 'success' && needs.attest-backend-artifact.result == 'success' && (github.event_name != 'workflow_dispatch' || inputs.identity_exchange_only != true)
     environment: production
     permissions:
       contents: read
+      actions: read
+      attestations: read
       id-token: write
     env:
-      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-      GCP_DEPLOY_WIF_PROVIDER: ${{ vars.GCP_DEPLOY_WIF_PROVIDER }}
-      GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
-      GCP_BUILD_SERVICE_ACCOUNT: ${{ vars.GCP_BUILD_SERVICE_ACCOUNT }}
-      CLOUD_RUN_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      TRIGGER_BRANCH: main
+      TRIGGER_SHA: ${{ needs.verify-target.outputs.target_sha }}
       CLOUD_RUN_REGION: asia-northeast1
       CLOUD_RUN_SERVICE: wordpack-backend
       CLOUD_RUN_ENV_FILE: .env.deploy
@@ -281,9 +613,6 @@ jobs:
       CLOUD_RUN_CANARY_DELAY_SECONDS: "10"
       CLOUD_RUN_CANARY_REQUESTS_PER_ATTEMPT: "10"
       SKIP_FIRESTORE_INDEX_SYNC: "false"
-      FIREBASE_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
-      TRIGGER_BRANCH: main
-      TRIGGER_SHA: ${{ needs.verify-target.outputs.target_sha }}
       GITHUB_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
     steps:
       - name: Checkout repository
@@ -298,131 +627,123 @@ jobs:
           set -euo pipefail
           checked_out_sha="$(git rev-parse HEAD)"
           if [[ "${checked_out_sha}" != "${TRIGGER_SHA}" ]]; then
-            echo "::error::Checked out HEAD ${checked_out_sha} does not match target SHA ${TRIGGER_SHA}."
+            echo "::error::Checked out HEAD does not match target SHA." >&2
             exit 1
           fi
-          echo "Checked out authoritative deployment SHA ${checked_out_sha}."
 
-      - name: Set up Node.js for frontend build
-        # Firebase Hosting の公開 artifact を作るため Node.js を用意する。
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - name: Download frontend release artifact before auth
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
-          node-version: '22'
+          name: frontend-release-dist
+          path: apps/frontend/dist
 
-      - name: Install frontend dependencies
-        # predeploy の tsc が @types などの devDependencies を必要とするため、事前に導入しておく。
-        env:
-          NPM_CONFIG_PRODUCTION: "false"
-        run: npm ci --prefix ./apps/frontend
+      - name: Download backend attestation metadata before auth
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: backend-attestation-metadata
+          path: .backend-attestation
 
-      - name: Build frontend artifact
-        # 認証情報を取得する前に、依存関係から公開 artifact を生成する。
-        run: npm --prefix ./apps/frontend run build
-
-      - name: Set up Python
-        # デプロイスクリプトが python -m apps.backend.backend.config で設定を検証するため Python 環境を用意する。
+      - name: Set up Python 3.14 for deployment tooling
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.14'
 
-      - name: Install Python dependencies
-        # Pydantic 設定検証など、デプロイ前の dry-run に必要な依存をインストールする。
+      - name: Validate deployment inputs before auth
+        env:
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_DEPLOY_WIF_PROVIDER: ${{ vars.GCP_DEPLOY_WIF_PROVIDER }}
+          GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          set -euo pipefail
+          if [[ ! "${GCP_PROJECT_ID}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
+            echo "::error::GCP_PROJECT_ID must be a valid Google Cloud project ID." >&2
+            exit 1
+          fi
+          if [[ ! "${GCP_DEPLOY_WIF_PROVIDER}" =~ ^projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+$ ]]; then
+            echo "::error::GCP_DEPLOY_WIF_PROVIDER must be a full global Workload Identity Provider resource name." >&2
+            exit 1
+          fi
+          if [[ ! "${GCP_DEPLOY_SERVICE_ACCOUNT}" =~ ^[a-z0-9][a-z0-9-]*@[a-z0-9-]+\.iam\.gserviceaccount\.com$ ]]; then
+            echo "::error::GCP_DEPLOY_SERVICE_ACCOUNT must be a Google service-account email." >&2
+            exit 1
+          fi
+
+      - name: Authenticate to Google Cloud with Workload Identity Federation
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ vars.GCP_DEPLOY_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+          cleanup_credentials: true
+
+      - name: Set up gcloud SDK
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+
+      - name: Configure Artifact Registry Docker auth
+        env:
+          CLOUD_RUN_REGION: ${{ env.CLOUD_RUN_REGION }}
+        run: |
+          set -euo pipefail
+          gcloud auth configure-docker "${CLOUD_RUN_REGION}-docker.pkg.dev" --quiet >/dev/null
+
+      - name: Verify backend artifact attestations after auth
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_DIGEST: ${{ github.sha }}
+          SIGNER_DIGEST: ${{ github.workflow_sha }}
+        run: |
+          set -euo pipefail
+          scripts/verify_backend_artifact_attestations.sh \
+            --image-uri "${{ needs.build-backend-artifact.outputs.image_uri }}" \
+            --repository "${GITHUB_REPOSITORY}" \
+            --target-sha "${TRIGGER_SHA}" \
+            --source-digest "${SOURCE_DIGEST}" \
+            --signer-digest "${SIGNER_DIGEST}" \
+            --native-provenance-snapshot-sha256 "${{ needs.build-backend-artifact.outputs.native_provenance_snapshot_sha256 }}" \
+            --builder-workflow "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/deploy-production.yml@refs/heads/main" \
+            --provenance .backend-attestation/backend-provenance.json \
+            --sbom .backend-attestation/backend-image.sbom.spdx.json
 
       - name: Materialize production env file
-        # 依存関係と frontend artifact の生成後、シークレットから .env.deploy を復元する。
         env:
           CLOUD_RUN_ENV_FILE: ${{ env.CLOUD_RUN_ENV_FILE }}
           CLOUD_RUN_ENV_FILE_BASE64: ${{ secrets.CLOUD_RUN_ENV_FILE_BASE64 }}
         run: |
           set -euo pipefail
           if [ -z "${CLOUD_RUN_ENV_FILE_BASE64}" ]; then
-            echo "::error::CLOUD_RUN_ENV_FILE_BASE64 secret is not set. Add a base64-encoded .env.deploy for production deploys." >&2
+            echo "::error::CLOUD_RUN_ENV_FILE_BASE64 secret is not set." >&2
             exit 1
           fi
-
           umask 077
           echo "::add-mask::${CLOUD_RUN_ENV_FILE_BASE64}"
           echo "${CLOUD_RUN_ENV_FILE_BASE64}" | base64 --decode > "${CLOUD_RUN_ENV_FILE}"
           chmod 600 "${CLOUD_RUN_ENV_FILE}"
-          echo "Restored ${CLOUD_RUN_ENV_FILE} from CLOUD_RUN_ENV_FILE_BASE64."
 
-      - name: Validate deployment inputs
-        # デプロイ用の環境ファイルと WIF の識別子が揃っているか auth 前に検証する。
+      - name: Validate deployment inputs after secret materialization
         env:
-          GCP_PROJECT_ID: ${{ env.GCP_PROJECT_ID }}
-          GCP_DEPLOY_WIF_PROVIDER: ${{ env.GCP_DEPLOY_WIF_PROVIDER }}
-          GCP_DEPLOY_SERVICE_ACCOUNT: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
-          GCP_BUILD_SERVICE_ACCOUNT: ${{ env.GCP_BUILD_SERVICE_ACCOUNT }}
-          CLOUD_RUN_PROJECT_ID: ${{ env.CLOUD_RUN_PROJECT_ID }}
+          GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+          GCP_DEPLOY_WIF_PROVIDER: ${{ vars.GCP_DEPLOY_WIF_PROVIDER }}
+          GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}
           CLOUD_RUN_ENV_FILE: ${{ env.CLOUD_RUN_ENV_FILE }}
-          FIREBASE_PROJECT_ID: ${{ env.FIREBASE_PROJECT_ID }}
+          FIREBASE_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
         run: |
           set -euo pipefail
           missing=0
-          if [ -z "${GCP_PROJECT_ID}" ]; then
-            echo "::error::GCP_PROJECT_ID is not set. Register the production project ID as a repository variable." >&2
-            missing=1
-          elif [[ ! "${GCP_PROJECT_ID}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
-            echo "::error::GCP_PROJECT_ID must be a valid Google Cloud project ID." >&2
-            missing=1
-          fi
-          if [ -z "${FIREBASE_PROJECT_ID}" ]; then
-            echo "::error::FIREBASE_PROJECT_ID is not set. Register the Firebase project ID as a repository variable." >&2
-            missing=1
-          fi
-          if [ ! -f "${CLOUD_RUN_ENV_FILE}" ]; then
-            echo "::error::Deployment env file '${CLOUD_RUN_ENV_FILE}' is missing. Create it based on env.deploy.example and store it securely." >&2
-            missing=1
-          fi
-          if [ -z "${GCP_DEPLOY_WIF_PROVIDER}" ]; then
-            echo "::error::GCP_DEPLOY_WIF_PROVIDER is not set. Register the full WIF provider resource name as a repository variable." >&2
-            missing=1
-          elif [[ ! "${GCP_DEPLOY_WIF_PROVIDER}" =~ ^projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+$ ]]; then
-            echo "::error::GCP_DEPLOY_WIF_PROVIDER must be a full global Workload Identity Provider resource name." >&2
-            missing=1
-          fi
-          if [ -z "${GCP_DEPLOY_SERVICE_ACCOUNT}" ]; then
-            echo "::error::GCP_DEPLOY_SERVICE_ACCOUNT is not set. Register the deploy service-account email as a repository variable." >&2
-            missing=1
-          elif [[ ! "${GCP_DEPLOY_SERVICE_ACCOUNT}" =~ ^[a-z0-9][a-z0-9-]*@[a-z0-9-]+\.iam\.gserviceaccount\.com$ ]]; then
-            echo "::error::GCP_DEPLOY_SERVICE_ACCOUNT must be a Google service-account email." >&2
-            missing=1
-          fi
-          if [ -z "${GCP_BUILD_SERVICE_ACCOUNT}" ]; then
-            echo "::error::GCP_BUILD_SERVICE_ACCOUNT is not set. Register the dedicated Cloud Build service-account email as a repository variable." >&2
-            missing=1
-          elif [[ ! "${GCP_BUILD_SERVICE_ACCOUNT}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]@${GCP_PROJECT_ID}\.iam\.gserviceaccount\.com$ ]]; then
-            echo "::error::GCP_BUILD_SERVICE_ACCOUNT must be a service-account email in GCP_PROJECT_ID's project." >&2
-            missing=1
-          fi
-          if [ "$missing" -ne 0 ]; then
+          if [[ ! "${GCP_PROJECT_ID}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then missing=1; fi
+          if [[ ! "${FIREBASE_PROJECT_ID}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then missing=1; fi
+          if [[ ! -f "${CLOUD_RUN_ENV_FILE}" ]]; then missing=1; fi
+          if [[ ! "${GCP_DEPLOY_WIF_PROVIDER}" =~ ^projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+$ ]]; then missing=1; fi
+          if [[ ! "${GCP_DEPLOY_SERVICE_ACCOUNT}" =~ ^[a-z0-9][a-z0-9-]*@[a-z0-9-]+\.iam\.gserviceaccount\.com$ ]]; then missing=1; fi
+          if (( missing != 0 )); then
+            echo "::error::Deployment input validation failed." >&2
             exit 1
           fi
-          echo "Inputs validated. Proceeding to authenticated deployment."
-
-      - name: Authenticate to Google Cloud with Workload Identity Federation
-        # 依存関係と frontend artifact の生成、入力検証後に短期 credential を取得する。
-        id: gcp-auth
-        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
-        with:
-          project_id: ${{ env.GCP_PROJECT_ID }}
-          workload_identity_provider: ${{ env.GCP_DEPLOY_WIF_PROVIDER }}
-          service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
-          create_credentials_file: true
-          export_environment_variables: true
-          cleanup_credentials: true
-
-      - name: Set up gcloud SDK
-        # gcloud CLI をプロジェクト/リージョンに合わせて準備する。Cloud Run / Cloud Build は GA コマンドのみ使用。
-        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
-        with:
-          project_id: ${{ env.CLOUD_RUN_PROJECT_ID }}
 
       - name: Prepare unique deployment marker
-        # 同じ commit の再実行でも旧 revision と候補を区別できるよう、実行ごとに新しい marker を生成する。
         run: |
           set -euo pipefail
           DEPLOYMENT_VERSION="$(python -c 'import secrets; print(secrets.token_hex(16))')"
@@ -430,34 +751,32 @@ jobs:
           echo "DEPLOYMENT_VERSION=${DEPLOYMENT_VERSION}" >> "${GITHUB_ENV}"
 
       - name: Run production Cloud Run release
-        # Firestore インデックス同期の有無は環境変数で制御し、Makefile 側で一元管理する。
-        # TOOL=gcloud で gcloud 認証の Firestore Admin API を使い、Firebase CLI と gcloud alpha に依存しない。
         env:
-          CLOUD_RUN_PROJECT_ID: ${{ env.CLOUD_RUN_PROJECT_ID }}
+          CLOUD_RUN_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
           CLOUD_RUN_REGION: ${{ env.CLOUD_RUN_REGION }}
           CLOUD_RUN_SERVICE: ${{ env.CLOUD_RUN_SERVICE }}
           CLOUD_RUN_ENV_FILE: ${{ env.CLOUD_RUN_ENV_FILE }}
           CLOUD_RUN_MIN_INSTANCES: ${{ env.CLOUD_RUN_MIN_INSTANCES }}
           CLOUD_RUN_TRAFFIC_TAG: ${{ env.CLOUD_RUN_TRAFFIC_TAG }}
           SKIP_FIRESTORE_INDEX_SYNC: ${{ env.SKIP_FIRESTORE_INDEX_SYNC }}
+          IMAGE_URI: ${{ needs.build-backend-artifact.outputs.image_uri }}
         run: |
           make release-cloud-run \
             PROJECT_ID="${CLOUD_RUN_PROJECT_ID}" \
             REGION="${CLOUD_RUN_REGION}" \
             SERVICE="${CLOUD_RUN_SERVICE}" \
             ENV_FILE="${CLOUD_RUN_ENV_FILE}" \
-            IMAGE_TAG="${TRIGGER_SHA}" \
+            IMAGE_URI="${IMAGE_URI}" \
             MIN_INSTANCES="${CLOUD_RUN_MIN_INSTANCES}" \
             NO_TRAFFIC=true \
             TRAFFIC_TAG="${CLOUD_RUN_TRAFFIC_TAG}" \
             SKIP_FIRESTORE_INDEX_SYNC="${SKIP_FIRESTORE_INDEX_SYNC}" \
-            BUILD_SERVICE_ACCOUNT="${GCP_BUILD_SERVICE_ACCOUNT}" \
+            VALIDATE_IN_IMAGE=true \
             TOOL=gcloud
 
       - name: Promote staged Cloud Run revision
-        # 本番 Hosting rewrite で候補 version を観測しながら 10% canary を 60 秒確認し、失敗時は直前の traffic 配分へ自動復旧する。
         env:
-          CLOUD_RUN_PROJECT_ID: ${{ env.CLOUD_RUN_PROJECT_ID }}
+          CLOUD_RUN_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
           CLOUD_RUN_REGION: ${{ env.CLOUD_RUN_REGION }}
           CLOUD_RUN_SERVICE: ${{ env.CLOUD_RUN_SERVICE }}
           CLOUD_RUN_TRAFFIC_TAG: ${{ env.CLOUD_RUN_TRAFFIC_TAG }}
@@ -465,7 +784,7 @@ jobs:
           CLOUD_RUN_CANARY_ATTEMPTS: ${{ env.CLOUD_RUN_CANARY_ATTEMPTS }}
           CLOUD_RUN_CANARY_DELAY_SECONDS: ${{ env.CLOUD_RUN_CANARY_DELAY_SECONDS }}
           CLOUD_RUN_CANARY_REQUESTS_PER_ATTEMPT: ${{ env.CLOUD_RUN_CANARY_REQUESTS_PER_ATTEMPT }}
-          FIREBASE_PROJECT_ID: ${{ env.FIREBASE_PROJECT_ID }}
+          FIREBASE_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
         run: |
           scripts/promote_cloud_run_revision.sh \
             --project-id "${CLOUD_RUN_PROJECT_ID}" \
@@ -480,12 +799,11 @@ jobs:
             --expected-version "${DEPLOYMENT_VERSION}"
 
       - name: Deploy Firebase Hosting
-        # Cloud Run デプロイ後に Firebase Hosting を更新し、フロントエンドを同じリリースで揃える。
-        # Firebase CLI 認証に依存せず、gcloud 認証の Firebase Hosting API で release する。
         env:
-          FIREBASE_PROJECT_ID: ${{ env.FIREBASE_PROJECT_ID }}
+          FIREBASE_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
         run: |
           set -euo pipefail
+          test -d apps/frontend/dist
           python scripts/deploy_firebase_hosting.py \
             --project "${FIREBASE_PROJECT_ID}" \
             --site "${FIREBASE_PROJECT_ID}" \
@@ -495,14 +813,13 @@ jobs:
         if: ${{ always() }}
         run: |
           STATUS="${{ job.status }}"
-          if [ "$STATUS" = "success" ]; then
+          if [ "${STATUS}" = "success" ]; then
             STATUS_LABEL="[success]"
-          elif [ "$STATUS" = "cancelled" ]; then
+          elif [ "${STATUS}" = "cancelled" ]; then
             STATUS_LABEL="[cancelled]"
           else
             STATUS_LABEL="[failed]"
           fi
-
           {
             echo "## Production deployment"
             echo "- Status: ${STATUS_LABEL} ${STATUS}"
@@ -512,11 +829,29 @@ jobs:
             echo "- Cloud Run rollout: tagged no-traffic candidate -> ${CLOUD_RUN_CANARY_PERCENT}% canary -> 100%"
             echo "- Canary observation: $(( (CLOUD_RUN_CANARY_ATTEMPTS - 1) * CLOUD_RUN_CANARY_DELAY_SECONDS )) seconds"
             echo "- SKIP_FIRESTORE_INDEX_SYNC: ${SKIP_FIRESTORE_INDEX_SYNC}"
-          } >> "$GITHUB_STEP_SUMMARY"
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+      - name: Cleanup backend attestation metadata
+        if: ${{ always() }}
+        run: rm -rf .backend-attestation
+
+      - name: Cleanup Google credentials
+        if: ${{ always() }}
+        run: |
+          set -euo pipefail
+          for variable in GOOGLE_APPLICATION_CREDENTIALS CLOUDSDK_AUTH_CREDENTIAL_FILE_OVERRIDE GOOGLE_GHA_CREDS_PATH CLOUDSDK_AUTH_ACCESS_TOKEN; do
+            credential_file="${!variable:-}"
+            if [ -n "${credential_file}" ]; then
+              case "${credential_file}" in
+                "${RUNNER_TEMP}"/*|"${GITHUB_WORKSPACE}"/*) rm -f -- "${credential_file}" ;;
+              esac
+            fi
+            printf '%s=\n' "${variable}" >>"${GITHUB_ENV}"
+          done
+          rm -f -- "${RUNNER_TEMP}"/gha-creds-*.json "${GITHUB_WORKSPACE}"/gha-creds-*.json
 
       - name: Cleanup materialized production env file
         if: ${{ always() }}
         env:
           CLOUD_RUN_ENV_FILE: ${{ env.CLOUD_RUN_ENV_FILE }}
-        run: |
-          rm -f "${CLOUD_RUN_ENV_FILE:-.env.deploy}"
+        run: rm -f "${CLOUD_RUN_ENV_FILE:-.env.deploy}"

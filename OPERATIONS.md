@@ -274,14 +274,14 @@ OpenAI API は WordPack 新規生成、再生成、TTS の外部依存。アプ�
 | `CI` | classifierが選択するbackend / frontend / container / deploy / governance / workflow contract / Playwright、security text scan、Quality gate | PR ではここが最低限の品質ゲート |
 | `Production deploy preflight` | daily schedule またはmain refの手動実行で、gcloud / Firestore / Firebase Hostingのread-only probe | credential欠如またはprobe失敗を本番デプロイ前の設定・接続問題として確認する |
 | `Scheduled maintenance` | 週次またはsuite選択の手動実行で、CodeQL / OpenSSF Scorecard / backend performance / 全Playwright回帰を検査 | suite単位で保守上の回帰を切り分ける |
-| `Deploy to production` | `.env.deploy` 復元、設定検証、Cloud Run traffic 0% 候補、10% canary と自動 rollback、100% 昇格、Firebase Hosting deploy | 本番リリース失敗時の一次ログ。自動 rollback の成否も確認する |
-| Cloud Build | backend image buildのみ | Dockerfile / dependency / Artifact Registry 問題を確認 |
+| `Deploy to production` | `verify-target` / `authorize-deploy-cutover` の後、`prepare-release-artifacts`、`build-backend-artifact`、`attest-backend-artifact`、`deploy` に分離したfrontend準備、backend build-once、digest/native provenance/SBOM/attestation検証、`.env.deploy` 復元、Cloud Run traffic 0% 候補、10% canary と自動 rollback、100% 昇格、Firebase Hosting deploy | 本番リリース失敗時の一次ログ。停止したjob、digest不一致、証明書不一致、自動 rollback の成否を確認する |
+| Cloud Build / Artifact Registry | `cloudbuild.backend.yaml` で `git archive TARGET_SHA` のprivate contextを一度だけbuildし、manifest digestとnative provenanceを保持 | build resultとregistry digestが一致するか、failed tag / manifestのcleanupと保持期限を確認 |
 
 ### 本番 workflow の認証運用
 
-`Deploy to production` は `GCP_DEPLOY_WIF_PROVIDER` から `GCP_DEPLOY_SERVICE_ACCOUNT` を、`Production deploy preflight` は別の `GCP_PREFLIGHT_WIF_PROVIDER` から `GCP_PREFLIGHT_SERVICE_ACCOUNT` を impersonate します。workflow は `GCP_PROJECT_ID`、4つの WIF repository variables、deploy jobだけの `GCP_BUILD_SERVICE_ACCOUNT` を参照し、`GCP_SA_KEY` や `credentials_json` への fallback を持ちません。deploy jobはこの dedicated build service account を `projects/<PROJECT_ID>/serviceAccounts/<GCP_BUILD_SERVICE_ACCOUNT>` resource として `gcloud builds submit` へ明示します。Artifact Registry writer は dedicated build service account、deploy service account は必要な image read の `roles/artifactregistry.reader` に分離します。Cloud Build config は `options.logging: CLOUD_LOGGING_ONLY` を使い、dedicated build service account には `roles/logging.logWriter` を想定します。通常の production deploy は `PRODUCTION_DEPLOY_ENABLED` が文字列 `true` のときだけ `authorize-deploy-cutover` を通過します。初期値は `false` とし、main merge後の `identity_exchange_only=true` による deploy identity exchange、Production deploy preflight、deploy service account と dedicated build service account の IAM disposition が完了するまで有効化しません。
+`Deploy to production` は `GCP_DEPLOY_WIF_PROVIDER` から `GCP_DEPLOY_SERVICE_ACCOUNT` を、`Production deploy preflight` は別の `GCP_PREFLIGHT_WIF_PROVIDER` から `GCP_PREFLIGHT_SERVICE_ACCOUNT` を impersonate します。workflow は `GCP_PROJECT_ID`、4つの WIF repository variables、`build-backend-artifact` jobだけの `GCP_BUILD_SERVICE_ACCOUNT` を参照し、`GCP_SA_KEY` や `credentials_json` への fallback を持ちません。dedicated build service account はbuild job内のCloud Build buildにだけ使い、deploy helperは検証済みの完全な `IMAGE_URI`（`@sha256:<64-hex>`）を消費して再buildしません。Artifact Registry writer は dedicated build service account、deploy service account は必要な image read の `roles/artifactregistry.reader` に分離します。Cloud Build config は `options.logging: CLOUD_LOGGING_ONLY` を使い、dedicated build service account には `roles/logging.logWriter` を想定します。通常の production deploy は `PRODUCTION_DEPLOY_ENABLED` が文字列 `true` のときだけ `authorize-deploy-cutover` を通過します。初期値は `false` とし、main merge後の `identity_exchange_only=true` による deploy identity exchange、Production deploy preflight、deploy service account と dedicated build service account の IAM disposition が完了するまで有効化しません。
 
-OIDC の `id-token: write` は deploy job、authenticated preflight job、manual main の identity-only job の job scope に限定され、対象 SHA の CI / Quality gate 検証、Cloud Run の canary・health check・自動 rollback、materialized env file の cleanup は既存契約として維持します。identity-only job は pinned auth action の `token_format: access_token` による WIF token exchange と、その `access_token` 出力が非空であることの確認だけを実行し、token を表示・保存せず、checkout/build/env materialize/deploy/API write/traffic 操作を行いません。通常の PR job / runner に OIDC 権限は追加しません。
+OIDC の `id-token: write` は `build-backend-artifact`、`attest-backend-artifact`、`deploy`、authenticated preflight、manual main の identity-only jobそれぞれの job scope に限定されます。build jobはCloud Build、attest jobはGitHub attestation、deploy jobはprivate GAR検証とreleaseのために使い、通常の PR job / runner と `verify-target` / `prepare-release-artifacts` / `authorize-deploy-cutover` には追加しません。対象 SHA の CI / Quality gate 検証、Cloud Run の canary・health check・自動 rollback、materialized env file の cleanup は既存契約として維持します。identity-only job は pinned auth action の `token_format: access_token` によるWIF token exchangeと、その `access_token` 出力が非空であることの確認だけを実行し、tokenを表示・保存せず、checkout/build/env materialize/deploy/API write/traffic操作を行いません。
 
 provider の numeric repository / owner ID、main ref、各 workflow の exact `workflow_ref`、deploy 側の `production` environment 条件、`roles/iam.workloadIdentityUser` binding、deploy service account の実効 resource role、dedicated build service account の `roles/logging.logWriter` と build入出力 role、preflight service account の `datastore.indexes.list` だけのcustom role / `roles/firebasehosting.viewer`、GitHub environment protection、token exchange は外部設定です。repository の静的検査と focused test はこれらの live 設定や本番 probe の成功を証明しないため、merge 前に [docs/deployment.md](./docs/deployment.md) の順序で inventory と exchange を確認します。preflight は Firestore index list と Firebase Hosting release list だけを probe する read-only job とし、`roles/datastore.viewer`やdeploy 用の write roleを付与しません。identity-only、preflight、通常のPR/CI jobには `GCP_BUILD_SERVICE_ACCOUNT` を渡しません。
 
@@ -293,8 +293,63 @@ provider の numeric repository / owner ID、main ref、各 workflow の exact `
   --env-file .env.deploy \
   --project-id <project-id> \
   --region asia-northeast1 \
-  --service wordpack-backend
+  --service wordpack-backend \
+  --image-uri <region>-docker.pkg.dev/<project-id>/wordpack/backend@sha256:<64-hex>
 ```
+
+### backend artifact の不一致と失敗時 cleanup
+
+既存 `Deploy to production` workflowのartifact順序は、`prepare-release-artifacts` のtarget SHA checkout / frontend build → `build-backend-artifact` の `git archive TARGET_SHA` によるprivate temporary context・Cloud Build一度だけ・build result / Artifact Registry manifest digest照合・同digestのcontainer `/healthz` smoke → `attest-backend-artifact` のchecksum-pinned Syft 1.51.1 SPDX 2.3生成・GitHub workflow-level delivery provenanceとSBOMの作成 → `deploy` のGCP再認証後private GAR向け `gh attestation verify` → digest-only Cloud Run deployです。Cloud Build native provenance は `gcloud artifacts docker images describe <image>@<digest> --show-provenance --format=json` でexact digestから取得し、image digest、GoogleHostedWorker、invocation、`_SOURCE_REPOSITORY` / `_TARGET_SHA` / `_BUILDER_WORKFLOW` substitutionsを検証します。local archive submitでSCM metadataが省略される場合は受け入れ、存在する場合はrepository/ref/SHAを厳密照合します。検証済みJSONのSHA256を `nativeProvenanceSnapshotSha256` としてGitHub predicateへ結合します。Syft 1.51.1はローカルDocker daemonへpull済みの同じimmutable digestを入力にし、Anchore Actionは使用しません。GitHub attestation の `runDetails.builder.id` は exact deploy `BUILDER_WORKFLOW` URI、`buildDefinition.buildType` は `${BUILDER_WORKFLOW}#backend-cloud-build-v1` とし、`underlyingBuilder=https://cloudbuild.googleapis.com/GoogleHostedWorker` と `cloudBuildProvenance=required` は上流のCloud Build native provenanceとの対応を示すpredicate値として照合します。GitHub署名者identityがGoogle builder identityを示すわけではありません。Cloud Build native provenance は `cloudbuild.backend.yaml` の `options.requestedVerifyOption: VERIFIED` でも独立して要求します。expected repository、signer workflow、source ref、source digest、signer digest、target SHA、builder、digest、SBOMの存在を一つでも確認できなければ、Cloud Run、traffic、Hostingのwriteへ進めません。新しいworkflowは追加せず、通常PRからpublishしません。job追加はjob-wide OIDC/permissionsと依存tool隔離、credential cleanup、artifact handoffを保つための既存workflow内の分割です。
+
+Cloud Buildへのsource uploadは、archived target SHA内の明示的な `.gcloudignore` allowlistを使います。Dockerfile、build config、requirements、backend runtime source以外のtracked env、credential、generated fileもstagingへ送らず、native provenanceではSCM `buildConfigSource` または空でないinline `buildConfig` のどちらか一方を必須にします。
+
+運用時の確認例（対象SHAをcheckout済みのtreeで実行し、識別子は必ず実環境の値へ置き換える）:
+
+```bash
+export TARGET_SHA="<40-char-main-commit-sha>"
+export REPOSITORY="<owner>/<repository>"
+export BUILDER_WORKFLOW="https://github.com/${REPOSITORY}/.github/workflows/deploy-production.yml@refs/heads/main"
+export GITHUB_OUTPUT="$(mktemp)"
+trap 'rm -f "${GITHUB_OUTPUT}"' EXIT
+scripts/build_backend_artifact.sh \
+  --project-id "<project-id>" \
+  --region "<region>" \
+  --artifact-repo wordpack/backend \
+  --repository "${REPOSITORY}" \
+  --target-sha "${TARGET_SHA}" \
+  --builder-workflow "${BUILDER_WORKFLOW}" \
+  --build-service-account "<build-service-account>@<project-id>.iam.gserviceaccount.com"
+export IMMUTABLE_IMAGE="$(sed -n 's/^image_uri=//p' "${GITHUB_OUTPUT}")"
+export IMAGE_DIGEST="$(sed -n 's/^image_digest=//p' "${GITHUB_OUTPUT}")"
+export NATIVE_PROVENANCE_SNAPSHOT_SHA256="$(sed -n 's/^native_provenance_snapshot_sha256=//p' "${GITHUB_OUTPUT}")"
+export SOURCE_DIGEST="<40-char-github.sha>"
+export SIGNER_DIGEST="<40-char-github.workflow_sha>"
+gh attestation verify "oci://${IMMUTABLE_IMAGE}" \
+  --repo "<owner>/<repository>" \
+  --signer-workflow "<owner>/<repository>/.github/workflows/<trusted-workflow>.yml" \
+  --source-ref refs/heads/main \
+  --source-digest "${SOURCE_DIGEST}" \
+  --signer-digest "${SIGNER_DIGEST}"
+
+gh attestation verify "oci://${IMMUTABLE_IMAGE}" \
+  --repo "<owner>/<repository>" \
+  --signer-workflow "<owner>/<repository>/.github/workflows/<trusted-workflow>.yml" \
+  --source-ref refs/heads/main \
+  --source-digest "${SOURCE_DIGEST}" \
+  --signer-digest "${SIGNER_DIGEST}" \
+  --predicate-type https://spdx.dev/Document/v2.3
+IMAGE_URI="${IMMUTABLE_IMAGE}" make release-cloud-run \
+  PROJECT_ID="<project-id>" REGION="<region>" ENV_FILE=".env.deploy" \
+  NO_TRAFFIC=true TRAFFIC_TAG=candidate
+```
+
+`--source-digest` はattestation certificateのsource repository digest（workflowの `github.sha`）です。`--signer-digest` は署名workflow fileのrevision（workflowの `github.workflow_sha`）です。Cloud Buildの対象 `TARGET_SHA` はworkflow-level predicateの `targetSha` と `resolvedDependencies[].digest.gitCommit` で別に固定します。helperの出力はimage name/URI/digestと `native_provenance_snapshot_sha256` だけで、Cloud Build build IDを公開しません。Syft 1.51.1はlocal Docker daemonへpullしたexact digestを入力にし、Google credentialはSBOM・attestation前にcleanupしてdeploy直前に再認証します。
+
+native provenance取得に必要な `containeranalysis.googleapis.com` は有効化済みで、deploy service accountには project-level `roles/containeranalysis.occurrences.viewer` を付与済みです。実projectやservice accountの識別子は公開しません。
+
+build resultとregistry digestの不一致、native provenance欠落、SBOM欠落、attestationのidentity / subject digest不一致は、最初に検出したjob/stepを一次ログへ残して停止します。失敗時は各jobが生成env、workspace、private archive、一時SBOM、credentialをcleanupし、rollback窓に必要なhealthy revision・digestは保持します。frontend release、backend image archive、attestation metadataのGitHub Actions artifactは各1日だけ保持します。failed image/tagやCloud Buildログの保持・削除はArtifact Registry / Cloud Loggingの外部retention policyとowner（release operator）が決めます。GitHub attestationのrepository API storageの保持・削除可否も外部設定として確認します。追加job、artifact転送、Cloud Build、Syft実行によるrunner wall time、Cloud Build時間、registry/GitHub storage増加はIssue/PRのriskとして記録します。release operatorが全体の一次failure ownerで、build/IAMはbuild担当、SPDX/attestationはsecurity/release担当、Cloud Run/Hosting/canary/rollbackはdeploy担当が切り分けます。
+
+job分離のsunsetまたはdemotionは自動で行いません。承認済みリリースの安定実績、1日artifact cleanup、runner/Cloud Build quota/GitHub・Artifact Registry storageの測定、job-wide OIDCと依存tool隔離が不要になったことをIssue/PRで証跡化し、digest、source/signer/target境界、attestation、rollback、credential cleanupを保った設計へ置換できる場合だけ変更します。Syft、native provenance、GitHub attestationの失敗が続く場合は `PRODUCTION_DEPLOY_ENABLED` を無効化してfail closedとし、検証を省略するdemotionは行いません。DependabotのActions更新後はfull SHA pin、attestation scope、SBOM入力、1日retentionをworkflow contractで再確認します。
 
 ---
 

@@ -126,6 +126,42 @@ def test_deploy_container_and_dependency_categories_are_explicit() -> None:
     assert dependency.categories == ("dependency",)
 
 
+def test_backend_artifact_supply_chain_scripts_keep_container_deploy_and_workflow_closure() -> None:
+    expected_gates = {"backend_container", "deploy_preflight", "workflow_contract"}
+    expected_rules = {
+        "scripts/build_backend_artifact.sh": "deploy_artifact_builder",
+        "scripts/verify_backend_artifact_attestations.sh": "deploy_artifact_verifier",
+    }
+
+    for path, rule_id in expected_rules.items():
+        plan = classify_paths([path])
+
+        assert plan.classification_ok is True, path
+        assert plan.unknown_path_count == 0, path
+        assert set(plan.path_classifications[0].gates) == expected_gates, path
+        assert plan.path_classifications[0].rule_id == rule_id, path
+        assert plan.path_classifications[0].category == "deploy", path
+        assert plan.path_classifications[0].risk == "artifact_supply_chain", path
+        assert plan.backend_container is True, path
+        assert plan.deploy_preflight is True, path
+        assert plan.workflow_contract is True, path
+        assert plan.frontend is False, path
+        assert plan.playwright_smoke is False, path
+        assert plan.playwright_visual is False, path
+
+
+def test_workflow_contract_input_closure_includes_backend_artifact_supply_chain() -> None:
+    closure_paths = set(GATE_INPUTS[WORKFLOW_CONTRACT].paths)
+
+    assert "scripts/build_backend_artifact.sh" in closure_paths
+    assert "scripts/verify_backend_artifact_attestations.sh" in closure_paths
+    assert "scripts/deploy_cloud_run.sh" in closure_paths
+    assert "cloudbuild.backend.yaml" in closure_paths
+    assert "tests/test_cloud_build_config.py" in closure_paths
+    assert "tests/test_deploy_script_env_guard.py" in closure_paths
+    assert "tests/test_deploy_workflow_safety.py" in closure_paths
+
+
 def test_dependency_scope_distinguishes_root_playwright_and_frontend_packages() -> None:
     root = classify_paths(["package.json"])
     frontend = classify_paths(["apps/frontend/package-lock.json"])

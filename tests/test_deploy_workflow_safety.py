@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import yaml
+
 
 def _read(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
@@ -41,7 +43,7 @@ def test_production_deploy_is_gated_by_a_successful_same_sha_ci_run() -> None:
     assert 'verify_ci_run "${WORKFLOW_RUN_ID}"' in verify
     assert 'verify_ci_run "${candidate_run_id}"' in verify
     assert "environment: production" not in verify
-    assert "needs:\n      - verify-target\n      - authorize-deploy-cutover" in deploy
+    assert "needs:\n      - verify-target\n      - authorize-deploy-cutover\n      - prepare-release-artifacts\n      - build-backend-artifact\n      - attest-backend-artifact" in deploy
     assert "environment: production" in deploy
     assert "ref: ${{ needs.verify-target.outputs.target_sha }}" in deploy
     assert 'checked_out_sha="$(git rev-parse HEAD)"' in deploy
@@ -94,7 +96,7 @@ def test_identity_exchange_cutover_is_manual_only_and_fail_closed() -> None:
     assert "!= \"true\"" in guard
     assert "::error::" in guard
     assert "exit 1" in guard
-    assert "needs:\n      - verify-target\n      - authorize-deploy-cutover" in deploy
+    assert "needs:\n      - verify-target\n      - authorize-deploy-cutover\n      - prepare-release-artifacts\n      - build-backend-artifact\n      - attest-backend-artifact" in deploy
     assert "needs.authorize-deploy-cutover.result == 'success'" in deploy
     assert "inputs.identity_exchange_only != true" in deploy
 
@@ -121,7 +123,25 @@ def test_production_auth_is_wif_key_free_and_job_scoped() -> None:
     assert "id-token: write" in deploy
     verify_target = deploy[deploy.index("  verify-target:"): deploy.index("  verify-deploy-identity:")]
     assert "id-token: write" not in verify_target
-    assert "permissions:\n      contents: read\n      id-token: write" in deploy[deploy.index("  deploy:"):]
+    parsed = yaml.safe_load(deploy)
+    assert isinstance(parsed, dict)
+    assert parsed["jobs"]["deploy"]["permissions"] == {
+        "contents": "read",
+        "actions": "read",
+        "attestations": "read",
+        "id-token": "write",
+    }
+    assert parsed["jobs"]["build-backend-artifact"]["permissions"] == {
+        "contents": "read",
+        "id-token": "write",
+    }
+    assert parsed["jobs"]["attest-backend-artifact"]["permissions"] == {
+        "contents": "read",
+        "actions": "read",
+        "id-token": "write",
+        "attestations": "write",
+    }
+    assert "id-token: write" not in parsed["jobs"]["prepare-release-artifacts"]["permissions"]
     assert "permissions:\n      contents: read\n      id-token: write" in preflight
     assert "GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}" in deploy
     assert "GCP_PREFLIGHT_SERVICE_ACCOUNT: ${{ vars.GCP_PREFLIGHT_SERVICE_ACCOUNT }}" in preflight
@@ -136,26 +156,28 @@ def test_production_auth_is_wif_key_free_and_job_scoped() -> None:
     assert "gha-creds-*.json" in _read(".gitignore")
 
 
-def test_dedicated_cloud_build_service_account_is_deploy_only() -> None:
-    """Cloud Build receives an explicit non-secret SA only on the deploy path."""
+def test_dedicated_cloud_build_service_account_is_build_job_only() -> None:
+    """Only the authenticated backend-build job owns the builder identity."""
     deploy = _read(".github/workflows/deploy-production.yml")
     preflight = _read(".github/workflows/production-deploy-preflight.yml")
     identity = deploy[deploy.index("  verify-deploy-identity:"): deploy.index("  authorize-deploy-cutover:")]
+    build_job = deploy[deploy.index("  build-backend-artifact:"): deploy.index("  attest-backend-artifact:")]
     deploy_job = deploy[deploy.index("  deploy:"):]
 
-    assert "GCP_BUILD_SERVICE_ACCOUNT: ${{ vars.GCP_BUILD_SERVICE_ACCOUNT }}" in deploy_job
+    assert "GCP_BUILD_SERVICE_ACCOUNT: ${{ vars.GCP_BUILD_SERVICE_ACCOUNT }}" in build_job
     assert "GCP_BUILD_SERVICE_ACCOUNT" not in identity
     assert "GCP_BUILD_SERVICE_ACCOUNT" not in preflight
-    assert "GCP_BUILD_SERVICE_ACCOUNT" not in deploy[deploy.index("  verify-target:"): deploy.index("  deploy:")]
-    assert 'BUILD_SERVICE_ACCOUNT="${GCP_BUILD_SERVICE_ACCOUNT}"' in deploy_job
-    assert "GCP_BUILD_SERVICE_ACCOUNT is not set" in deploy_job
-    assert "must be a service-account email in GCP_PROJECT_ID's project" in deploy_job
-    assert r"^[a-z][a-z0-9-]{4,28}[a-z0-9]@${GCP_PROJECT_ID}\.iam\.gserviceaccount\.com" in deploy_job
+    assert "GCP_BUILD_SERVICE_ACCOUNT" not in deploy_job
+    assert "must be a service-account email in GCP_PROJECT_ID's project" in build_job
+    assert r"^[a-z][a-z0-9-]{4,28}[a-z0-9]@${GCP_PROJECT_ID}\.iam\.gserviceaccount\.com" in build_job
+    assert "scripts/build_backend_artifact.sh" in build_job
+    assert "--build-service-account" in build_job
 
     script = _read("scripts/deploy_cloud_run.sh")
-    makefile = _read("Makefile")
-    assert '"--service-account=projects/${PROJECT_ID}/serviceAccounts/${BUILD_SA}"' in script
-    assert '$(if $(BUILD_SERVICE_ACCOUNT),--build-service-account "$(BUILD_SERVICE_ACCOUNT)",)' in makefile
+    assert "gcloud builds submit" not in script
+    helper = _read("scripts/build_backend_artifact.sh")
+    assert "gcloud builds submit" in helper
+    assert "serviceAccounts/${BUILD_SERVICE_ACCOUNT}" in helper
 
 
 def test_duplicate_dry_run_workflow_is_removed() -> None:
@@ -165,9 +187,204 @@ def test_duplicate_dry_run_workflow_is_removed() -> None:
 def test_deploy_script_uses_checked_out_sha_for_image_and_runtime_metadata() -> None:
     script = _read("scripts/deploy_cloud_run.sh")
 
-    assert "IMAGE_TAG_ARG" in script
-    assert 'IMAGE_TAG="$CHECKED_OUT_SHA"' in script
-    assert 'GIT_SHA="$CHECKED_OUT_SHA"' in script
-    assert "IMAGE_TAG_ARG" in script
-    assert "GIT_SHA" in script
-    assert "--image-tag must equal the checked-out commit SHA" in script
+    assert "--image-uri" in script
+    assert "@sha256:" in script
+    assert "gcloud builds submit" not in script
+
+
+def _deploy_job_steps() -> tuple[str, list[dict[str, object]]]:
+    path = ".github/workflows/deploy-production.yml"
+    workflow = yaml.safe_load(_read(path))
+    assert isinstance(workflow, dict)
+    jobs = workflow.get("jobs")
+    assert isinstance(jobs, dict)
+    deploy = jobs.get("deploy")
+    assert isinstance(deploy, dict)
+    steps = deploy.get("steps")
+    assert isinstance(steps, list)
+    assert all(isinstance(step, dict) for step in steps)
+    return _read(path), steps
+
+
+def _step_text(step: dict[str, object]) -> str:
+    return "\n".join(
+        str(step.get(key, ""))
+        for key in ("name", "uses", "run", "with", "env")
+    )
+
+
+def test_backend_artifact_is_built_once_checked_and_promoted_by_digest() -> None:
+    """Build, hand off, attest, verify, and deploy form an isolated chain."""
+    workflow, deploy_steps = _deploy_job_steps()
+    parsed = yaml.safe_load(workflow)
+    assert isinstance(parsed, dict)
+    jobs = parsed["jobs"]
+    prepare = jobs["prepare-release-artifacts"]
+    build = jobs["build-backend-artifact"]
+    attest = jobs["attest-backend-artifact"]
+    deploy = jobs["deploy"]
+    prepare_steps = prepare["steps"]
+    build_steps = build["steps"]
+    attest_steps = attest["steps"]
+    rendered_prepare = [_step_text(step) for step in prepare_steps]
+    rendered_build = [_step_text(step) for step in build_steps]
+    rendered_attest = [_step_text(step) for step in attest_steps]
+    rendered_deploy = [_step_text(step) for step in deploy_steps]
+    build_helper = _read("scripts/build_backend_artifact.sh")
+    verify_helper = _read("scripts/verify_backend_artifact_attestations.sh")
+    deploy_script = _read("scripts/deploy_cloud_run.sh")
+
+    assert prepare["needs"] == ["verify-target", "authorize-deploy-cutover"]
+    assert build["needs"] == ["verify-target", "authorize-deploy-cutover"]
+    assert attest["needs"] == "build-backend-artifact"
+    assert deploy["needs"] == [
+        "verify-target",
+        "authorize-deploy-cutover",
+        "prepare-release-artifacts",
+        "build-backend-artifact",
+        "attest-backend-artifact",
+    ]
+    assert prepare.get("environment") is None
+    assert build["environment"] == "production"
+    assert attest.get("environment") is None
+    assert deploy["environment"] == "production"
+
+    assert build_helper.count('gcloud builds submit "${BUILD_CONTEXT}"') == 1
+    assert "git archive" in build_helper
+    assert "mktemp -d" in build_helper
+    assert "--show-provenance" in build_helper
+    assert "sha256sum" in build_helper
+    assert "image_summary.digest" in build_helper
+    assert "docker run" in build_helper and "healthz" in build_helper
+    assert "@${REGISTRY_DIGEST}" in build_helper
+    assert "Install frontend dependencies" in "\n".join(rendered_prepare)
+    assert "Build frontend artifact" in "\n".join(rendered_prepare)
+    assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in "\n".join(rendered_prepare)
+    assert "scripts/build_backend_artifact.sh" in "\n".join(rendered_build)
+    assert "npm " not in "\n".join(rendered_build)
+    assert "pip " not in "\n".join(rendered_build)
+    assert "actions/attest@" not in "\n".join(rendered_build)
+    assert "docker save" in "\n".join(rendered_build)
+    assert "zstd" in "\n".join(rendered_build)
+    assert "retention-days" in "\n".join(rendered_prepare)
+    assert "retention-days" in "\n".join(rendered_build)
+    assert "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6" in "\n".join(rendered_attest)
+    assert sum("actions/attest@" in text for text in rendered_attest) == 2
+    assert "anchore/sbom-action@" not in workflow
+    assert "Download and run checksum-pinned Syft" in "\n".join(rendered_attest)
+    assert "8fcb33017a0dc1058298c923c436d19dfa68ae93968e0b423248542e3afb9fc3" in "\n".join(rendered_attest)
+    assert "unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN" in "\n".join(rendered_attest)
+    assert 'spdxVersion == "SPDX-2.3"' in "\n".join(rendered_attest)
+    assert "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" in "\n".join(rendered_attest)
+
+    verify_index = next(index for index, text in enumerate(rendered_deploy) if "Verify backend artifact attestations after auth" in text)
+    auth_index = next(index for index, text in enumerate(rendered_deploy) if "Authenticate to Google Cloud" in text)
+    materialize_index = next(index for index, text in enumerate(rendered_deploy) if "Materialize production env file" in text)
+    release_index = next(index for index, text in enumerate(rendered_deploy) if "Run production Cloud Run release" in text)
+    assert auth_index < verify_index < materialize_index < release_index
+    verify_step = deploy_steps[verify_index]
+    verify_env = verify_step.get("env")
+    assert isinstance(verify_env, dict)
+    assert verify_env.get("SOURCE_DIGEST") == "${{ github.sha }}"
+    assert verify_env.get("SIGNER_DIGEST") == "${{ github.workflow_sha }}"
+    assert "--native-provenance-snapshot-sha256" in rendered_deploy[verify_index]
+    assert "needs.build-backend-artifact.outputs.native_provenance_snapshot_sha256" in rendered_deploy[verify_index]
+    assert "--source-digest" in rendered_deploy[verify_index]
+    assert "--signer-digest" in rendered_deploy[verify_index]
+    assert "gh attestation verify" in verify_helper
+    assert "https://spdx.dev/Document/v2.3" in verify_helper
+    assert "jq -e" in verify_helper
+    for field in ("targetSha", "sourceRepository", "builderWorkflow", "builder", "digest", "nativeProvenanceSnapshotSha256"):
+        assert field in verify_helper
+    assert 'BUILD_TYPE="${BUILDER_WORKFLOW}#backend-cloud-build-v1"' in verify_helper
+    assert 'BUILDER_ID="${BUILDER_WORKFLOW}"' in verify_helper
+    assert 'UNDERLYING_BUILDER="https://cloudbuild.googleapis.com/GoogleHostedWorker"' in verify_helper
+    assert "cloudBuildProvenance == \"required\"" in verify_helper
+    assert "NATIVE_PROVENANCE_SNAPSHOT_SHA256" in verify_helper
+    assert '--source-digest "$SOURCE_DIGEST"' in verify_helper
+    assert '--signer-digest "$SIGNER_DIGEST"' in verify_helper
+    assert 'native_provenance_snapshot_sha256=sha256:' in build_helper
+    assert 'Cleanup Google credentials before artifact upload' in "\n".join(rendered_build)
+    final_cleanup = deploy_steps[next(index for index, text in enumerate(rendered_deploy) if "Cleanup Google credentials" in text)]
+    assert final_cleanup.get("if") == "${{ always() }}"
+    assert 'IMAGE_URI="${IMAGE_URI}"' in rendered_deploy[release_index]
+    assert "IMAGE_URI" in rendered_deploy[release_index]
+    assert "IMAGE_TAG" not in rendered_deploy[release_index]
+    assert "BUILD_SERVICE_ACCOUNT" not in rendered_deploy[release_index]
+    assert "@sha256:" in deploy_script
+    assert "gcloud builds submit" not in deploy_script
+    assert "make release-cloud-run" in workflow
+    assert "VALIDATE_IN_IMAGE=true" in workflow
+
+
+def test_artifact_provenance_permissions_are_job_scoped_and_pr_free() -> None:
+    """Build, attestation, and deploy permissions stay isolated by job."""
+    workflow, _ = _deploy_job_steps()
+    parsed = yaml.safe_load(workflow)
+    assert isinstance(parsed, dict)
+    jobs = parsed["jobs"]
+    assert set(jobs) == {
+        "verify-target",
+        "verify-deploy-identity",
+        "authorize-deploy-cutover",
+        "prepare-release-artifacts",
+        "build-backend-artifact",
+        "attest-backend-artifact",
+        "deploy",
+    }
+    deploy = jobs["deploy"]
+    assert deploy["permissions"] == {
+        "contents": "read",
+        "actions": "read",
+        "attestations": "read",
+        "id-token": "write",
+    }
+    assert jobs["build-backend-artifact"]["permissions"] == {
+        "contents": "read",
+        "id-token": "write",
+    }
+    assert jobs["attest-backend-artifact"]["permissions"] == {
+        "contents": "read",
+        "actions": "read",
+        "id-token": "write",
+        "attestations": "write",
+    }
+    assert "pull_request:" not in workflow
+    assert "pull_request_target:" not in workflow
+    assert "push:" not in workflow
+    verify_target = workflow[workflow.index("  verify-target:"): workflow.index("  verify-deploy-identity:")]
+    assert "id-token: write" not in verify_target
+    assert "attestations: write" not in verify_target
+    assert "actions/attest" in workflow
+    assert "anchore/sbom-action@" not in workflow
+    assert '"underlyingBuilder": "https://cloudbuild.googleapis.com/GoogleHostedWorker"' in workflow
+    assert '"cloudBuildProvenance": "required"' in workflow
+    assert '"nativeProvenanceSnapshotSha256": native_snapshot' in workflow
+    assert '"builder": {"id": os.environ["BUILDER_WORKFLOW"]}' in workflow
+    assert "upload-artifact" not in workflow.lower() or "pull_request" not in workflow.lower()
+
+
+def test_attestation_verification_is_fail_closed_for_identity_and_digest_mismatch() -> None:
+    """The verifier compares all identity fields and exits before Cloud Run on failure."""
+    workflow, steps = _deploy_job_steps()
+    verify_helper = _read("scripts/verify_backend_artifact_attestations.sh")
+    verification = "\n".join(
+        _step_text(step)
+        for step in steps
+        if any(
+            marker in _step_text(step).lower()
+            for marker in ("attestation", "provenance", "verify")
+        )
+    ) + "\n" + verify_helper
+    assert "gh attestation verify" in verification
+    assert "--repo" in verification or "--repository" in verification
+    assert "--signer-workflow" in verification or "signer_workflow" in verification
+    assert "--source-ref" in verification or "source_ref" in verification
+    for field in ("target_sha", "repository", "workflow", "builder", "digest"):
+        assert field in verification.lower()
+    assert "jq -e" in verification or "jq" in verification
+    assert "exit 1" in verification
+    assert "sbom" in verification.lower()
+    deploy_index = workflow.index("Run production Cloud Run release")
+    verify_index = workflow.lower().find("verify backend artifact attestations after auth")
+    assert verify_index >= 0 and verify_index < deploy_index
