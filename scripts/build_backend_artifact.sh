@@ -174,12 +174,68 @@ BUILD_CONTEXT_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/wordpack-backend-build.XXXXXX")
 chmod 700 "$BUILD_CONTEXT_ROOT"
 BUILD_CONTEXT="${BUILD_CONTEXT_ROOT}/context"
 CONTEXT_ARCHIVE="${BUILD_CONTEXT_ROOT}/context.tar"
+CONTEXT_TREE="${BUILD_CONTEXT_ROOT}/context-tree"
+CONTEXT_FILES="${BUILD_CONTEXT_ROOT}/context-files"
 mkdir -m 700 "$BUILD_CONTEXT"
-if ! git archive --format=tar --output="$CONTEXT_ARCHIVE" "$TARGET_SHA" 2>/dev/null; then
+ARCHIVE_PATHS=(
+  .dockerignore
+  Dockerfile.backend
+  cloudbuild.backend.yaml
+  requirements.txt
+  'apps/backend/backend/*.py'
+  'apps/backend/backend/**/*.py'
+)
+TREE_PATHS=(
+  .dockerignore
+  Dockerfile.backend
+  cloudbuild.backend.yaml
+  requirements.txt
+  apps/backend/backend
+)
+ARCHIVE_EXCLUDE_PATHS=(
+  ':(exclude,icase,glob)apps/backend/backend/**/*credential*.py'
+  ':(exclude,icase,glob)apps/backend/backend/**/*secret*.py'
+  ':(exclude,icase,glob)apps/backend/backend/**/*token*.py'
+)
+if ! git archive --format=tar --output="$CONTEXT_ARCHIVE" "$TARGET_SHA" -- \
+  "${ARCHIVE_PATHS[@]}" "${ARCHIVE_EXCLUDE_PATHS[@]}" 2>/dev/null; then
   fail "Could not archive the requested target commit"
 fi
 chmod 600 "$CONTEXT_ARCHIVE"
-if ! tar --extract --file="$CONTEXT_ARCHIVE" --directory="$BUILD_CONTEXT" 2>/dev/null; then
+
+# Build a NUL-delimited list of regular blobs from the same target and
+# allowlist.  Extracting only these members turns the archive into a physical
+# context and keeps excluded or malformed symlinks out of the gcloud walk.
+if ! git ls-tree -r -z --format='%(objectmode)%x09%(path)' "$TARGET_SHA" -- \
+  "${TREE_PATHS[@]}" >"$CONTEXT_TREE" 2>/dev/null; then
+  fail "Could not resolve the target commit build context"
+fi
+: >"$CONTEXT_FILES"
+while IFS=$'\t' read -r -d '' object_mode path; do
+  case "$object_mode" in
+    100644|100755)
+      case "$path" in
+        .dockerignore|Dockerfile.backend|cloudbuild.backend.yaml|requirements.txt)
+          ;;
+        apps/backend/backend/*.py)
+          ;;
+        *)
+          continue
+          ;;
+      esac
+      case "$path" in
+        apps/backend/backend/*[Cc][Rr][Ee][Dd][Ee][Nn][Tt][Ii][Aa][Ll]*.py|apps/backend/backend/*[Ss][Ee][Cc][Rr][Ee][Tt]*.py|apps/backend/backend/*[Tt][Oo][Kk][Ee][Nn]*.py)
+          continue
+          ;;
+      esac
+      printf '%s\0' "$path" >>"$CONTEXT_FILES"
+      ;;
+  esac
+done <"$CONTEXT_TREE"
+[[ -s "$CONTEXT_FILES" ]] || fail "Target commit build context contains no regular files"
+
+if ! tar --extract --file="$CONTEXT_ARCHIVE" --directory="$BUILD_CONTEXT" \
+  --null --files-from="$CONTEXT_FILES" --no-recursion --no-same-owner --no-same-permissions 2>/dev/null; then
   fail "Could not materialize the target commit build context"
 fi
 [[ -f "${BUILD_CONTEXT}/cloudbuild.backend.yaml" ]] || fail "Target commit build config is missing"

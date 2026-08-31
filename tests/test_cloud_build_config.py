@@ -194,6 +194,7 @@ def _run_backend_artifact_helper(
     native_missing_build_config: bool = False,
     dirty_tree: bool = False,
     dirty_tree_kind: str = "tracked",
+    inject_archive_hazards: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     fake_bin = tmp_path / "bin"
@@ -255,10 +256,84 @@ def _run_backend_artifact_helper(
         "if [[ \"${1:-}\" == diff || \"${1:-}\" == ls-files || \"${1:-}\" == status ]]; then\n"
         "  exit 0\n"
         "fi\n"
+        "if [[ \"${INJECT_ARCHIVE_HAZARDS:-false}\" == true && ( \"${1:-}\" == archive || \"${1:-}\" == ls-tree ) ]]; then\n"
+        "  rewritten_arguments=()\n"
+        "  archive_output=''\n"
+        "  for argument in \"$@\"; do\n"
+        "    if [[ \"${argument}\" =~ ^[0-9a-f]{40}$ ]]; then\n"
+        "      rewritten_arguments+=(HEAD)\n"
+        "    else\n"
+        "      rewritten_arguments+=(\"${argument}\")\n"
+        "    fi\n"
+        "    case \"${argument}\" in --output=*) archive_output=\"${argument#--output=}\" ;; esac\n"
+        "  done\n"
+        f'  "{real_git}" -C "${{HAZARD_REPO}}" "${{rewritten_arguments[@]}}"\n'
+        "  if [[ \"${1:-}\" == archive ]]; then\n"
+        "    [[ -n \"${archive_output}\" ]] || exit 3\n"
+        "    tar --list --file=\"${archive_output}\" > \"${ARCHIVE_MEMBERS}\"\n"
+        "  fi\n"
+        "  exit 0\n"
+        "fi\n"
         f'exec "{real_git}" "$@"\n',
         encoding="utf-8",
     )
     fake_git.chmod(0o755)
+
+    hazard_repo = tmp_path / "hazard-repo"
+    archive_members_path = tmp_path / "archive-members"
+    if inject_archive_hazards:
+        for relative_path in (
+            ".dockerignore",
+            "Dockerfile.backend",
+            "cloudbuild.backend.yaml",
+            "requirements.txt",
+            "apps/backend/backend/main.py",
+        ):
+            destination = hazard_repo / relative_path
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            source = Path(relative_path)
+            if source.is_file():
+                shutil.copyfile(source, destination)
+            else:
+                destination.write_text("synthetic fixture only\n", encoding="utf-8")
+        malformed_link = hazard_repo / "apps/backend/backend/malformed_link.py"
+        malformed_link.symlink_to("missing-malformed-target")
+        uppercase_secret = hazard_repo / "apps/backend/backend/PRIVATE/SECRET_contract.py"
+        uppercase_secret.parent.mkdir(parents=True, exist_ok=True)
+        uppercase_secret.write_text("synthetic fixture only\n", encoding="utf-8")
+        subprocess.run(["git", "init", "--quiet", str(hazard_repo)], check=True)
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(hazard_repo),
+                "add",
+                ".dockerignore",
+                "Dockerfile.backend",
+                "cloudbuild.backend.yaml",
+                "requirements.txt",
+                "apps/backend/backend/main.py",
+                "apps/backend/backend/malformed_link.py",
+                "apps/backend/backend/PRIVATE/SECRET_contract.py",
+            ],
+            check=True,
+        )
+        subprocess.run(
+            [
+                "git",
+                "-C",
+                str(hazard_repo),
+                "-c",
+                "user.name=Contract Fixture",
+                "-c",
+                "user.email=contract-fixture@example.invalid",
+                "commit",
+                "--quiet",
+                "-m",
+                "fixture",
+            ],
+            check=True,
+        )
 
     target_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
     build_digest = "sha256:" + "a" * 64
@@ -389,6 +464,9 @@ def _run_backend_artifact_helper(
             "NATIVE_PROVENANCE": str(native_provenance_path),
             "FAKE_GIT_DIRTY": "true" if dirty_tree else "false",
             "FAKE_GIT_DIRTY_KIND": dirty_tree_kind,
+            "INJECT_ARCHIVE_HAZARDS": "true" if inject_archive_hazards else "false",
+            "HAZARD_REPO": str(hazard_repo),
+            "ARCHIVE_MEMBERS": str(archive_members_path),
         },
     )
     return proc, docker_log
@@ -476,6 +554,68 @@ def test_backend_artifact_helper_archives_target_commit_and_excludes_dirty_input
         assert str(captured_context) not in submit_line
         assert "--ignore-file=" in submit_line
         assert "pull" in docker_log.read_text(encoding="utf-8")
+
+
+def test_backend_artifact_helper_materializes_exact_physical_allowlist(tmp_path: Path) -> None:
+    """Excluded malformed symlinks and tracked secret-like files never reach gcloud."""
+    digest = "sha256:" + "a" * 64
+    helper = Path("scripts/build_backend_artifact.sh").read_text(encoding="utf-8")
+    for secret_marker in ("credential", "secret", "token"):
+        assert (
+            f":(exclude,icase,glob)apps/backend/backend/**/*{secret_marker}*.py"
+            in helper
+        )
+    proc, _ = _run_backend_artifact_helper(
+        tmp_path,
+        digest,
+        inject_archive_hazards=True,
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    captured_context = tmp_path / "captured-context"
+    assert not (captured_context / "Dockerfile").exists()
+    assert not (captured_context / "Dockerfile").is_symlink()
+    assert not any(path.is_symlink() for path in captured_context.rglob("*"))
+    assert not (captured_context / "apps/backend/backend/malformed_link.py").exists()
+    assert not (captured_context / "apps/backend/backend/PRIVATE/SECRET_contract.py").exists()
+    archive_members = (tmp_path / "archive-members").read_text(encoding="utf-8")
+    assert "malformed_link.py" in archive_members
+    assert "SECRET_contract.py" not in archive_members
+
+    target_entries = subprocess.check_output(
+        [
+            "git",
+            "-C",
+            str(tmp_path / "hazard-repo"),
+            "ls-tree",
+            "-r",
+            "--format=%(objectmode)\t%(path)",
+            "HEAD",
+            "--",
+            "apps/backend/backend",
+        ],
+        text=True,
+    ).splitlines()
+    expected_files = {
+        ".dockerignore",
+        "Dockerfile.backend",
+        "cloudbuild.backend.yaml",
+        "requirements.txt",
+        ".gcloudignore",
+        *{
+            path.split("\t", 1)[1]
+            for path in target_entries
+            if path.startswith(("100644\t", "100755\t"))
+            if path.endswith(".py")
+            and not re.search(r"(credential|secret|token)", path, re.IGNORECASE)
+        },
+    }
+    actual_files = {
+        path.relative_to(captured_context).as_posix()
+        for path in captured_context.rglob("*")
+        if path.is_file()
+    }
+    assert actual_files == expected_files
 
 
 def test_cloud_build_upload_allowlist_rejects_nested_secret_like_paths(tmp_path: Path) -> None:
