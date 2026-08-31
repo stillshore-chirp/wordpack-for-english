@@ -64,6 +64,9 @@ description: "ソースコード変更とIssue、branch、commit、push、PR、C
 - 同じHEAD・入力閉包・条件で成功したgateは再実行しない。新commitだけではlocal full gateを一括失効させず、閉包と交差する変更だけを失効させる。閉包が同じ証跡を後続HEADで再利用する場合は、由来HEADと新しいHEADをledgerへ併記する。
 - 同一HEADの再pushはlocal/full gate/review証拠を保持し、そのHEADで開始したCIだけ確認する。
 - base変更・base統合ではbase依存のCI、review、thread、mergeabilityを失効させ、local gateは入力閉包が変わったものだけ再取得する。review threadの解決はthread状態だけを更新し、他の証跡を失効させない。判定不能時は理由付きで広いgateへfallbackし、skipしない。
+- PR監視では各runの冒頭に`state`を含む軽量状態キー（`state`、`headRefOid`、`updatedAt`、`reviewDecision`、`mergeStateStatus`）を取得し、`state`を終端判定の最優先入力にする。`state`が`MERGED`または`CLOSED`なら、そのrunで監視を終了してscheduled taskを削除し、review本文・thread・CI・mergeabilityなどの詳細を取得しない。`mergeStateStatus=UNKNOWN`や`reviewDecision`の空値でも、終端`state`を覆さない。
+- `state=OPEN`かつ外部待ちが必要な場合は監視を継続する。軽量状態キーに変化がない間は詳細照会をせず、イベントまたはbackoff付きの再待機だけを行う。
+- 無変化の外部待ちでは固定timeout回数を完了条件にせず、logical checkpointまたはdeadlineで継続の必要性を再評価する。継続不要と判断した場合は監視とscheduled taskを停止し、停止理由と未確認範囲を通知する。
 - 待機中に返すのはHEAD、success / failure / pending / skip count、changed checks、failure detailだけとし、TTYの全表再描画を流さない。状態キーが変わらない間は詳細を再取得せず、timeoutだけでは証拠を失効させない。failureまたはfinal時だけ詳細を取得する。
 - read-only照会はbounded field、bounded result、小さい合計出力に限定し、PR本文と全check一覧を同じ結果へ詰め込まない。長いraw logは一時artifactへ退避し、成功時は全体結果・閾値・artifact参照だけ返し、file別coverageや反復行は返さない。
 - actionableな指摘はまとめて修正し、正本のreview予算と限定条件に従って変更後の証拠を再確認する。

@@ -6,7 +6,10 @@ import pytest
 
 from scripts.validate_governance import (
     GovernanceError,
+    PR_MONITOR_LIGHTWEIGHT_KEY_FIELDS,
+    decide_pr_monitor_run,
     markdown_targets,
+    validate_pr_monitor_lightweight_key,
     validate_links,
     validate_skills,
 )
@@ -236,3 +239,107 @@ def test_validate_links_still_checks_broken_image_targets(tmp_path: Path) -> Non
 
     with pytest.raises(GovernanceError, match="broken local link"):
         validate_links([source], tmp_path)
+
+
+def test_validate_pr_monitor_lightweight_key_accepts_all_required_fields() -> None:
+    validate_pr_monitor_lightweight_key(
+        {field: None for field in PR_MONITOR_LIGHTWEIGHT_KEY_FIELDS}
+    )
+
+
+def test_validate_pr_monitor_lightweight_key_rejects_missing_state() -> None:
+    key = {
+        field: None
+        for field in PR_MONITOR_LIGHTWEIGHT_KEY_FIELDS
+        if field != "state"
+    }
+
+    with pytest.raises(GovernanceError, match=r"missing=\['state'\]"):
+        validate_pr_monitor_lightweight_key(key)
+
+
+def test_validate_pr_monitor_lightweight_key_rejects_unknown_fields() -> None:
+    key = {field: None for field in PR_MONITOR_LIGHTWEIGHT_KEY_FIELDS}
+    key["unexpected"] = None
+
+    with pytest.raises(GovernanceError, match=r"unknown=\['unexpected'\]"):
+        validate_pr_monitor_lightweight_key(key)
+
+
+@pytest.mark.parametrize("state", ["MERGED", "CLOSED"])
+def test_decide_pr_monitor_run_deletes_terminal_task_without_details(state: str) -> None:
+    decision = decide_pr_monitor_run(
+        state,
+        state_key_changed=True,
+        reassessment_checkpoint_due=True,
+        monitoring_still_needed=False,
+        merge_state_status="UNKNOWN",
+        review_decision="",
+    )
+
+    assert decision == {
+        "task_action": "delete",
+        "details": False,
+        "wait": None,
+        "notify": False,
+        "stop_reason": "terminal_state",
+        "unverified_scope": None,
+    }
+
+
+def test_decide_pr_monitor_run_refreshes_details_when_open_key_changes() -> None:
+    assert decide_pr_monitor_run("OPEN", True, False, True) == {
+        "task_action": "retain",
+        "details": True,
+        "wait": None,
+        "notify": False,
+        "stop_reason": None,
+        "unverified_scope": None,
+    }
+
+
+def test_decide_pr_monitor_run_waits_with_event_or_backoff_when_unchanged() -> None:
+    assert decide_pr_monitor_run("OPEN", False, False, True) == {
+        "task_action": "retain",
+        "details": False,
+        "wait": "event/backoff",
+        "notify": False,
+        "stop_reason": None,
+        "unverified_scope": None,
+    }
+
+
+def test_decide_pr_monitor_run_keeps_waiting_when_due_but_monitoring_is_needed() -> None:
+    assert decide_pr_monitor_run("OPEN", False, True, True) == {
+        "task_action": "retain",
+        "details": False,
+        "wait": "event/backoff",
+        "notify": False,
+        "stop_reason": None,
+        "unverified_scope": None,
+    }
+
+
+def test_decide_pr_monitor_run_stops_and_notifies_when_monitoring_is_unneeded() -> None:
+    assert decide_pr_monitor_run("OPEN", False, True, False) == {
+        "task_action": "stop",
+        "details": False,
+        "wait": None,
+        "notify": True,
+        "stop_reason": "monitoring_not_needed",
+        "unverified_scope": "external_wait",
+    }
+
+
+@pytest.mark.parametrize("state", ["", "UNKNOWN", "MERGED "])
+def test_decide_pr_monitor_run_rejects_unknown_or_empty_state(state: str) -> None:
+    with pytest.raises(GovernanceError, match="unknown PR monitor state"):
+        decide_pr_monitor_run(state, False, False, True)
+
+
+@pytest.mark.parametrize("monitoring_still_needed", [None, "yes"])
+def test_decide_pr_monitor_run_rejects_non_boolean_reassessment_decision(
+    monitoring_still_needed: object,
+) -> None:
+    with pytest.raises(GovernanceError, match="monitoring_still_needed must be a boolean"):
+        decide_pr_monitor_run("OPEN", False, True, monitoring_still_needed)  # type: ignore[arg-type]

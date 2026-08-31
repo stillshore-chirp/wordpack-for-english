@@ -23,7 +23,7 @@ Codexはrootと最寄りの`AGENTS.md`、該当Skillを読みます。Claude Cod
 
 ## 配送stateとcheckpoint
 
-改修配送は、次のcheckpointを順に通過します。各checkpointで対象HEAD / base、入力閉包、owner、終了条件を固定し、高コストgateへ進む前に次の入力を変えない状態を作ります。対象面ごとのgate選択は [`docs/ai-governance/03-evidence-and-completion-gates.md`](ai-governance/03-evidence-and-completion-gates.md)、実行手順は GitHub配送Skillが所有します。
+改修配送は、次のcheckpointを順に通過します。各checkpointで対象HEAD / base、入力閉包、owner、終了条件を固定し、高コストgateへ進む前に次の入力を変えない状態を作ります。対象面ごとのgate選択は [`docs/ai-governance/03-evidence-and-completion-gates.md`](ai-governance/03-evidence-and-completion-gates.md)、実行手順（PR監視の詳細を含む）は GitHub配送Skillが所有します。
 
 1. `implementation`: scope、acceptance、非対象、owner、変更pathを確定する。
 2. `focused_verification`: 変更pathに対応する最小十分なtest・構造確認を実行し、未確認範囲を記録する。
@@ -57,6 +57,7 @@ P0 / P1、security、secret、data integrity、受入証跡の矛盾は、コス
 - Cross-session task-stateのfield sourceは [`docs/ai-governance/templates/task-state.json`](ai-governance/templates/task-state.json) だけとし、この文書はresumeの振る舞いだけを定めます。field名と型はtemplateから読みます。
 - resume時は現在のsnapshotとclosureを確認し、条件が一致するcompleted evidenceをartifact referenceで再利用して、remaining workから開始します。完了済みの長い出力は再取得しません。
 - timeoutは失敗・状態変化・evidence失効ではなく、laneは`running`のままbackoff付きで再待機します。
+- laneや監視が終端`state`へ到達したrunでは、結果と停止理由を記録し、所有するresource・scheduled taskをcleanupして終了します。終端後の詳細照会は行いません。
 - checkpointを逃した時だけ同じownerへ一度partial resultを求め、進展がなければscope shrink、縮小後も進展がなければreassignします。first failureだけでprimaryへ回収しません。
 - `partial` / `unverified`は未確認範囲と再開条件を保持します。`complete`は受け入れ条件と必要gateを満たした場合だけ、`blocked`は権限・外部状態などの真の停止理由がある場合だけ使います。
 - primaryが分離可能な作業を直接行う場合は、理由、subagent不能の証拠、scope shrink履歴、reassignment履歴、primary-only question、target paths、output capを記録します。
