@@ -267,7 +267,14 @@ repository secret は次のとおりです。
    assertion.ref == 'refs/heads/main'
    ```
 
-4. 各 provider の identity だけに、対象 service account への `roles/iam.workloadIdentityUser` を付与します。deploy service account の Cloud Run、Cloud Build、Artifact Registry、Firestore index、Firebase Hosting の resource role は手順 1 の inventory と実 API の権限エラーを根拠に最小限へ確定します。preflight service account には Firestore index list の `datastore.indexes.list` だけを含む project custom role と、Firebase Hosting の最小の定義済みread-only roleである `roles/firebasehosting.viewer` を付与します。`roles/datastore.viewer` は entity read も含むためpreflightには付与しません。deploy 用の write role（`roles/run.admin`、`roles/artifactregistry.writer`、`roles/cloudbuild.builds.editor`、`roles/datastore.indexAdmin`、`roles/firebasehosting.admin` など）も付与しません。role の適用範囲と実効権限は live IAM inventory で確認します。
+4. 各 provider の identity だけに、対象 service account への `roles/iam.workloadIdentityUser` を付与します。pool全体のrepository principal setではなく、deployは `environment:production`、preflightはmain refのexact subjectへ次の形でbindingし、手順3のprovider conditionと重ねます。
+
+   ```text
+   principal://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL_ID>/subject/repo:stillshore-chirp/wordpack-for-english:environment:production
+   principal://iam.googleapis.com/projects/<PROJECT_NUMBER>/locations/global/workloadIdentityPools/<POOL_ID>/subject/repo:stillshore-chirp/wordpack-for-english:ref:refs/heads/main
+   ```
+
+   deploy service account の Cloud Run、Cloud Build、Artifact Registry、Firestore index、Firebase Hosting の resource role は手順 1 の inventory と実 API の権限エラーを根拠に最小限へ確定します。preflight service account には Firestore index list の `datastore.indexes.list` だけを含む project custom role と、Firebase Hosting の最小の定義済みread-only roleである `roles/firebasehosting.viewer` を付与します。`roles/datastore.viewer` は entity read も含むためpreflightには付与しません。deploy 用の write role（`roles/run.admin`、`roles/artifactregistry.writer`、`roles/cloudbuild.builds.editor`、`roles/datastore.indexAdmin`、`roles/firebasehosting.admin` など）も付与しません。role の適用範囲と実効権限は live IAM inventory で確認します。
 5. provider resource name、対象 service account email、project ID を上記 variables へ登録し、両 workflow の安全な token exchange と preflight read-only probe を確認します。provider、variables、IAM binding、exchange が準備できるまで、この repository 変更を merge-ready と判断しません。
 
 deploy と preflight は専用 provider と専用 service account を使います。preflight service account は Firestore index list と Firebase Hosting release list の read-only probe に必要な権限だけを持たせ、Cloud Run deploy、Cloud Build、Artifact Registry upload、Firestore index update、Hosting release write の権限を付与しません。

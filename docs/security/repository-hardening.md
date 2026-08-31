@@ -1,6 +1,6 @@
 # Repository Hardening Checklist
 
-Last reviewed: 2026-08-30
+Last reviewed: 2026-08-31
 
 This checklist tracks GitHub repository settings that cannot be fully changed from the repository contents. Keep exact secret values, production identifiers, and private log details out of this document.
 
@@ -34,7 +34,7 @@ This checklist tracks GitHub repository settings that cannot be fully changed fr
 
 - [ ] `production` environment is protected.
 - [ ] Deployment secrets are scoped to the production environment where possible.
-- [ ] Repository variables `GCP_PROJECT_ID`, `GCP_DEPLOY_WIF_PROVIDER`, `GCP_PREFLIGHT_WIF_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT`, and `GCP_PREFLIGHT_SERVICE_ACCOUNT` are configured without putting their values in source control.
+- [x] Repository variables `GCP_PROJECT_ID`, `GCP_DEPLOY_WIF_PROVIDER`, `GCP_PREFLIGHT_WIF_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT`, and `GCP_PREFLIGHT_SERVICE_ACCOUNT` are configured without putting their values in source control.
 - [ ] `CLOUD_RUN_ENV_FILE_BASE64` remains the only production deployment secret referenced by the workflows.
 - [ ] The legacy long-lived `GCP_SA_KEY` is disabled and deleted only after the WIF exchange and rollback checks documented in [`docs/deployment.md`](../deployment.md) pass.
 
@@ -50,17 +50,18 @@ The source-controlled deployment contract is:
 - Both production workflows are key-free: deploy uses `GCP_DEPLOY_SERVICE_ACCOUNT`, preflight uses the separate `GCP_PREFLIGHT_SERVICE_ACCOUNT`, and neither contains `credentials_json` or `GCP_SA_KEY` fallback. The existing full-SHA action pins, CI/Quality gate authorization, canary, health check, rollback, and materialized env-file cleanup remain part of the contract.
 - Authenticated preflight runs from scheduled or `main`-ref manual execution only, always checks out trusted `main`, and fails closed when WIF inputs are unavailable or malformed. Static validation belongs to the `CI` lane.
 
-## External configuration checks (未確認)
+## External configuration checks
 
-The following checks are outside the repository contract and were not established by source inspection or local tests:
+Checked items were verified against live GitHub/GCP configuration on the review date. Unchecked items remain merge or retirement blockers:
 
-- GitHub `production` environment protection and the effective scope of repository variables/secrets.
-- The live Workload Identity Pool/provider claim mappings and numeric `repository_id` / `repository_owner_id` conditions for the exact deploy and preflight `workflow_ref` values documented in [`docs/deployment.md`](../deployment.md).
-- `roles/iam.workloadIdentityUser` bindings for both providers, the deploy service account's effective Cloud Run / Cloud Build / Artifact Registry / Firestore / Firebase Hosting roles, and the preflight service account's restricted Firestore index-list / Firebase Hosting release-list read-only roles.
-- Successful token exchange and authenticated preflight against the configured project, plus production canary/health/rollback behavior after WIF is enabled.
-- Disable/delete state of the legacy `GCP_SA_KEY`; retain it only for an explicitly authorized rollback window until the external WIF checks complete.
+- [ ] GitHub `production` environment protection and the effective scope of repository variables/secrets.
+- [x] The Workload Identity Pool and separate deploy/preflight providers are active, with numeric repository/owner IDs, exact `workflow_ref`, main ref, and deploy-only `production` environment conditions documented in [`docs/deployment.md`](../deployment.md).
+- [x] `roles/iam.workloadIdentityUser` uses separate exact deploy-environment/preflight-main subjects, and the preflight service account has only the custom Firestore index-list role plus `roles/firebasehosting.viewer`.
+- [ ] The deploy service account's existing Cloud Run / Cloud Build / Artifact Registry / Firestore / Firebase Hosting roles are reduced to demonstrated requirements; broad legacy viewer, storage admin, and service-usage admin roles still require evidence-led review.
+- [ ] Successful token exchange and authenticated preflight against the configured project, plus production canary/health/rollback behavior after WIF is enabled.
+- [ ] Disable/delete state of the legacy `GCP_SA_KEY`; retain it only for an explicitly authorized rollback window until the external WIF checks complete.
 
-These external checks must be completed before treating the repository change as merge-ready. The live branch rules, environment approvals, secret scope, and identity-provider configuration remain operational settings; this file does not claim those settings are currently enabled.
+The unchecked external checks must be completed or explicitly dispositioned before treating the repository change as merge-ready. This checklist does not infer runtime success from static workflow validation.
 
 ## Manual Review Notes
 
