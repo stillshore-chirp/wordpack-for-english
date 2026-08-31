@@ -194,6 +194,7 @@ def _run_backend_artifact_helper(
     native_missing_build_config: bool = False,
     dirty_tree: bool = False,
     dirty_tree_kind: str = "tracked",
+    inject_archive_hazards: bool = False,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     fake_bin = tmp_path / "bin"
@@ -253,6 +254,29 @@ def _run_backend_artifact_helper(
         "  exit 0\n"
         "fi\n"
         "if [[ \"${1:-}\" == diff || \"${1:-}\" == ls-files || \"${1:-}\" == status ]]; then\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"${INJECT_ARCHIVE_HAZARDS:-false}\" == true && \"${1:-}\" == archive ]]; then\n"
+        "  archive_output=''\n"
+        "  for argument in \"$@\"; do\n"
+        "    case \"${argument}\" in --output=*) archive_output=\"${argument#--output=}\" ;; esac\n"
+        "  done\n"
+        "  [[ -n \"${archive_output}\" ]] || exit 3\n"
+        f'  "{real_git}" "$@"\n'
+        "  injection_root=\"$(mktemp -d)\"\n"
+        "  mkdir -p \"${injection_root}/apps/backend/backend/PRIVATE\"\n"
+        "  ln -s 'missing-malformed-target' \"${injection_root}/apps/backend/backend/malformed_link.py\"\n"
+        "  printf 'synthetic fixture only\\n' > \"${injection_root}/apps/backend/backend/PRIVATE/SECRET_contract.py\"\n"
+        "  tar --append --file=\"${archive_output}\" --directory=\"${injection_root}\" -- \\\n"
+        "    apps/backend/backend/malformed_link.py \\\n"
+        "    apps/backend/backend/PRIVATE/SECRET_contract.py\n"
+        "  rm -rf -- \"${injection_root}\"\n"
+        "  exit 0\n"
+        "fi\n"
+        "if [[ \"${INJECT_ARCHIVE_HAZARDS:-false}\" == true && \"${1:-}\" == ls-tree ]]; then\n"
+        f'  "{real_git}" "$@"\n'
+        "  printf '120000\\tapps/backend/backend/malformed_link.py\\0'\n"
+        "  printf '100644\\tapps/backend/backend/PRIVATE/SECRET_contract.py\\0'\n"
         "  exit 0\n"
         "fi\n"
         f'exec "{real_git}" "$@"\n',
@@ -389,6 +413,7 @@ def _run_backend_artifact_helper(
             "NATIVE_PROVENANCE": str(native_provenance_path),
             "FAKE_GIT_DIRTY": "true" if dirty_tree else "false",
             "FAKE_GIT_DIRTY_KIND": dirty_tree_kind,
+            "INJECT_ARCHIVE_HAZARDS": "true" if inject_archive_hazards else "false",
         },
     )
     return proc, docker_log
@@ -487,13 +512,19 @@ def test_backend_artifact_helper_materializes_exact_physical_allowlist(tmp_path:
             f":(exclude,icase,glob)apps/backend/backend/**/*{secret_marker}*.py"
             in helper
         )
-    proc, _ = _run_backend_artifact_helper(tmp_path, digest)
+    proc, _ = _run_backend_artifact_helper(
+        tmp_path,
+        digest,
+        inject_archive_hazards=True,
+    )
 
     assert proc.returncode == 0, proc.stdout + proc.stderr
     captured_context = tmp_path / "captured-context"
     assert not (captured_context / "Dockerfile").exists()
     assert not (captured_context / "Dockerfile").is_symlink()
     assert not any(path.is_symlink() for path in captured_context.rglob("*"))
+    assert not (captured_context / "apps/backend/backend/malformed_link.py").exists()
+    assert not (captured_context / "apps/backend/backend/PRIVATE/SECRET_contract.py").exists()
 
     target_entries = subprocess.check_output(
         ["git", "ls-tree", "-r", "--format=%(objectmode)\t%(path)", "HEAD", "--", "apps/backend/backend"],
