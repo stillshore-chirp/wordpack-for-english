@@ -478,6 +478,49 @@ def test_backend_artifact_helper_archives_target_commit_and_excludes_dirty_input
         assert "pull" in docker_log.read_text(encoding="utf-8")
 
 
+def test_backend_artifact_helper_materializes_exact_physical_allowlist(tmp_path: Path) -> None:
+    """Excluded malformed symlinks and tracked secret-like files never reach gcloud."""
+    digest = "sha256:" + "a" * 64
+    helper = Path("scripts/build_backend_artifact.sh").read_text(encoding="utf-8")
+    for secret_marker in ("credential", "secret", "token"):
+        assert (
+            f":(exclude,icase,glob)apps/backend/backend/**/*{secret_marker}*.py"
+            in helper
+        )
+    proc, _ = _run_backend_artifact_helper(tmp_path, digest)
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    captured_context = tmp_path / "captured-context"
+    assert not (captured_context / "Dockerfile").exists()
+    assert not (captured_context / "Dockerfile").is_symlink()
+    assert not any(path.is_symlink() for path in captured_context.rglob("*"))
+
+    target_entries = subprocess.check_output(
+        ["git", "ls-tree", "-r", "--format=%(objectmode)\t%(path)", "HEAD", "--", "apps/backend/backend"],
+        text=True,
+    ).splitlines()
+    expected_files = {
+        ".dockerignore",
+        "Dockerfile.backend",
+        "cloudbuild.backend.yaml",
+        "requirements.txt",
+        ".gcloudignore",
+        *{
+            path.split("\t", 1)[1]
+            for path in target_entries
+            if path.startswith(("100644\t", "100755\t"))
+            if path.endswith(".py")
+            and not re.search(r"(credential|secret|token)", path, re.IGNORECASE)
+        },
+    }
+    actual_files = {
+        path.relative_to(captured_context).as_posix()
+        for path in captured_context.rglob("*")
+        if path.is_file()
+    }
+    assert actual_files == expected_files
+
+
 def test_cloud_build_upload_allowlist_rejects_nested_secret_like_paths(tmp_path: Path) -> None:
     helper = Path("scripts/build_backend_artifact.sh").read_text(encoding="utf-8")
     policy_match = re.search(r"<<'GCLOUDIGNORE'\n(?P<policy>.*?)\nGCLOUDIGNORE", helper, re.DOTALL)
