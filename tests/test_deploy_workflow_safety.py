@@ -74,7 +74,18 @@ def test_identity_exchange_cutover_is_manual_only_and_fail_closed() -> None:
     assert "if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.identity_exchange_only == true" in identity
     assert "environment: production" in identity
     assert "permissions:\n      id-token: write" in identity
-    assert "gcloud auth print-access-token --quiet >/dev/null" in identity
+    assert "token_format: access_token" in identity
+    assert "access_token_lifetime: 300s" in identity
+    assert "create_credentials_file: false" in identity
+    assert "export_environment_variables: false" in identity
+    assert "WIF_ACCESS_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}" in identity
+    assert '[[ -n "${WIF_ACCESS_TOKEN}" ]] ||' in identity
+    assert "Confirm WIF token exchange" in identity
+    assert "gcloud auth print-access-token" not in identity
+    assert "setup-gcloud" not in identity
+    assert 'echo "${WIF_ACCESS_TOKEN}"' not in identity
+    assert "GITHUB_STEP_SUMMARY" not in identity
+    assert "GITHUB_OUTPUT" not in identity
     assert not re.search(r"actions/checkout@|secrets\.|npm |pip install|make release|promote_cloud_run|deploy_firebase|CLOUD_RUN_ENV_FILE_BASE64|traffic", identity)
 
     assert "PRODUCTION_DEPLOY_ENABLED: ${{ vars.PRODUCTION_DEPLOY_ENABLED }}" in guard

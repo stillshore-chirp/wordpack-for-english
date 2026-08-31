@@ -216,20 +216,22 @@ jobs:
           project_id: ${{ env.GCP_PROJECT_ID }}
           workload_identity_provider: ${{ env.GCP_DEPLOY_WIF_PROVIDER }}
           service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}
-          create_credentials_file: true
-          export_environment_variables: true
+          token_format: access_token
+          access_token_lifetime: 300s
+          create_credentials_file: false
+          export_environment_variables: false
           cleanup_credentials: true
 
-      - name: Set up gcloud SDK
-        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
-        with:
-          project_id: ${{ env.GCP_PROJECT_ID }}
-
-      - name: Verify WIF token exchange
+      - name: Confirm WIF token exchange
+        env:
+          WIF_ACCESS_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}
         run: |
           set -euo pipefail
-          gcloud auth print-access-token --quiet >/dev/null
-          echo "WIF token exchange succeeded."
+          [[ -n "${WIF_ACCESS_TOKEN}" ]] || {
+            echo "::error::WIF access token output is empty." >&2
+            exit 1
+          }
+          echo "WIF token exchange and service-account access-token generation succeeded."
 
   authorize-deploy-cutover:
     name: Authorize production deploy cutover
