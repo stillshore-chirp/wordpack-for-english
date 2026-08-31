@@ -71,6 +71,28 @@ def test_authenticated_preflight_only_uses_trusted_main() -> None:
     assert 'exit 1' in workflow
 
 
+def test_production_auth_is_wif_key_free_and_job_scoped() -> None:
+    deploy = _read(".github/workflows/deploy-production.yml")
+    preflight = _read(".github/workflows/production-deploy-preflight.yml")
+
+    assert "id-token: write" in deploy
+    verify_target = deploy[deploy.index("  verify-target:"): deploy.index("  deploy:")]
+    assert "id-token: write" not in verify_target
+    assert "permissions:\n      contents: read\n      id-token: write" in deploy[deploy.index("  deploy:"):]
+    assert "permissions:\n      contents: read\n      id-token: write" in preflight
+    assert "GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}" in deploy
+    assert "GCP_PREFLIGHT_SERVICE_ACCOUNT: ${{ vars.GCP_PREFLIGHT_SERVICE_ACCOUNT }}" in preflight
+    assert "GCP_DEPLOY_SERVICE_ACCOUNT" not in preflight
+    for workflow in (deploy, preflight):
+        assert "credentials_json" not in workflow
+        assert "GCP_SA_KEY" not in workflow
+        assert "workload_identity_provider:" in workflow
+        assert "service_account:" in workflow
+        assert "cleanup_credentials: true" in workflow
+
+    assert "gha-creds-*.json" in _read(".gitignore")
+
+
 def test_duplicate_dry_run_workflow_is_removed() -> None:
     assert not Path(".github/workflows/deploy-dry-run.yml").exists()
 

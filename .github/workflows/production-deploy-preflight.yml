@@ -18,10 +18,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    permissions:
+      contents: read
+      id-token: write
     env:
-      CLOUD_RUN_PROJECT_ID: ${{ secrets.GCP_SA_PROJECT_ID }}
-      FIREBASE_PROJECT_ID: ${{ secrets.GCP_SA_PROJECT_ID }}
-      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_PREFLIGHT_WIF_PROVIDER: ${{ vars.GCP_PREFLIGHT_WIF_PROVIDER }}
+      GCP_PREFLIGHT_SERVICE_ACCOUNT: ${{ vars.GCP_PREFLIGHT_SERVICE_ACCOUNT }}
+      CLOUD_RUN_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      FIREBASE_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       FIRESTORE_DATABASE_ID: "(default)"
     steps:
       - name: Checkout trusted main code
@@ -30,16 +35,29 @@ jobs:
           ref: main
           persist-credentials: false
 
-      - name: Validate probe secrets
+      - name: Validate probe inputs
         run: |
           set -euo pipefail
           missing=0
           if [ -z "${CLOUD_RUN_PROJECT_ID}" ]; then
-            echo "::error::GCP_SA_PROJECT_ID secret is not set; production deploy would not know the target project."
+            echo "::error::GCP_PROJECT_ID variable is not set; production deploy would not know the target project."
+            missing=1
+          elif [[ ! "${GCP_PROJECT_ID}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
+            echo "::error::GCP_PROJECT_ID must be a valid Google Cloud project ID."
             missing=1
           fi
-          if [ -z "${GCP_SA_KEY}" ]; then
-            echo "::error::GCP_SA_KEY secret is not set; production deploy cannot authenticate."
+          if [ -z "${GCP_PREFLIGHT_WIF_PROVIDER}" ]; then
+            echo "::error::GCP_PREFLIGHT_WIF_PROVIDER variable is not set; preflight cannot authenticate."
+            missing=1
+          elif [[ ! "${GCP_PREFLIGHT_WIF_PROVIDER}" =~ ^projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+$ ]]; then
+            echo "::error::GCP_PREFLIGHT_WIF_PROVIDER must be a full global Workload Identity Provider resource name."
+            missing=1
+          fi
+          if [ -z "${GCP_PREFLIGHT_SERVICE_ACCOUNT}" ]; then
+            echo "::error::GCP_PREFLIGHT_SERVICE_ACCOUNT variable is not set; preflight cannot authenticate."
+            missing=1
+          elif [[ ! "${GCP_PREFLIGHT_SERVICE_ACCOUNT}" =~ ^[a-z0-9][a-z0-9-]*@[a-z0-9-]+\.iam\.gserviceaccount\.com$ ]]; then
+            echo "::error::GCP_PREFLIGHT_SERVICE_ACCOUNT must be a Google service-account email."
             missing=1
           fi
           if [ "$missing" -ne 0 ]; then
@@ -48,12 +66,15 @@ jobs:
           echo "::add-mask::${CLOUD_RUN_PROJECT_ID}"
           echo "::add-mask::${FIREBASE_PROJECT_ID}"
 
-      - name: Authenticate to Google Cloud with service account key
+      - name: Authenticate to Google Cloud with Workload Identity Federation
         uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_PREFLIGHT_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_PREFLIGHT_SERVICE_ACCOUNT }}
           create_credentials_file: true
           export_environment_variables: true
+          cleanup_credentials: true
 
       - name: Set up gcloud SDK
         uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3

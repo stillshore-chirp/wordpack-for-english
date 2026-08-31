@@ -8,6 +8,7 @@
 - frontend は React + Vite の build artifact を Firebase Hosting API で配置します。
 - Firestore の複合インデックスと single-field override は `firestore.indexes.json` を同期します。既定の `gcloud` 経路は gcloud の認証情報で Firestore Admin API を直接呼び、Firebase CLI と `gcloud alpha` component には依存しません。
 - GitHub Actions の本番デプロイは `CI` の完了を受ける `workflow_run` 経路と、対象 SHA を明示する `workflow_dispatch` 経路だけです。自動経路は `conclusion=success`、`event=push`、`head_branch=main` を満たし、対象 SHA の一致を検証します。
+- GitHub Actions から Google Cloud への認証は Workload Identity Federation（WIF）を使い、長期 service account key を workflow へ渡しません。deploy と authenticated preflight は別 provider とし、job ごとの OIDC 権限だけを付与します。
 - 静的なデプロイ設定検証は `CI` の Cloud Run config guard などで行い、重複する dry-run workflow は持ちません。認証済み production deploy preflight は schedule と main ref の手動実行だけで、信頼済み main code の read-only probe を行います。
 
 ## 事前準備
@@ -211,13 +212,65 @@ firebase deploy --only hosting --project <firebase-project-id>
 - Cloud Run の minimum instances は repository variable `CLOUD_RUN_MIN_INSTANCES` で上書きできます。未設定時は紹介用 URL の初回体験を優先して `1` を使います。費用優先へ戻す場合は `0` を設定します。
 - Reader文章インポートなどレスポンス後も継続する非同期ジョブのため、デプロイ環境ファイルでは `CLOUD_RUN_NO_CPU_THROTTLING=true` を設定します。`false` のままでは202応答後にバックグラウンド処理が停止し得ます。
 
-必要な repository secrets:
+### GitHub Actions の WIF 設定
+
+repository variables（秘密ではない値）を、deploy と preflight の両 workflow から参照できる範囲へ登録します。
+
+| Variable | 用途 |
+|---|---|
+| `GCP_PROJECT_ID` | 本番 GCP project ID |
+| `GCP_DEPLOY_WIF_PROVIDER` | production deploy 用の full Workload Identity Provider resource name |
+| `GCP_PREFLIGHT_WIF_PROVIDER` | authenticated preflight 用の full Workload Identity Provider resource name |
+| `GCP_DEPLOY_SERVICE_ACCOUNT` | production deploy provider が impersonate する service-account email |
+| `GCP_PREFLIGHT_SERVICE_ACCOUNT` | authenticated preflight provider が impersonate する read-only service-account email |
+
+repository secret は次のとおりです。
 
 | Secret | 用途 |
 |---|---|
-| `GCP_SA_PROJECT_ID` | 本番 GCP project ID |
-| `GCP_SA_KEY` | デプロイ用 service account JSON |
 | `CLOUD_RUN_ENV_FILE_BASE64` | `.env.deploy` を base64 化した値 |
+
+`GCP_SA_KEY` と `GCP_SA_PROJECT_ID` は移行後の workflow から参照しません。旧 key は WIF 経路の検証が完了するまで無効化・削除せず、workflow に自動 fallback を追加しないでください。
+
+外部設定は次の順に準備します。ここに書く placeholder は実値へ置き換え、実値をこのリポジトリへコミットしません。
+
+1. `deploy_cloud_run.sh`、Firestore Admin API、Firebase Hosting API、Cloud Run promotion、Cloud Build が実際に呼ぶ API と、deploy service account の IAM 権限を inventory します。preflight は Firestore index list と Firebase Hosting release list だけを呼ぶため、その read-only service account の権限を分けて確認します。repository の role 一覧は候補であり、live IAM の証拠ではありません。
+2. Google Cloud に Workload Identity Pool と deploy / preflight それぞれの OIDC provider を作成します。issuer は `https://token.actions.githubusercontent.com/` とし、共通の claim を次のように mapping します。
+
+   ```text
+   google.subject=assertion.sub,
+   attribute.repository_id=assertion.repository_id,
+   attribute.repository_owner_id=assertion.repository_owner_id,
+   attribute.ref=assertion.ref,
+   attribute.workflow=assertion.workflow,
+   attribute.workflow_ref=assertion.workflow_ref
+   ```
+
+   deploy provider にだけ `attribute.environment=assertion.environment` を追加します。authenticated preflight job は GitHub environment を参照しないため、preflight provider では存在しない `environment` claim を mapping しません。
+
+3. provider の attribute condition は repository 名だけに頼らず、numeric ID、main ref、workflow identity へ限定します。production deploy provider の例は次のとおりです。
+
+   ```text
+   assertion.repository_id == '<REPOSITORY_ID>' &&
+   assertion.repository_owner_id == '<REPOSITORY_OWNER_ID>' &&
+   assertion.workflow_ref == 'stillshore-chirp/wordpack-for-english/.github/workflows/deploy-production.yml@refs/heads/main' &&
+   assertion.ref == 'refs/heads/main' &&
+   assertion.environment == 'production'
+   ```
+
+   authenticated preflight provider は `environment` claim を要求せず、workflow identity までを次のように限定します。
+
+   ```text
+   assertion.repository_id == '<REPOSITORY_ID>' &&
+   assertion.repository_owner_id == '<REPOSITORY_OWNER_ID>' &&
+   assertion.workflow_ref == 'stillshore-chirp/wordpack-for-english/.github/workflows/production-deploy-preflight.yml@refs/heads/main' &&
+   assertion.ref == 'refs/heads/main'
+   ```
+
+4. 各 provider の identity だけに、対象 service account への `roles/iam.workloadIdentityUser` を付与します。deploy service account の Cloud Run、Cloud Build、Artifact Registry、Firestore index、Firebase Hosting の resource role は手順 1 の inventory と実 API の権限エラーを根拠に最小限へ確定します。preflight service account には Firestore index list の `datastore.indexes.list` だけを含む project custom role と、Firebase Hosting の最小の定義済みread-only roleである `roles/firebasehosting.viewer` を付与します。`roles/datastore.viewer` は entity read も含むためpreflightには付与しません。deploy 用の write role（`roles/run.admin`、`roles/artifactregistry.writer`、`roles/cloudbuild.builds.editor`、`roles/datastore.indexAdmin`、`roles/firebasehosting.admin` など）も付与しません。role の適用範囲と実効権限は live IAM inventory で確認します。
+5. provider resource name、対象 service account email、project ID を上記 variables へ登録し、両 workflow の安全な token exchange と preflight read-only probe を確認します。provider、variables、IAM binding、exchange が準備できるまで、この repository 変更を merge-ready と判断しません。
+
+deploy と preflight は専用 provider と専用 service account を使います。preflight service account は Firestore index list と Firebase Hosting release list の read-only probe に必要な権限だけを持たせ、Cloud Run deploy、Cloud Build、Artifact Registry upload、Firestore index update、Hosting release write の権限を付与しません。
 
 Firestore index 同期は `gcloud` 認証の Firestore Admin API 経由で行い、Firebase Hosting 更新は `gcloud` 認証の Firebase Hosting API 経由で行います。どちらも Firebase CLI 認証や `gcloud alpha` component に依存させません。長期保存する `FIREBASE_TOKEN` secret や、`gcloud auth print-access-token` で発行した access token の `FIREBASE_TOKEN` 代入は使いません。
 
@@ -227,11 +280,11 @@ Firestore index 同期は `gcloud` 認証の Firestore Admin API 経由で行い
 
 - trigger は schedule と `workflow_dispatch` です。手動実行では `refs/heads/main` の場合だけ authenticated job が実行され、常に `main` を checkout します。
 - read-only probe は `gcloud auth print-access-token`、Firestore Admin API の index list、Firebase Hosting API の releases list を確認します。
-- GCP credential が欠けている場合は skip せず fail-closed で停止します。
+- `GCP_PROJECT_ID`、provider、service-account variable が欠けているか形式不正の場合は skip せず fail-closed で停止します。
 
 この preflight は Hosting version 作成、file upload、version finalize、release 作成、Firestore index 作成/更新、Cloud Run 実デプロイを実行しません。そのため write 権限、quota、release 作成時の最終検証までは完全保証できません。API path と認証前提の read-only 到達性を確認するもので、frontend build、Cloud Run dry-run、deploy contract の静的検証は `CI` lane で行います。
 
-サービスアカウントに必要な代表ロール:
+production deploy service account に必要な代表ロール:
 
 - `roles/run.admin`
 - `roles/artifactregistry.writer`
@@ -241,7 +294,20 @@ Firestore index 同期は `gcloud` 認証の Firestore Admin API 経由で行い
 - `roles/serviceusage.serviceUsageViewer`
 - `roles/iam.serviceAccountUser`
 
+authenticated preflight service account は次の read-only role に限定します。
+
+- `datastore.indexes.list` だけを含む project custom role
+- `roles/firebasehosting.viewer`（Hosting resource の read-only access。release list の API 到達性を確認する）
+
+preflight service account に `roles/datastore.viewer`やproduction deploy 用 roleを追加しないことが repository 外部設定の hardening 条件です。safe exchange / read-only probe が不足permissionで失敗した場合だけ、エラーで要求されたpermissionを個別に確認します。
+
 Cloud Build のソースアップロードやログ閲覧には、環境によって Cloud Storage / Cloud Build viewer 系の追加権限が必要です。権限は最小権限を基本とし、広い `roles/viewer` は切り分け目的に限ります。
+
+### WIF 移行後の rollback と旧 key の扱い
+
+WIF の token exchange が失敗した場合、workflow は長期 key へ自動 fallback せず停止します。repository 側の緊急 rollback は workflow 変更を明示的に revert する手順で行い、旧 key の再有効化は対象 key と理由を特定した別の外部権限で実施します。
+
+`GCP_SA_KEY` を無効化できる条件は、両 workflow が key-free であること、両 provider の exchange と authenticated preflight が成功すること、deploy/preflight 各 service account の必要な IAM binding と preflight read-only role が確認済みであることです。production canary / deploy の実行や traffic 変更は別途明示許可が必要です。無効化後の観測・rollback 窓で旧 key の参照がないことを確認し、削除はその後に明示的な GCP 権限で行います。無効化・削除の実施結果は repository の秘密値や token を含めずに運用記録へ残します。
 
 ## 検証
 

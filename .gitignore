@@ -138,3 +138,5 @@ tests/e2e/storage-state*.json
 
 **/.vite/
 gcp-deploy-key.json
+# google-github-actions/auth がworkspaceに作る短期credential fileを誤commitしない
+gha-creds-*.json
