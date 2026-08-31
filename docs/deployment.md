@@ -204,7 +204,9 @@ firebase deploy --only hosting --project <firebase-project-id>
 
 - `CI` workflow の完了を受けて起動します。自動経路は completed event の `name=CI`、`conclusion=success`、`event=push`、`head_branch=main` を検証し、`workflow_run.head_sha` をそのまま対象にします。
 - CI workflow identity は固定 path `.github/workflows/ci.yml` と、live repository の API で解決した immutable workflow ID `187172373` を照合します。同一runの詳細と jobs API で canonical `Quality gate`（現行表示名: `Quality gate (selected checks)`）の completed/success も確認します。workflowを再作成してIDが変わった場合は、この定数を明示的に更新してから再開します。
-- 手動の break-glass 実行は trusted `main` ref からのみ起動でき、必須入力 `target_sha` を受け取ります。completed状態の候補runをGitHub APIで取得し、同一 SHA の `CI` 成功・push・main runを1件確定した後、自動経路と同じrun詳細／Quality gate検証を通過してから `production` environment job へ進みます。
+- 手動の break-glass 実行は trusted `main` ref からのみ起動でき、必須入力 `target_sha` と任意の boolean input `identity_exchange_only` を受け取ります。completed状態の候補runをGitHub APIで取得し、同一 SHA の `CI` 成功・push・main runを1件確定した後、自動経路と同じrun詳細／Quality gate検証を通過してから後続 job へ進みます。
+- `identity_exchange_only=true` の手動実行は `verify-target` を必ず通過した後、`production` environment の `verify-deploy-identity` で deploy 用 WIF の入力検証、pinned auth/setup-gcloud、token exchange だけを確認します。checkout、build、production env materialize、deploy、API write、traffic 操作は行わず、通常の deploy job と cutover guard は実行しません。
+- 通常の自動／手動 deploy は `authorize-deploy-cutover` が repository variable `PRODUCTION_DEPLOY_ENABLED` の文字列 `true` を fail-closed に確認した場合だけ進みます。通常の production 経路を許可するまで `verify-target` の CI / Quality gate 契約は変わりません。
 - checkout は検証済み対象 SHA に固定し、checkout 後の `git rev-parse HEAD` との一致を assert します。
 - 自動／手動の全 production release は単一の stable concurrency group に入り、`cancel-in-progress=false` でFIFO待機します。candidate tag、traffic、rollback操作を異なるSHA間で並行させません。
 - PR では本番 deploy job を作りません。
@@ -223,12 +225,15 @@ repository variables（秘密ではない値）を、deploy と preflight の両
 | `GCP_PREFLIGHT_WIF_PROVIDER` | authenticated preflight 用の full Workload Identity Provider resource name |
 | `GCP_DEPLOY_SERVICE_ACCOUNT` | production deploy provider が impersonate する service-account email |
 | `GCP_PREFLIGHT_SERVICE_ACCOUNT` | authenticated preflight provider が impersonate する read-only service-account email |
+| `PRODUCTION_DEPLOY_ENABLED` | 通常の production deploy cutover guard。初期値は `false` とし、許可時だけ文字列 `true` |
 
 repository secret は次のとおりです。
 
 | Secret | 用途 |
 |---|---|
 | `CLOUD_RUN_ENV_FILE_BASE64` | `.env.deploy` を base64 化した値 |
+
+`PRODUCTION_DEPLOY_ENABLED` は初期値 `false` にします。main へこの変更を反映した後、`identity_exchange_only=true` の手動実行と Production deploy preflight が成功し、deploy service account の IAM disposition が完了するまで `true` に変更しません。これらの外部設定と確認が揃うまでは、通常の自動／手動 production deploy は cutover guard で停止します。
 
 `GCP_SA_KEY` と `GCP_SA_PROJECT_ID` は移行後の workflow から参照しません。旧 key は WIF 経路の検証が完了するまで無効化・削除せず、workflow に自動 fallback を追加しないでください。
 

@@ -32,9 +32,10 @@ This checklist tracks GitHub repository settings that cannot be fully changed fr
 
 ## Production Environment
 
-- [ ] `production` environment is protected.
+- [x] `production` environment requires a reviewer and limits deployments to `main`.
 - [ ] Deployment secrets are scoped to the production environment where possible.
 - [x] Repository variables `GCP_PROJECT_ID`, `GCP_DEPLOY_WIF_PROVIDER`, `GCP_PREFLIGHT_WIF_PROVIDER`, `GCP_DEPLOY_SERVICE_ACCOUNT`, and `GCP_PREFLIGHT_SERVICE_ACCOUNT` are configured without putting their values in source control.
+- [x] Repository variable `PRODUCTION_DEPLOY_ENABLED` is the string `false` and remains fail-closed until the main merge, identity-only exchange, production preflight, and deploy IAM disposition checks are complete.
 - [ ] `CLOUD_RUN_ENV_FILE_BASE64` remains the only production deployment secret referenced by the workflows.
 - [ ] The legacy long-lived `GCP_SA_KEY` is disabled and deleted only after the WIF exchange and rollback checks documented in [`docs/deployment.md`](../deployment.md) pass.
 
@@ -44,9 +45,10 @@ The source-controlled deployment contract is:
 
 - `Deploy to production` accepts an automatic `workflow_run` only when the completed workflow is `CI` with `success`, `push`, `main`, and the requested `head_sha`.
 - CI authorization also pins `.github/workflows/ci.yml` to live workflow ID `187172373` and requires the same run's canonical `Quality gate` job to be completed successfully; a recreated workflow requires an explicit constant update.
-- Manual break-glass requires an explicit `target_sha` and a dispatch from the trusted `main` ref; the workflow queries GitHub Actions for a matching successful `CI` push on `main` before entering the `production` environment.
+- Manual break-glass requires an explicit `target_sha` and a dispatch from the trusted `main` ref; the workflow queries GitHub Actions for a matching successful `CI` push on `main` before entering the `production` environment. The optional `identity_exchange_only=true` path still requires this target/Quality gate verification and only checks deploy WIF token exchange.
+- Normal automatic/manual deployment requires `authorize-deploy-cutover` to verify the repository variable `PRODUCTION_DEPLOY_ENABLED` is the literal string `true`; the deploy job needs both the target verifier and this guard. Identity-only runs skip the guard and deploy job, while normal PR jobs and runners are unchanged.
 - The deploy job checks out that exact SHA and asserts `git rev-parse HEAD`. `IMAGE_TAG` and runtime `GIT_SHA` are derived from that checkout and cannot be overridden by the deployment env file.
-- The deploy job and authenticated preflight use the pinned `google-github-actions/auth` action with Workload Identity Federation; `id-token: write` is scoped to those jobs, and `verify-target` does not receive it.
+- The deploy job, authenticated preflight, and manual main identity-only job use the pinned `google-github-actions/auth` action with Workload Identity Federation; `id-token: write` is scoped to those three jobs, and `verify-target` does not receive it.
 - Both production workflows are key-free: deploy uses `GCP_DEPLOY_SERVICE_ACCOUNT`, preflight uses the separate `GCP_PREFLIGHT_SERVICE_ACCOUNT`, and neither contains `credentials_json` or `GCP_SA_KEY` fallback. The existing full-SHA action pins, CI/Quality gate authorization, canary, health check, rollback, and materialized env-file cleanup remain part of the contract.
 - Authenticated preflight runs from scheduled or `main`-ref manual execution only, always checks out trusted `main`, and fails closed when WIF inputs are unavailable or malformed. Static validation belongs to the `CI` lane.
 
@@ -54,7 +56,8 @@ The source-controlled deployment contract is:
 
 Checked items were verified against live GitHub/GCP configuration on the review date. Unchecked items remain merge or retirement blockers:
 
-- [ ] GitHub `production` environment protection and the effective scope of repository variables/secrets.
+- [x] GitHub `production` environment has one required reviewer and a `main`-only deployment branch policy; WIF variables and current deployment secrets are repository-scoped as recorded above.
+- [x] Initial `PRODUCTION_DEPLOY_ENABLED=false`; enable it only after the main merge, successful identity-only exchange, successful authenticated preflight, and deploy IAM disposition.
 - [x] The Workload Identity Pool and separate deploy/preflight providers are active, with numeric repository/owner IDs, exact `workflow_ref`, main ref, and deploy-only `production` environment conditions documented in [`docs/deployment.md`](../deployment.md).
 - [x] `roles/iam.workloadIdentityUser` uses separate exact deploy-environment/preflight-main subjects, and the preflight service account has only the custom Firestore index-list role plus `roles/firebasehosting.viewer`.
 - [ ] The deploy service account's existing Cloud Run / Cloud Build / Artifact Registry / Firestore / Firebase Hosting roles are reduced to demonstrated requirements; broad legacy viewer, storage admin, and service-usage admin roles still require evidence-led review.

@@ -467,10 +467,96 @@ def test_deploy_production_workflow_requires_successful_ci_or_manual_main() -> N
     """Production deployment is gated by a successful main CI run or manual main dispatch."""
     yml = _read_text(".github/workflows/deploy-production.yml")
     on_block = _extract_on_block(yml)
-    _assert_contains_all(on_block, ["workflow_run:", "workflows:", "CI", "completed", "workflow_dispatch:"])
+    _assert_contains_all(
+        on_block,
+        [
+            "workflow_run:",
+            "workflows:",
+            "CI",
+            "completed",
+            "workflow_dispatch:",
+            "identity_exchange_only:",
+            "required: false",
+            "default: false",
+            "type: boolean",
+        ],
+    )
     _assert_contains_none(on_block, ["push:", "pull_request:"])
     _assert_contains_all(yml, ["WORKFLOW_RUN_CONCLUSION", "WORKFLOW_RUN_BRANCH", "conclusion == \"success\"", "TARGET_SHA"])
     assert "cancel-in-progress: false" in yml
+
+
+def test_deploy_cutover_guard_and_identity_exchange_are_scoped() -> None:
+    """Identity exchange is a manual main-only probe; normal deploys are fail-closed."""
+    path = ".github/workflows/deploy-production.yml"
+    yml = _read_text(path)
+    identity = _read_workflow_job(path, "verify-deploy-identity")
+    guard = _read_workflow_job(path, "authorize-deploy-cutover")
+    deploy = _read_workflow_job(path, "deploy")
+
+    assert identity["needs"] == "verify-target"
+    assert identity["if"] == (
+        "github.event_name == 'workflow_dispatch' && "
+        "github.ref == 'refs/heads/main' && inputs.identity_exchange_only == true"
+    )
+    assert identity["environment"] == "production"
+    assert guard["needs"] == "verify-target"
+    assert guard["if"] == (
+        "needs.verify-target.result == 'success' && "
+        "(github.event_name != 'workflow_dispatch' || inputs.identity_exchange_only != true)"
+    )
+    assert guard["env"] == {
+        "PRODUCTION_DEPLOY_ENABLED": "${{ vars.PRODUCTION_DEPLOY_ENABLED }}"
+    }
+    assert deploy["needs"] == ["verify-target", "authorize-deploy-cutover"]
+    assert deploy["if"] == (
+        "needs.verify-target.result == 'success' && "
+        "needs.authorize-deploy-cutover.result == 'success' && "
+        "(github.event_name != 'workflow_dispatch' || inputs.identity_exchange_only != true)"
+    )
+
+    identity_start = yml.index("  verify-deploy-identity:")
+    identity_end = yml.index("  authorize-deploy-cutover:", identity_start)
+    identity_block = yml[identity_start:identity_end]
+    _assert_contains_all(
+        identity_block,
+        [
+            "permissions:\n      id-token: write",
+            "GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}",
+            "GCP_DEPLOY_WIF_PROVIDER: ${{ vars.GCP_DEPLOY_WIF_PROVIDER }}",
+            "GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}",
+            "uses: google-github-actions/auth@",
+            "uses: google-github-actions/setup-gcloud@",
+            "gcloud auth print-access-token --quiet >/dev/null",
+        ],
+    )
+    _assert_contains_none(
+        identity_block,
+        [
+            "actions/checkout@",
+            "secrets.",
+            "CLOUD_RUN_ENV_FILE_BASE64",
+            "npm ",
+            "pip install",
+            "make release-cloud-run",
+            "promote_cloud_run_revision",
+            "deploy_firebase_hosting.py",
+            "firebase deploy",
+            "traffic",
+        ],
+    )
+
+    guard_start = yml.index("  authorize-deploy-cutover:")
+    deploy_start = yml.index("  deploy:", guard_start)
+    guard_block = yml[guard_start:deploy_start]
+    _assert_contains_all(
+        guard_block,
+        [
+            "if [[ \"${PRODUCTION_DEPLOY_ENABLED:-}\" != \"true\" ]]; then",
+            "::error::",
+            "exit 1",
+        ],
+    )
 
 
 def test_deploy_production_promotes_a_health_checked_no_traffic_candidate() -> None:
@@ -505,6 +591,7 @@ def test_deploy_production_uses_api_based_hosting_deploy() -> None:
     gcloud-authenticated API requests, avoiding Firebase CLI auth in CI.
     """
     yml = _read_text(".github/workflows/deploy-production.yml")
+    deploy = yml[yml.index("  deploy:"):]
 
     _assert_contains_all(
         yml,
@@ -526,7 +613,7 @@ def test_deploy_production_uses_api_based_hosting_deploy() -> None:
         ],
     )
     _assert_contains_none(
-        yml,
+        deploy,
         [
             "FIREBASE_TOKEN",
             "GCP_SA_KEY",
@@ -599,6 +686,14 @@ def test_wif_permissions_are_scoped_and_normal_ci_has_no_oidc_token() -> None:
         ".github/workflows/production-deploy-preflight.yml",
         "authenticated_read_only_probe",
     )["permissions"] == {"contents": "read", "id-token": "write"}
+    assert _read_workflow_job(
+        ".github/workflows/deploy-production.yml",
+        "verify-deploy-identity",
+    )["permissions"] == {"id-token": "write"}
+    assert _read_workflow_job(
+        ".github/workflows/deploy-production.yml",
+        "authorize-deploy-cutover",
+    )["permissions"] == {"contents": "read"}
 
     ci_jobs = ci_workflow["jobs"]
     assert all("id-token" not in job.get("permissions", {}) for job in ci_jobs.values())
@@ -628,17 +723,18 @@ def test_production_workflows_are_key_free() -> None:
 def test_deploy_auth_starts_after_dependency_install_and_before_gcloud_setup() -> None:
     """Keep short-lived Google credentials out of dependency installation steps."""
     workflow = _read_text(".github/workflows/deploy-production.yml")
-    frontend_install = workflow.index("Install frontend dependencies")
-    frontend_build = workflow.index("Build frontend artifact")
-    python_install = workflow.index("Install Python dependencies")
-    materialize = workflow.index("Materialize production env file")
-    validate = workflow.index("Validate deployment inputs")
-    authenticate = workflow.index("Authenticate to Google Cloud with Workload Identity Federation")
-    gcloud_setup = workflow.index("Set up gcloud SDK")
-    hosting = workflow.index("Deploy Firebase Hosting")
+    deploy = workflow[workflow.index("  deploy:"):]
+    frontend_install = deploy.index("Install frontend dependencies")
+    frontend_build = deploy.index("Build frontend artifact")
+    python_install = deploy.index("Install Python dependencies")
+    materialize = deploy.index("Materialize production env file")
+    validate = deploy.index("Validate deployment inputs")
+    authenticate = deploy.index("Authenticate to Google Cloud with Workload Identity Federation")
+    gcloud_setup = deploy.index("Set up gcloud SDK")
+    hosting = deploy.index("Deploy Firebase Hosting")
 
     assert frontend_install < frontend_build < python_install < materialize < validate < authenticate < gcloud_setup
-    hosting_block = workflow[hosting:]
+    hosting_block = deploy[hosting:]
     assert "npm --prefix ./apps/frontend run build" not in hosting_block
 
 
