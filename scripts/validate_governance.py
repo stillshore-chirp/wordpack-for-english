@@ -34,6 +34,15 @@ TASK_STATE_MAX_STRING_LENGTH = 1_000
 TASK_STATE_MAX_SUMMARY_LENGTH = 500
 _TASK_STRING_LIST = ("list", "string", True)
 _TASK_REQUIRED_STRING_LIST = ("list", "string", False)
+PR_MONITOR_STATES = frozenset({"MERGED", "CLOSED", "OPEN"})
+PR_MONITOR_TERMINAL_STATES = frozenset({"MERGED", "CLOSED"})
+PR_MONITOR_LIGHTWEIGHT_KEY_FIELDS = (
+    "state",
+    "headRefOid",
+    "updatedAt",
+    "reviewDecision",
+    "mergeStateStatus",
+)
 TASK_STATE_SHAPE: dict[str, object] = {
     "schema": "string",
     "status": "string",
@@ -121,6 +130,91 @@ UniqueKeyLoader.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, 
 
 def fail(message: str) -> None:
     raise GovernanceError(message)
+
+
+def validate_pr_monitor_lightweight_key(value: object) -> None:
+    """Validate the exact structured fields of a PR-monitor state key."""
+
+    required = set(PR_MONITOR_LIGHTWEIGHT_KEY_FIELDS)
+    if not isinstance(value, dict) or any(not isinstance(key, str) for key in value):
+        fail("PR monitor lightweight key must be a string-keyed object")
+    actual = set(value)
+    missing = sorted(required - actual)
+    unknown = sorted(actual - required)
+    if missing or unknown:
+        fail(
+            "PR monitor lightweight key fields invalid: "
+            f"missing={missing} unknown={unknown}"
+        )
+
+
+def decide_pr_monitor_run(
+    state: str,
+    state_key_changed: bool,
+    reassessment_checkpoint_due: bool,
+    monitoring_still_needed: bool,
+    *,
+    merge_state_status: str | None = None,
+    review_decision: str | None = None,
+) -> dict[str, object]:
+    """Return a static reference decision for one PR-monitor run.
+
+    This function documents a decision contract for callers and tests; it does
+    not enforce product runtime behavior or operate a scheduler.  ``state``
+    is authoritative, so optional GitHub status fields cannot override a
+    terminal state.  ``reassessment_checkpoint_due`` comes from a logical
+    checkpoint or deadline, not a fixed timeout count.  The monitor stops
+    only when that reassessment says ``monitoring_still_needed`` is false.
+    """
+
+    if not isinstance(state, str) or state not in PR_MONITOR_STATES:
+        fail(f"unknown PR monitor state: {state!r}")
+    if not isinstance(state_key_changed, bool):
+        fail("PR monitor state_key_changed must be a boolean")
+    if not isinstance(reassessment_checkpoint_due, bool):
+        fail("PR monitor reassessment_checkpoint_due must be a boolean")
+    if not isinstance(monitoring_still_needed, bool):
+        fail("PR monitor monitoring_still_needed must be a boolean")
+
+    # Keep these inputs explicit in the reference contract while ensuring that
+    # UNKNOWN or empty secondary fields do not outrank the canonical state.
+    del merge_state_status, review_decision
+
+    if state in PR_MONITOR_TERMINAL_STATES:
+        return {
+            "task_action": "delete",
+            "details": False,
+            "wait": None,
+            "notify": False,
+            "stop_reason": "terminal_state",
+            "unverified_scope": None,
+        }
+    if state_key_changed:
+        return {
+            "task_action": "retain",
+            "details": True,
+            "wait": None,
+            "notify": False,
+            "stop_reason": None,
+            "unverified_scope": None,
+        }
+    if reassessment_checkpoint_due and not monitoring_still_needed:
+        return {
+            "task_action": "stop",
+            "details": False,
+            "wait": None,
+            "notify": True,
+            "stop_reason": "monitoring_not_needed",
+            "unverified_scope": "external_wait",
+        }
+    return {
+        "task_action": "retain",
+        "details": False,
+        "wait": "event/backoff",
+        "notify": False,
+        "stop_reason": None,
+        "unverified_scope": None,
+    }
 
 
 def rel(path: Path, root: Path) -> str:
