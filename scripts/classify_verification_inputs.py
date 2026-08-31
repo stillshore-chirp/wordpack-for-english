@@ -41,6 +41,7 @@ OUTPUT_FIELDS = (
     "dependency_review",
     "playwright_smoke",
     "playwright_visual",
+    "playwright_targeted",
     "classification_ok",
 )
 
@@ -149,6 +150,11 @@ WORKFLOW_CONTRACT_FILES = {
     "tests/test_scheduled_maintenance_workflow.py",
     "tests/test_verification_inputs.py",
 }
+REGISTERED_FULL_E2E_SPECS = (
+    "tests/e2e/errors.spec.ts",
+    "tests/e2e/quiz.spec.ts",
+    "tests/e2e/shelves.spec.ts",
+)
 LEGACY_MIGRATION_FILES = {
     "scripts/classify_ui_test_changes.py",
     "tests/test_ui_test_change_classifier.py",
@@ -307,11 +313,7 @@ PATH_RULES: tuple[PathRule, ...] = (
         "e2e_registered_full_spec",
         "playwright_full",
         "full_e2e",
-        exact={
-            "tests/e2e/errors.spec.ts",
-            "tests/e2e/quiz.spec.ts",
-            "tests/e2e/shelves.spec.ts",
-        },
+        exact=REGISTERED_FULL_E2E_SPECS,
     ),
     _rule(
         "workflow_smoke",
@@ -940,6 +942,8 @@ class GatePlan:
     dependency_review: bool = False
     playwright_smoke: bool = False
     playwright_visual: bool = False
+    playwright_targeted: bool = False
+    playwright_targeted_specs: tuple[str, ...] = ()
     classification_ok: bool = True
     path_classifications: tuple[PathClassification, ...] = ()
 
@@ -958,6 +962,7 @@ class GatePlan:
             "category_counts": dict(sorted(category_counts.items())),
             "risks": list(self.risks),
             "risk_counts": dict(sorted(risk_counts.items())),
+            "playwright_targeted_specs": list(self.playwright_targeted_specs),
         }
         payload.update({field: bool(getattr(self, field)) for field in OUTPUT_FIELDS})
         return payload
@@ -1027,6 +1032,14 @@ def classify_paths(
             classified.append(classification)
     classifications = tuple(classified)
     unknown_tuple = tuple(unknown)
+    targeted_paths = {
+        item.path
+        for item in classifications
+        if item.rule_id == "e2e_registered_full_spec"
+    }
+    targeted_specs = tuple(
+        path for path in REGISTERED_FULL_E2E_SPECS if path in targeted_paths
+    )
     if unknown_tuple and fallback_reason is None:
         fallback_reason = "unclassified path requires an explicit category rule"
 
@@ -1085,6 +1098,8 @@ def classify_paths(
         dependency_review="dependency_review" in gates,
         playwright_smoke="playwright_smoke" in gates,
         playwright_visual="playwright_visual" in gates,
+        playwright_targeted=bool(targeted_specs),
+        playwright_targeted_specs=targeted_specs,
         classification_ok=classification_ok,
         path_classifications=classifications,
     )
@@ -1118,6 +1133,10 @@ def _write_github_outputs(output_path: Path, plan: GatePlan) -> None:
     with output_path.open("a", encoding="utf-8") as output:
         for field in OUTPUT_FIELDS:
             output.write(f"{field}={str(bool(getattr(plan, field))).lower()}\n")
+        output.write(
+            "playwright_targeted_specs="
+            f"{json.dumps(plan.playwright_targeted_specs, separators=(',', ':'))}\n"
+        )
 
 
 def _parse_args(argv: Sequence[str] | None) -> argparse.Namespace:

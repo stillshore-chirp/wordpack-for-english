@@ -16,6 +16,7 @@ from scripts.classify_verification_inputs import (
     GATE_INPUTS,
     LATEST_ACTIONS,
     OUTPUT_FIELDS,
+    REGISTERED_FULL_E2E_SPECS,
     WORKFLOW_CONTRACT,
     WORKFLOW_YAML_EVIDENCE,
     YAML_PARSE,
@@ -259,6 +260,50 @@ def test_registered_e2e_specs_map_to_their_gate() -> None:
     assert full.classification_ok is True
 
 
+def test_registered_full_e2e_spec_selects_only_that_target() -> None:
+    plan = classify_paths([REGISTERED_FULL_E2E_SPECS[1]])
+
+    assert plan.classification_ok is True
+    assert plan.playwright_targeted is True
+    assert plan.playwright_targeted_specs == (REGISTERED_FULL_E2E_SPECS[1],)
+    assert plan.playwright_smoke is False
+    assert plan.playwright_visual is False
+    assert plan.as_json()["playwright_targeted_specs"] == [REGISTERED_FULL_E2E_SPECS[1]]
+
+
+def test_full_e2e_targets_are_allowlisted_deduplicated_and_combined_with_smoke() -> None:
+    plan = classify_paths(
+        [
+            REGISTERED_FULL_E2E_SPECS[2],
+            "tests/e2e/auth.spec.ts",
+            REGISTERED_FULL_E2E_SPECS[0],
+            REGISTERED_FULL_E2E_SPECS[2],
+        ]
+    )
+
+    assert plan.classification_ok is True
+    assert plan.playwright_smoke is True
+    assert plan.playwright_targeted is True
+    assert plan.playwright_targeted_specs == (
+        REGISTERED_FULL_E2E_SPECS[0],
+        REGISTERED_FULL_E2E_SPECS[2],
+    )
+
+
+def test_non_full_paths_do_not_select_targeted_full_e2e_specs() -> None:
+    for path in (
+        "apps/frontend/src/pages/Home/index.tsx",
+        "apps/backend/backend/main.py",
+        "docs/README.md",
+        ".agents/skills/example/SKILL.md",
+    ):
+        plan = classify_paths([path])
+
+        assert plan.classification_ok is True, path
+        assert plan.playwright_targeted is False, path
+        assert plan.playwright_targeted_specs == (), path
+
+
 def test_unregistered_e2e_is_unknown_and_fails_closed() -> None:
     plan = classify_paths(["tests/e2e/new-flow.spec.ts"])
 
@@ -356,11 +401,14 @@ def test_diff_failure_is_nonzero_and_emits_fail_fast_contract(tmp_path, monkeypa
     assert payload["classification_ok"] is False
     assert payload["playwright_smoke"] is False
     assert payload["playwright_visual"] is False
+    assert payload["playwright_targeted_specs"] == []
     assert "unknown_paths" in payload
     output = output_path.read_text(encoding="utf-8")
     assert "classification_ok=false" in output
     assert "playwright_smoke=false" in output
     assert "playwright_visual=false" in output
+    assert "playwright_targeted=false" in output
+    assert "playwright_targeted_specs=[]" in output
 
 
 def test_full_profile_selects_all_major_gates() -> None:
@@ -370,9 +418,11 @@ def test_full_profile_selects_all_major_gates() -> None:
     assert all(
         getattr(plan, field) is True
         for field in OUTPUT_FIELDS
-        if field != "dependency_review"
+        if field not in {"dependency_review", "playwright_targeted"}
     )
     assert plan.dependency_review is False
+    assert plan.playwright_targeted is False
+    assert plan.playwright_targeted_specs == ()
     assert plan.categories == ("full_profile",)
     assert plan.unknown_path_count == 0
 
@@ -387,9 +437,11 @@ def test_main_full_profile_and_github_output_include_all_boolean_fields(
     assert all(
         payload[field] is True
         for field in OUTPUT_FIELDS
-        if field != "dependency_review"
+        if field not in {"dependency_review", "playwright_targeted"}
     )
     assert payload["dependency_review"] is False
+    assert payload["playwright_targeted"] is False
+    assert payload["playwright_targeted_specs"] == []
     output_fields = {
         line.split("=", 1)[0]
         for line in output_path.read_text(encoding="utf-8").splitlines()
@@ -469,7 +521,7 @@ def test_deleted_visual_workflow_uses_generic_workflow_contract() -> None:
     assert all(
         getattr(plan, field) is True
         for field in OUTPUT_FIELDS
-        if field not in {"dependency_review"}
+        if field not in {"dependency_review", "playwright_targeted"}
     )
     assert plan.dependency_review is False
     assert plan.categories == ("workflow",)
@@ -482,7 +534,7 @@ def test_ci_workflow_change_selects_all_major_gates() -> None:
     assert all(
         getattr(plan, field) is True
         for field in OUTPUT_FIELDS
-        if field != "dependency_review"
+        if field not in {"dependency_review", "playwright_targeted"}
     )
     assert plan.dependency_review is False
     assert plan.categories == ("workflow",)

@@ -174,6 +174,7 @@ def test_ci_classifier_exposes_the_stable_gate_interface() -> None:
         "dependency_review",
         "playwright_smoke",
         "playwright_visual",
+        "playwright_targeted",
         "classification_ok",
     ):
         assert f"      {field}: ${{{{ steps.scope.outputs.{field} }}}}" in ci
@@ -258,6 +259,47 @@ def test_playwright_jobs_are_classifier_scoped_and_parallel() -> None:
         assert "failure()" in block
         assert "retention-days: 14" in block
         assert artifact in block
+
+
+def test_targeted_full_specs_reuse_smoke_job_and_quality_gate() -> None:
+    ci = _read_text(".github/workflows/ci.yml")
+    smoke_start = ci.index("\n  playwright_smoke:") + 1
+    visual_start = ci.index("\n  playwright_visual:") + 1
+    smoke = ci[smoke_start:visual_start]
+    quality_start = ci.index("\n  quality_gate:") + 1
+    quality = ci[quality_start:]
+
+    _assert_contains_all(
+        ci,
+        [
+            "playwright_targeted: ${{ steps.scope.outputs.playwright_targeted }}",
+            "playwright_targeted_specs: ${{ steps.scope.outputs.playwright_targeted_specs }}",
+        ],
+    )
+    _assert_contains_all(
+        smoke,
+        [
+            "needs.verification_scope.outputs.playwright_targeted == 'true'",
+            "TARGETED_FULL_SPECS: ${{ needs.verification_scope.outputs.playwright_targeted_specs }}",
+            "REGISTERED_FULL_E2E_SPECS",
+            "json.loads(os.environ.get(\"TARGETED_FULL_SPECS\") or \"[]\")",
+            "len(requested_specs) != len(set(requested_specs))",
+            "spec not in REGISTERED_FULL_E2E_SPECS",
+            "selected_specs = list(dict.fromkeys(selected_specs))",
+            "subprocess.run(",
+            "*selected_specs",
+        ],
+    )
+    assert "${{ needs.verification_scope.outputs.playwright_targeted_specs }}" not in (
+        smoke.rsplit("run: |", 1)[1]
+    )
+    _assert_contains_all(
+        quality,
+        [
+            "SMOKE_SELECTED: ${{ needs.verification_scope.outputs.playwright_smoke == 'true' || needs.verification_scope.outputs.playwright_targeted == 'true' }}",
+            'check_selected "${SMOKE_SELECTED}" "${SMOKE_RESULT}" playwright_smoke',
+        ],
+    )
 
 
 def test_codeql_is_scheduled_and_manual_only() -> None:

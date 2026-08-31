@@ -32,6 +32,8 @@ jobs:
       dependency_review: ${{ steps.scope.outputs.dependency_review }}
       playwright_smoke: ${{ steps.scope.outputs.playwright_smoke }}
       playwright_visual: ${{ steps.scope.outputs.playwright_visual }}
+      playwright_targeted: ${{ steps.scope.outputs.playwright_targeted }}
+      playwright_targeted_specs: ${{ steps.scope.outputs.playwright_targeted_specs }}
       classification_ok: ${{ steps.scope.outputs.classification_ok }}
     steps:
       - name: Checkout repository history
@@ -504,7 +506,10 @@ jobs:
       ${{
         needs.verification_scope.result == 'success' &&
         needs.verification_scope.outputs.classification_ok == 'true' &&
-        needs.verification_scope.outputs.playwright_smoke == 'true'
+        (
+          needs.verification_scope.outputs.playwright_smoke == 'true' ||
+          needs.verification_scope.outputs.playwright_targeted == 'true'
+        )
       }}
     steps:
       - name: Checkout
@@ -548,9 +553,64 @@ jobs:
           npm ci
           npx playwright install --with-deps
 
-      - name: Run Playwright smoke suite
+      - name: Run Playwright selected suites
+        env:
+          SMOKE_SELECTED: ${{ needs.verification_scope.outputs.playwright_smoke }}
+          TARGETED_FULL_SPECS: ${{ needs.verification_scope.outputs.playwright_targeted_specs }}
         run: |
-          npx playwright test -c tests/e2e/playwright.config.ts tests/e2e/auth.spec.ts tests/e2e/guest.spec.ts tests/e2e/wordpack-server-query.spec.ts tests/e2e/wordpack.spec.ts
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+
+          from scripts.classify_verification_inputs import REGISTERED_FULL_E2E_SPECS
+
+          smoke_selected = os.environ.get("SMOKE_SELECTED")
+          if smoke_selected not in {"true", "false"}:
+              raise SystemExit("invalid smoke selection output")
+
+          try:
+              requested_specs = json.loads(os.environ.get("TARGETED_FULL_SPECS") or "[]")
+          except json.JSONDecodeError as error:
+              raise SystemExit("invalid targeted spec output") from error
+          if not isinstance(requested_specs, list) or any(
+              not isinstance(spec, str) for spec in requested_specs
+          ):
+              raise SystemExit("targeted spec output must be a string list")
+          if len(requested_specs) != len(set(requested_specs)):
+              raise SystemExit("targeted spec output contains duplicates")
+          if any(spec not in REGISTERED_FULL_E2E_SPECS for spec in requested_specs):
+              raise SystemExit("targeted spec output contains an unregistered path")
+
+          targeted_specs = [
+              spec for spec in REGISTERED_FULL_E2E_SPECS if spec in requested_specs
+          ]
+          smoke_specs = [
+              "tests/e2e/auth.spec.ts",
+              "tests/e2e/guest.spec.ts",
+              "tests/e2e/wordpack-server-query.spec.ts",
+              "tests/e2e/wordpack.spec.ts",
+          ]
+          selected_specs = []
+          if smoke_selected == "true":
+              selected_specs.extend(smoke_specs)
+          selected_specs.extend(targeted_specs)
+          selected_specs = list(dict.fromkeys(selected_specs))
+          if not selected_specs:
+              raise SystemExit("Playwright job selected without any spec")
+
+          subprocess.run(
+              [
+                  "npx",
+                  "playwright",
+                  "test",
+                  "-c",
+                  "tests/e2e/playwright.config.ts",
+                  *selected_specs,
+              ],
+              check=True,
+          )
+          PY
 
       - name: Upload Playwright smoke artifacts
         if: ${{ failure() }}
@@ -664,7 +724,7 @@ jobs:
           GOVERNANCE_RESULT: ${{ needs.governance.result }}
           WORKFLOW_SELECTED: ${{ needs.verification_scope.outputs.workflow_contract }}
           WORKFLOW_RESULT: ${{ needs.workflow_contract.result }}
-          SMOKE_SELECTED: ${{ needs.verification_scope.outputs.playwright_smoke }}
+          SMOKE_SELECTED: ${{ needs.verification_scope.outputs.playwright_smoke == 'true' || needs.verification_scope.outputs.playwright_targeted == 'true' }}
           SMOKE_RESULT: ${{ needs.playwright_smoke.result }}
           VISUAL_SELECTED: ${{ needs.verification_scope.outputs.playwright_visual }}
           VISUAL_RESULT: ${{ needs.playwright_visual.result }}
