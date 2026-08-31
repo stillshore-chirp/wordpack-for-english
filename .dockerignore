@@ -38,6 +38,7 @@ coverage/
 
 .env
 .env.*
+configs/cloud-run/*.env
 *.log
 
 

@@ -35,7 +35,14 @@ def test_deploy_script_supports_cloud_run_min_instances() -> None:
     assert not Path(".github/workflows/deploy-dry-run.yml").exists()
     assert "deploy_preflight:" in ci_workflow
     assert "name: Static deploy preflight" in ci_workflow
-    assert "shellcheck scripts/deploy_cloud_run.sh scripts/promote_cloud_run_revision.sh" in ci_workflow
+    assert "shellcheck" in ci_workflow
+    for script_path in (
+        "scripts/build_backend_artifact.sh",
+        "scripts/verify_backend_artifact_attestations.sh",
+        "scripts/deploy_cloud_run.sh",
+        "scripts/promote_cloud_run_revision.sh",
+    ):
+        assert script_path in ci_workflow
     assert "./scripts/deploy_cloud_run.sh --dry-run" in ci_workflow
     assert "--min-instances 1" in ci_workflow
     assert "--no-traffic --traffic-tag candidate" in ci_workflow
@@ -70,6 +77,8 @@ def test_deploy_script_rejects_invalid_cloud_run_min_instances() -> None:
             "asia-northeast1",
             "--service",
             "wordpack-backend",
+            "--image-uri",
+            "asia-northeast1-docker.pkg.dev/ci-placeholder-project/wordpack/backend@sha256:" + "0" * 64,
             "--min-instances",
             "one",
         ],
@@ -94,8 +103,136 @@ def test_deploy_script_supports_tagged_no_traffic_candidates() -> None:
     assert 'RUN_ARGS+=(--tag "$TRAFFIC_TAG")' in deploy_script
     assert "$(if $(filter true,$(NO_TRAFFIC)),--no-traffic,)" in makefile
     assert "$(if $(TRAFFIC_TAG),--traffic-tag $(TRAFFIC_TAG),)" in makefile
-    assert 'DEPLOYMENT_VERSION="${DEPLOYMENT_VERSION:-$IMAGE_TAG}"' in deploy_script
+    assert 'DEPLOYMENT_VERSION="${DEPLOYMENT_VERSION:-$CHECKED_OUT_SHA}"' in deploy_script
     assert 'add_env_key "DEPLOYMENT_VERSION"' in deploy_script
+
+
+def test_deploy_script_consumes_only_an_immutable_image_uri() -> None:
+    """The helper is a digest-only deploy boundary; build stays in the workflow."""
+    deploy_script = Path("scripts/deploy_cloud_run.sh").read_text(encoding="utf-8")
+    makefile = Path("Makefile").read_text(encoding="utf-8")
+
+    assert "--image-uri" in deploy_script
+    assert "@sha256:" in deploy_script
+    assert "gcloud builds submit" not in deploy_script
+    assert "IMAGE_URI" in makefile
+    assert "--image-uri" in makefile
+    assert "GCP_SA_KEY" not in deploy_script
+    assert "credentials_json" not in deploy_script
+
+
+def test_release_cloud_run_validates_full_image_uri_before_firestore_sync() -> None:
+    makefile = Path("Makefile").read_text(encoding="utf-8")
+
+    validation_index = makefile.index("EXPECTED_IMAGE_NAME")
+    dry_run_index = makefile.index('echo "[release-cloud-run] Validating Cloud Run configuration via dry-run"')
+    firestore_index = makefile.index('echo "[release-cloud-run] Syncing Firestore indexes')
+    assert validation_index < dry_run_index < firestore_index
+    assert 'IMAGE_DIGEST_VALUE="$${IMAGE_URI_VALUE##*@}"' in makefile
+    assert "sha256:[0-9a-f]{64}" in makefile
+
+
+def test_deploy_script_documents_digest_and_repository_fail_closed_checks() -> None:
+    deploy_script = Path("scripts/deploy_cloud_run.sh").read_text(encoding="utf-8")
+    lowered = deploy_script.lower()
+
+    assert "sha256" in lowered
+    assert "project" in lowered
+    assert "repository" in lowered or "artifact" in lowered
+    assert "must" in lowered or "invalid" in lowered
+    assert "exit 1" in deploy_script
+
+
+def test_deploy_script_validates_settings_inside_exact_image(tmp_path: Path) -> None:
+    """Production validation uses the pulled digest, without host dependency installs."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "printf '%q ' \"$@\" >> \"${DOCKER_LOG}\"\n"
+        "printf '\\n' >> \"${DOCKER_LOG}\"\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    image_uri = "asia-northeast1-docker.pkg.dev/ci-placeholder-project/wordpack/backend@sha256:" + "0" * 64
+
+    proc = subprocess.run(
+        [
+            "scripts/deploy_cloud_run.sh",
+            "--dry-run",
+            "--validate-in-image",
+            "--env-file",
+            "configs/cloud-run/ci.env",
+            "--project-id",
+            "ci-placeholder-project",
+            "--region",
+            "asia-northeast1",
+            "--image-uri",
+            image_uri,
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "DOCKER_LOG": str(docker_log),
+        },
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    calls = docker_log.read_text(encoding="utf-8")
+    assert f"pull --quiet {image_uri}" in calls
+    assert "run --rm --env-file configs/cloud-run/ci.env" in calls
+    assert "--env PROJECT_ID=ci-placeholder-project" in calls
+    assert "--env GIT_SHA=" in calls
+    assert "--env DEPLOYMENT_VERSION=" in calls
+    assert f"{image_uri} python -m apps.backend.backend.config" in calls
+    assert "Validating backend settings via" not in proc.stdout + proc.stderr
+
+
+def test_deploy_script_fails_closed_when_in_image_validation_fails(tmp_path: Path) -> None:
+    """A container validation error stops both dry-run and the deploy path."""
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [ \"$1\" = run ]; then exit 1; fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    for dry_run in (True, False):
+        command = [
+            "scripts/deploy_cloud_run.sh",
+            "--validate-in-image",
+            "--env-file",
+            "configs/cloud-run/ci.env",
+            "--project-id",
+            "ci-placeholder-project",
+            "--region",
+            "asia-northeast1",
+            "--image-uri",
+            "asia-northeast1-docker.pkg.dev/ci-placeholder-project/wordpack/backend@sha256:" + "0" * 64,
+        ]
+        if dry_run:
+            command.insert(1, "--dry-run")
+        proc = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+        )
+
+        combined_output = proc.stdout + proc.stderr
+        assert proc.returncode != 0
+        assert "Backend configuration validation failed inside the exact image" in combined_output
+        assert "Dry run mode" not in combined_output
 
 
 def test_deploy_script_requires_a_tag_for_no_traffic_mode() -> None:
@@ -109,6 +246,8 @@ def test_deploy_script_requires_a_tag_for_no_traffic_mode() -> None:
             "ci-placeholder-project",
             "--region",
             "asia-northeast1",
+            "--image-uri",
+            "asia-northeast1-docker.pkg.dev/ci-placeholder-project/wordpack/backend@sha256:" + "0" * 64,
             "--no-traffic",
         ],
         check=False,
@@ -135,10 +274,11 @@ def test_release_cloud_run_stops_when_index_sync_fails(tmp_path: Path) -> None:
             "make",
             "-s",
             "release-cloud-run",
-            "PROJECT_ID=demo-project",
-            "REGION=asia-northeast1",
-            "ENV_FILE=configs/cloud-run/ci.env",
-            "TOOL=invalid",
+                "PROJECT_ID=demo-project",
+                "REGION=asia-northeast1",
+                "ENV_FILE=configs/cloud-run/ci.env",
+                "IMAGE_URI=asia-northeast1-docker.pkg.dev/demo-project/wordpack/backend@sha256:" + "0" * 64,
+                "TOOL=invalid",
             f"CLOUD_RUN_SCRIPT={fake_cloud_run}",
         ],
         check=False,
@@ -150,6 +290,50 @@ def test_release_cloud_run_stops_when_index_sync_fails(tmp_path: Path) -> None:
     assert proc.returncode != 0
     assert "--tool には gcloud または firebase を指定してください" in combined_output
     assert "CLOUD_RUN_SCRIPT_RAN" not in combined_output
+
+
+def test_release_cloud_run_rejects_invalid_image_before_index_side_effect(tmp_path: Path) -> None:
+    fake_cloud_run = tmp_path / "fake_cloud_run.sh"
+    fake_cloud_run.write_text(
+        "#!/usr/bin/env bash\n"
+        "echo CLOUD_RUN_SCRIPT_RAN\n"
+        "touch \"${DEPLOY_MARKER}\"\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_cloud_run.chmod(0o755)
+    deploy_marker = tmp_path / "deploy-marker"
+    invalid_images = (
+        "asia-northeast1-docker.pkg.dev/other-project/wordpack/backend@sha256:" + "0" * 64,
+        "asia-northeast1-docker.pkg.dev/demo-project/wordpack/backend:target",
+        "asia-northeast1-docker.pkg.dev/demo-project/wordpack/backend@sha256:" + "0" * 63,
+    )
+
+    for image_uri in invalid_images:
+        proc = subprocess.run(
+            [
+                "make",
+                "-s",
+                "release-cloud-run",
+                "PROJECT_ID=demo-project",
+                "REGION=asia-northeast1",
+                "ENV_FILE=configs/cloud-run/ci.env",
+                f"IMAGE_URI={image_uri}",
+                "TOOL=invalid",
+                f"CLOUD_RUN_SCRIPT={fake_cloud_run}",
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "DEPLOY_MARKER": str(deploy_marker)},
+        )
+        combined_output = proc.stdout + proc.stderr
+        assert proc.returncode != 0
+        assert "IMAGE_URI must exactly match" in combined_output
+        assert "Syncing Firestore indexes" not in combined_output
+        assert "--tool には gcloud または firebase を指定してください" not in combined_output
+        assert "CLOUD_RUN_SCRIPT_RAN" not in combined_output
+        assert not deploy_marker.exists()
 
 
 class _FirestoreAdminApiHandler(BaseHTTPRequestHandler):

@@ -421,10 +421,15 @@ jobs:
           sudo apt-get install -y shellcheck
 
       - name: Lint deploy scripts
-        run: shellcheck scripts/deploy_cloud_run.sh scripts/promote_cloud_run_revision.sh
+        run: >-
+          shellcheck
+          scripts/build_backend_artifact.sh
+          scripts/verify_backend_artifact_attestations.sh
+          scripts/deploy_cloud_run.sh
+          scripts/promote_cloud_run_revision.sh
 
       - name: Dry-run Cloud Run deployment
-        run: ./scripts/deploy_cloud_run.sh --dry-run --env-file configs/cloud-run/ci.env --project-id ci-placeholder-project --region asia-northeast1 --service wordpack-backend --min-instances 1 --no-traffic --traffic-tag candidate
+        run: ./scripts/deploy_cloud_run.sh --dry-run --env-file configs/cloud-run/ci.env --project-id ci-placeholder-project --region asia-northeast1 --service wordpack-backend --min-instances 1 --no-traffic --traffic-tag candidate --image-uri asia-northeast1-docker.pkg.dev/ci-placeholder-project/wordpack/backend@sha256:0000000000000000000000000000000000000000000000000000000000000000
 
   governance:
     name: Governance validation

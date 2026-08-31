@@ -13,6 +13,13 @@ steps:
 images:
   - $_IMAGE_URI
 
+substitutions:
+  _IMAGE_URI: ""
+  _SOURCE_REPOSITORY: ""
+  _TARGET_SHA: ""
+  _BUILDER_WORKFLOW: ""
+
 options:
   # Dedicated build service accounts must use Cloud Logging instead of the default log bucket.
   logging: CLOUD_LOGGING_ONLY
+  requestedVerifyOption: VERIFIED

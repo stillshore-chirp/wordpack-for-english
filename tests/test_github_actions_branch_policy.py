@@ -432,7 +432,11 @@ def test_ci_does_not_embed_production_deploy_job() -> None:
         [
             "deploy_preflight:",
             "deploy_cloud_run.sh --dry-run",
-            "shellcheck scripts/deploy_cloud_run.sh scripts/promote_cloud_run_revision.sh",
+            "shellcheck",
+            "scripts/build_backend_artifact.sh",
+            "scripts/verify_backend_artifact_attestations.sh",
+            "scripts/deploy_cloud_run.sh",
+            "scripts/promote_cloud_run_revision.sh",
             "--no-traffic --traffic-tag candidate",
         ],
     )
@@ -508,10 +512,19 @@ def test_deploy_cutover_guard_and_identity_exchange_are_scoped() -> None:
     assert guard["env"] == {
         "PRODUCTION_DEPLOY_ENABLED": "${{ vars.PRODUCTION_DEPLOY_ENABLED }}"
     }
-    assert deploy["needs"] == ["verify-target", "authorize-deploy-cutover"]
+    assert deploy["needs"] == [
+        "verify-target",
+        "authorize-deploy-cutover",
+        "prepare-release-artifacts",
+        "build-backend-artifact",
+        "attest-backend-artifact",
+    ]
     assert deploy["if"] == (
         "needs.verify-target.result == 'success' && "
         "needs.authorize-deploy-cutover.result == 'success' && "
+        "needs.prepare-release-artifacts.result == 'success' && "
+        "needs.build-backend-artifact.result == 'success' && "
+        "needs.attest-backend-artifact.result == 'success' && "
         "(github.event_name != 'workflow_dispatch' || inputs.identity_exchange_only != true)"
     )
 
@@ -610,15 +623,14 @@ def test_deploy_production_uses_api_based_hosting_deploy() -> None:
             "GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}",
             "GCP_DEPLOY_WIF_PROVIDER: ${{ vars.GCP_DEPLOY_WIF_PROVIDER }}",
             "GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}",
-            "project_id: ${{ env.GCP_PROJECT_ID }}",
-            "workload_identity_provider: ${{ env.GCP_DEPLOY_WIF_PROVIDER }}",
-            "service_account: ${{ env.GCP_DEPLOY_SERVICE_ACCOUNT }}",
+            "project_id: ${{ vars.GCP_PROJECT_ID }}",
+            "workload_identity_provider: ${{ vars.GCP_DEPLOY_WIF_PROVIDER }}",
+            "service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}",
             "create_credentials_file: true",
             "export_environment_variables: true",
             "cleanup_credentials: true",
             "python scripts/deploy_firebase_hosting.py",
             "--site \"${FIREBASE_PROJECT_ID}\"",
-            "npm --prefix ./apps/frontend run build",
             "TOOL=gcloud",
         ],
     )
@@ -634,6 +646,9 @@ def test_deploy_production_uses_api_based_hosting_deploy() -> None:
             "gcloud auth print-access-token",
             "Prepare Firebase CLI auth token",
             "TOOL=firebase",
+            "npm --prefix ./apps/frontend run build",
+            "pip install",
+            "scripts/build_backend_artifact.sh",
         ],
     )
 
@@ -682,14 +697,29 @@ def test_wif_permissions_are_scoped_and_normal_ci_has_no_oidc_token() -> None:
     preflight_workflow = yaml.safe_load(_read_text(".github/workflows/production-deploy-preflight.yml"))
     ci_workflow = yaml.safe_load(_read_text(".github/workflows/ci.yml"))
 
-    assert deploy_workflow["permissions"] == {"contents": "read", "actions": "read"}
+    assert deploy_workflow["permissions"] == {"contents": "read"}
     assert _read_workflow_job(".github/workflows/deploy-production.yml", "verify-target")["permissions"] == {
         "contents": "read",
         "actions": "read",
     }
     assert _read_workflow_job(".github/workflows/deploy-production.yml", "deploy")["permissions"] == {
         "contents": "read",
+        "actions": "read",
+        "attestations": "read",
         "id-token": "write",
+    }
+    assert _read_workflow_job(".github/workflows/deploy-production.yml", "prepare-release-artifacts")["permissions"] == {
+        "contents": "read",
+    }
+    assert _read_workflow_job(".github/workflows/deploy-production.yml", "build-backend-artifact")["permissions"] == {
+        "contents": "read",
+        "id-token": "write",
+    }
+    assert _read_workflow_job(".github/workflows/deploy-production.yml", "attest-backend-artifact")["permissions"] == {
+        "contents": "read",
+        "actions": "read",
+        "id-token": "write",
+        "attestations": "write",
     }
     assert preflight_workflow["permissions"] == {"contents": "read"}
     assert _read_workflow_job(
@@ -731,42 +761,98 @@ def test_production_workflows_are_key_free() -> None:
 
 
 def test_deploy_auth_starts_after_dependency_install_and_before_gcloud_setup() -> None:
-    """Keep short-lived Google credentials out of dependency installation steps."""
+    """Keep dependency/artifact handoff steps ahead of production authentication."""
     workflow = _read_text(".github/workflows/deploy-production.yml")
+    prepare = workflow[workflow.index("  prepare-release-artifacts:"): workflow.index("  build-backend-artifact:")]
+    build = workflow[workflow.index("  build-backend-artifact:"): workflow.index("  attest-backend-artifact:")]
+    attest = workflow[workflow.index("  attest-backend-artifact:"): workflow.index("  deploy:")]
     deploy = workflow[workflow.index("  deploy:"):]
-    frontend_install = deploy.index("Install frontend dependencies")
-    frontend_build = deploy.index("Build frontend artifact")
-    python_install = deploy.index("Install Python dependencies")
-    materialize = deploy.index("Materialize production env file")
-    validate = deploy.index("Validate deployment inputs")
-    authenticate = deploy.index("Authenticate to Google Cloud with Workload Identity Federation")
-    gcloud_setup = deploy.index("Set up gcloud SDK")
-    hosting = deploy.index("Deploy Firebase Hosting")
+    assert prepare.index("Install frontend dependencies") < prepare.index("Build frontend artifact")
+    assert prepare.index("Build frontend artifact") < prepare.index("Upload frontend release artifact")
+    assert build.index("Validate authenticated build inputs") < build.index("Authenticate to Google Cloud")
+    assert build.index("Authenticate to Google Cloud") < build.index("scripts/build_backend_artifact.sh")
+    assert build.index("scripts/build_backend_artifact.sh") < build.index("Cleanup Google credentials before artifact upload")
+    assert build.index("Cleanup Google credentials before artifact upload") < build.index("Upload backend image archive")
+    assert "npm " not in build and "pip install" not in build
+    assert "npm " not in attest and "pip install" not in attest
+    assert "environment: production" not in attest
+    assert deploy.index("Download frontend release artifact before auth") < deploy.index("Authenticate to Google Cloud")
+    assert deploy.index("Download backend attestation metadata before auth") < deploy.index("Authenticate to Google Cloud")
+    assert deploy.index("Authenticate to Google Cloud") < deploy.index("Verify backend artifact attestations after auth")
+    assert deploy.index("Verify backend artifact attestations after auth") < deploy.index("Materialize production env file")
+    assert deploy.index("Materialize production env file") < deploy.index("Deploy Firebase Hosting")
+    assert "npm --prefix ./apps/frontend run build" not in deploy
+    assert "pip install" not in deploy
+    assert "VALIDATE_IN_IMAGE=true" in deploy
 
-    assert frontend_install < frontend_build < python_install < materialize < validate < authenticate < gcloud_setup
-    hosting_block = deploy[hosting:]
-    assert "npm --prefix ./apps/frontend run build" not in hosting_block
+
+def test_backend_build_provenance_is_main_deploy_only_and_has_no_pr_publish_path() -> None:
+    """Build and attest jobs stay on the main-only production workflow."""
+    path = ".github/workflows/deploy-production.yml"
+    workflow = _read_text(path)
+    parsed = yaml.safe_load(workflow)
+    assert isinstance(parsed, dict)
+    jobs = parsed["jobs"]
+    assert set(jobs) == {
+        "verify-target",
+        "verify-deploy-identity",
+        "authorize-deploy-cutover",
+        "prepare-release-artifacts",
+        "build-backend-artifact",
+        "attest-backend-artifact",
+        "deploy",
+    }
+    build = _read_workflow_job(path, "build-backend-artifact")
+    attest = _read_workflow_job(path, "attest-backend-artifact")
+    deploy = _read_workflow_job(path, "deploy")
+    build_text = "\n".join(str(step.get("run", "")) for step in build["steps"] if isinstance(step, dict))
+    attest_text = "\n".join(str(step.get("run", "")) for step in attest["steps"] if isinstance(step, dict))
+    deploy_text = "\n".join(str(step.get("run", "")) for step in deploy["steps"] if isinstance(step, dict))
+    assert build_text.count("scripts/build_backend_artifact.sh") == 1
+    helper = _read_text("scripts/build_backend_artifact.sh")
+    assert helper.count('gcloud builds submit "${BUILD_CONTEXT}"') == 1
+    assert "actions/attest" in workflow
+    assert "anchore/sbom-action@" not in workflow
+    assert "gh attestation verify" in _read_text("scripts/verify_backend_artifact_attestations.sh")
+    assert "steps.backend-artifact.outputs.image_uri" in workflow
+    assert "native_provenance_snapshot_sha256" in workflow
+    assert "docker save" in build_text
+    assert "syft" in attest_text
+    assert "npm " not in build_text and "pip install" not in build_text
+    assert "npm " not in deploy_text and "pip install" not in deploy_text
+    assert "@sha256:" in _read_text("scripts/deploy_cloud_run.sh")
+    assert "gcloud builds submit" not in _read_text("scripts/deploy_cloud_run.sh")
+    assert "pull_request:" not in workflow
+    assert "pull_request_target:" not in workflow
+    assert "push:" not in workflow
+    assert "GCP_BUILD_SERVICE_ACCOUNT" not in deploy.get("env", {})
+    assert "GCP_BUILD_SERVICE_ACCOUNT" in build_text or "GCP_BUILD_SERVICE_ACCOUNT" in str(build.get("steps"))
+    for job_id, job in jobs.items():
+        if job_id != "build-backend-artifact":
+            assert "GCP_BUILD_SERVICE_ACCOUNT" not in job.get("env", {})
 
 
 def test_cloud_build_service_account_is_explicit_and_deploy_scoped() -> None:
-    """Only the authenticated deploy job may consume the dedicated build SA variable."""
+    """Only the authenticated backend-build job may consume the dedicated build SA variable."""
     deploy_path = ".github/workflows/deploy-production.yml"
     deploy_workflow = yaml.safe_load(_read_text(deploy_path))
     deploy_job = _read_workflow_job(deploy_path, "deploy")
+    build_job = _read_workflow_job(deploy_path, "build-backend-artifact")
     identity_job = _read_workflow_job(deploy_path, "verify-deploy-identity")
     preflight_workflow = yaml.safe_load(_read_text(".github/workflows/production-deploy-preflight.yml"))
     ci_workflow = yaml.safe_load(_read_text(".github/workflows/ci.yml"))
 
-    assert deploy_job["env"]["GCP_BUILD_SERVICE_ACCOUNT"] == "${{ vars.GCP_BUILD_SERVICE_ACCOUNT }}"
+    assert "GCP_BUILD_SERVICE_ACCOUNT" not in deploy_job.get("env", {})
+    build_env = "\n".join(str(step.get("env", {})) for step in build_job["steps"] if isinstance(step, dict))
+    assert "GCP_BUILD_SERVICE_ACCOUNT" in build_env
     assert "GCP_BUILD_SERVICE_ACCOUNT" not in identity_job.get("env", {})
     assert all("GCP_BUILD_SERVICE_ACCOUNT" not in job.get("env", {}) for job in preflight_workflow["jobs"].values())
     assert all("GCP_BUILD_SERVICE_ACCOUNT" not in job.get("env", {}) for job in ci_workflow["jobs"].values())
 
     deploy_text = _read_text(deploy_path)
-    deploy_start = deploy_text.index("  deploy:")
-    deploy_block = deploy_text[deploy_start:]
-    assert 'BUILD_SERVICE_ACCOUNT="${GCP_BUILD_SERVICE_ACCOUNT}"' in deploy_block
-    assert "GCP_BUILD_SERVICE_ACCOUNT is not set" in deploy_block
+    build_start = deploy_text.index("  build-backend-artifact:")
+    build_end = deploy_text.index("  attest-backend-artifact:", build_start)
+    deploy_block = deploy_text[build_start:build_end]
     assert "GCP_BUILD_SERVICE_ACCOUNT must be a service-account email in GCP_PROJECT_ID's project." in deploy_block
     assert r"^[a-z][a-z0-9-]{4,28}[a-z0-9]@${GCP_PROJECT_ID}\.iam\.gserviceaccount\.com" in deploy_block
     assert "--build-service-account" not in _read_text(".github/workflows/production-deploy-preflight.yml")

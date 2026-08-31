@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# このスクリプトは Cloud Run へのデプロイを自動化し、
+# このスクリプトは Cloud Run への digest 固定デプロイを自動化し、
 # ざっくり次の 3 段階をまとめて実行します。
 #   1) `.env.deploy` などから環境変数を読み込み、欠けている設定がないか確認する
 #   2) Python 側の設定ローダーを呼び出して、値の形式や必須項目をバリデーションする
-#   3) Cloud Build でコンテナイメージをビルドし、Cloud Run へデプロイする
-# `--dry-run` を付けると 1) と 2) だけを実行し、実際のビルド/デプロイは行いません。
+#   3) 呼び出し元が検証済みの immutable image digest を Cloud Run へデプロイする
+# `--dry-run` を付けると 1) と 2) だけを実行し、実際のデプロイは行いません。
 # 「設定だけ先にチェックしたい」ときは dry-run を使う、というイメージです。
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -37,10 +37,7 @@ Options:
   --region <region>          Artifact Registry / Cloud Run region
   --service <name>           Cloud Run service name (default: wordpack-backend)
   --artifact-repo <path>     Artifact Registry repo path (default: wordpack/backend)
-  --image-tag <tag>          Optional assertion; must equal the checked-out commit SHA
-  --build-arg KEY=VALUE      Additional docker build arg (repeatable)
-  --build-service-account <email>
-                              Dedicated Cloud Build service-account email (required for builds)
+  --image-uri <uri>          Required FQDN@sha256:<64 hex> image from the target project/repo
   --env-file <path>          Explicit env file (default: .env.deploy or .env)
   --run-timeout <duration>   Cloud Run request timeout, e.g. 360s, 10m (default: use existing service setting)
   --min-instances <count>    Cloud Run minimum instances, e.g. 0, 1, default (default: keep current)
@@ -49,9 +46,8 @@ Options:
   --traffic-tag <tag>        Tag for a no-traffic candidate revision
   --generate-secret          Generate SESSION_SECRET_KEY via openssl if missing
   --secret-length <bytes>    Byte size for openssl rand -base64 (default: 48)
-  --machine-type <type>      Cloud Build machine type (default: e2-medium)
-  --timeout <duration>       Cloud Build timeout, e.g. 30m
-  --dry-run                  Validate config only (skip gcloud build/deploy)
+  --validate-in-image        Pull the exact image and validate settings inside it
+  --dry-run                  Validate config only (skip gcloud deploy)
   -h, --help                 Show this help
 USAGE
 }
@@ -116,36 +112,28 @@ escape_yaml_value() {
 ENV_FILE=""
 PROJECT_ID_ARG=""
 REGION_ARG=""
-BUILD_SERVICE_ACCOUNT_ARG=""
 SERVICE_NAME="wordpack-backend"
 ARTIFACT_REPOSITORY="wordpack/backend"
-IMAGE_TAG=""
-IMAGE_TAG_ARG=""
+IMAGE_URI_ARG=""
 SECRET_LENGTH=48
 GENERATE_SECRET=false
+VALIDATE_IN_IMAGE=false
 DRY_RUN=false
-MACHINE_TYPE="e2-medium"
-BUILD_TIMEOUT="30m"
 RUN_TIMEOUT_ARG=""
 MIN_INSTANCES_ARG=""
 NO_CPU_THROTTLING_ARG=""
 NO_TRAFFIC=false
 TRAFFIC_TAG=""
-declare -a EXTRA_BUILD_ARGS=()
 declare -a CONFIG_PYTHON_CMD=()
 
 declare -A DEPLOY_ENV_KEYS=()
-declare -a IGNORE_DEPLOY_KEYS=(PROJECT_ID REGION CLOUD_RUN_SERVICE ARTIFACT_REPOSITORY IMAGE_TAG IMAGE_TAG_ARG GIT_SHA BUILD_SERVICE_ACCOUNT GCP_BUILD_SERVICE_ACCOUNT MACHINE_TYPE BUILD_TIMEOUT CLOUD_RUN_TIMEOUT CLOUD_RUN_MIN_INSTANCES CLOUD_RUN_NO_CPU_THROTTLING)
+declare -a IGNORE_DEPLOY_KEYS=(PROJECT_ID REGION CLOUD_RUN_SERVICE ARTIFACT_REPOSITORY IMAGE_URI IMAGE_URI_ARG IMAGE_DIGEST GIT_SHA CLOUD_RUN_TIMEOUT CLOUD_RUN_MIN_INSTANCES CLOUD_RUN_NO_CPU_THROTTLING)
 declare -a REQUIRED_DEPLOY_KEYS=(ADMIN_EMAIL_ALLOWLIST SESSION_SECRET_KEY CORS_ALLOWED_ORIGINS TRUSTED_PROXY_IPS ALLOWED_HOSTS)
 GCLOUD_CMD_CHECKED=false
-GENERATED_BUILDCONFIG=""
 ENV_VARS_FILE=""
 
 cleanup_temp_files() {
   local previous_status=$?
-  if [[ -n "${GENERATED_BUILDCONFIG:-}" && -f "$GENERATED_BUILDCONFIG" ]]; then
-    rm -f "$GENERATED_BUILDCONFIG" || true
-  fi
   if [[ -n "${ENV_VARS_FILE:-}" && -f "$ENV_VARS_FILE" ]]; then
     rm -f "$ENV_VARS_FILE" || true
   fi
@@ -211,8 +199,9 @@ while [[ $# -gt 0 ]]; do
       ARTIFACT_REPOSITORY="$2"
       shift 2
       ;;
-    --image-tag)
-      IMAGE_TAG_ARG="$2"
+    --image-uri)
+      [[ $# -ge 2 && -n "$2" ]] || { err "--image-uri requires a non-empty value"; exit 1; }
+      IMAGE_URI_ARG="$2"
       shift 2
       ;;
     --env-file)
@@ -239,14 +228,6 @@ while [[ $# -gt 0 ]]; do
       TRAFFIC_TAG="$2"
       shift 2
       ;;
-    --build-arg)
-      EXTRA_BUILD_ARGS+=("$2")
-      shift 2
-      ;;
-    --build-service-account)
-      BUILD_SERVICE_ACCOUNT_ARG="$2"
-      shift 2
-      ;;
     --generate-secret)
       GENERATE_SECRET=true
       shift 1
@@ -255,13 +236,9 @@ while [[ $# -gt 0 ]]; do
       SECRET_LENGTH="$2"
       shift 2
       ;;
-    --machine-type)
-      MACHINE_TYPE="$2"
-      shift 2
-      ;;
-    --timeout)
-      BUILD_TIMEOUT="$2"
-      shift 2
+    --validate-in-image)
+      VALIDATE_IN_IMAGE=true
+      shift 1
       ;;
     --dry-run)
       DRY_RUN=true
@@ -278,6 +255,11 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+if [[ -z "$IMAGE_URI_ARG" ]]; then
+  err "--image-uri is required and must reference an immutable image digest"
+  exit 1
+fi
 
 # どの env ファイルを使うか決める。
 # 明示指定がなければ、まず `.env.deploy`、無ければ `.env` を探します。
@@ -366,6 +348,14 @@ if [[ ! "$PROJECT_ID" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
   err "PROJECT_ID must be a valid Google Cloud project ID"
   exit 1
 fi
+if [[ ! "$REGION" =~ ^[a-z0-9]+(-[a-z0-9]+)*$ ]]; then
+  err "REGION must be a valid Artifact Registry location"
+  exit 1
+fi
+if [[ ! "$ARTIFACT_REPOSITORY" =~ ^[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)*$ ]]; then
+  err "ARTIFACT_REPOSITORY must be a valid Artifact Registry image path"
+  exit 1
+fi
 
 add_env_key "ENVIRONMENT"
 add_env_key "ADMIN_EMAIL_ALLOWLIST"
@@ -421,14 +411,21 @@ if [[ ! "$CHECKED_OUT_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
   err "Could not resolve the checked-out commit SHA"
   exit 1
 fi
-if [[ -n "$IMAGE_TAG_ARG" && "$IMAGE_TAG_ARG" != "$CHECKED_OUT_SHA" ]]; then
-  err "--image-tag must equal the checked-out commit SHA"
+# --image-uri は build helper が比較済みの immutable digest に限定し、
+# project / region / Artifact Registry image path がこの invocation と一致するかを再検証する。
+EXPECTED_IMAGE_NAME="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}"
+if [[ "$IMAGE_URI_ARG" != "$EXPECTED_IMAGE_NAME@"* ]]; then
+  err "--image-uri must use the requested project, region, and artifact repository"
   exit 1
 fi
-# Image tag と GIT_SHA は env file / 外部環境変数を信頼せず、checkout済みHEADを正本にする。
-IMAGE_TAG="$CHECKED_OUT_SHA"
-IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT_ID}/${ARTIFACT_REPOSITORY}:${IMAGE_TAG}"
-DEPLOYMENT_VERSION="${DEPLOYMENT_VERSION:-$IMAGE_TAG}"
+IMAGE_DIGEST="${IMAGE_URI_ARG##*@}"
+if [[ ! "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ || "$IMAGE_URI_ARG" != "$EXPECTED_IMAGE_NAME@$IMAGE_DIGEST" ]]; then
+  err "--image-uri must be a fully-qualified image URI ending in @sha256:<64 lowercase hex>"
+  exit 1
+fi
+IMAGE_URI="$IMAGE_URI_ARG"
+# GIT_SHA と deployment marker の fallback は env file / 外部入力ではなく checkout済みHEADを正本にする。
+DEPLOYMENT_VERSION="${DEPLOYMENT_VERSION:-$CHECKED_OUT_SHA}"
 if [[ ! "$DEPLOYMENT_VERSION" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$ ]]; then
   err "DEPLOYMENT_VERSION must use 1-128 URL-safe marker characters"
   exit 1
@@ -440,34 +437,40 @@ export GIT_SHA
 add_env_key "GIT_SHA"
 
 # Python 側の設定（Pydantic モデル）を一度ロードして、値が正しいかチェックします。
-# ここで失敗すれば Cloud Build へ進まないため、「壊れた設定で本番デプロイ」は防げます。
-require_cmd python
-select_config_python_cmd
-log "Validating backend settings via ${CONFIG_PYTHON_CMD[*]} -m apps.backend.backend.config"
-PYTHONPATH="$REPO_ROOT" "${CONFIG_PYTHON_CMD[@]}" -m apps.backend.backend.config >/dev/null
-log "Backend configuration validated successfully"
-
-BUILD_SA="$BUILD_SERVICE_ACCOUNT_ARG"
-if [[ -n "$BUILD_SA" ]]; then
-  if [[ ! "$BUILD_SA" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]@${PROJECT_ID}\.iam\.gserviceaccount\.com$ ]]; then
-    err "--build-service-account must be a service-account email in PROJECT_ID's project"
+# production workflow は同じ digest のコンテナ内部で検証し、ホスト側の依存関係に
+# 依存しないようにします。CI の従来 dry-run は既定のホスト検証を維持します。
+if [[ "$VALIDATE_IN_IMAGE" == true ]]; then
+  require_cmd docker
+  if ! docker pull --quiet "$IMAGE_URI" >/dev/null 2>&1; then
+    err "Could not pull the exact image for in-image validation"
     exit 1
   fi
-elif [[ "$DRY_RUN" != true ]]; then
-  err "--build-service-account is required for Cloud Build submissions"
-  exit 1
+  if ! docker run --rm \
+    --env-file "$ENV_FILE" \
+    --env "PROJECT_ID=$PROJECT_ID" \
+    --env "GCP_PROJECT_ID=$PROJECT_ID" \
+    --env "FIRESTORE_PROJECT_ID=$_FIRESTORE_PROJECT" \
+    --env "GIT_SHA=$GIT_SHA" \
+    --env "DEPLOYMENT_VERSION=$DEPLOYMENT_VERSION" \
+    "$IMAGE_URI" \
+    python -m apps.backend.backend.config >/dev/null 2>&1; then
+    err "Backend configuration validation failed inside the exact image"
+    exit 1
+  fi
+  log "Backend configuration validated inside the exact image digest"
+else
+  require_cmd python
+  select_config_python_cmd
+  log "Validating backend settings via ${CONFIG_PYTHON_CMD[*]} -m apps.backend.backend.config"
+  PYTHONPATH="$REPO_ROOT" "${CONFIG_PYTHON_CMD[@]}" -m apps.backend.backend.config >/dev/null
+  log "Backend configuration validated successfully"
 fi
 
-# dry-run モードでは Cloud Build / Cloud Run には触らず、
+# dry-run モードでは Cloud Run には触らず、
 # 「設定読み込み〜バリデーション」までを実行して即終了します。
 if [[ "$DRY_RUN" == true ]]; then
-  log "Dry run mode: skipping gcloud build/deploy"
+  log "Dry run mode: skipping gcloud deploy"
   log "Prepared image URI: $IMAGE_URI"
-  if [[ -n "$BUILD_SA" ]]; then
-    log "Prepared Cloud Build service-account resource: projects/${PROJECT_ID}/serviceAccounts/${BUILD_SA}"
-  else
-    log "Prepared Cloud Build service-account resource: <not provided; dry-run skips build submission>"
-  fi
   if [[ -n "$MIN_INSTANCES" ]]; then
     log "Prepared Cloud Run minimum instances: $MIN_INSTANCES"
   fi
@@ -488,60 +491,6 @@ else
 fi
 
 ensure_gcloud
-
-# Cloud Build にソースコードを送って Docker イメージをビルドします。
-# IMAGE_URI には「リージョン + Artifact Registry + イメージタグ」が入っています。
-log "Submitting build to Cloud Build: $IMAGE_URI"
-# Cloud Build では repo-root の Dockerfile がアップロード対象から外れてしまうケースがあるため、
-# `--tag` による暗黙ビルド（Dockerfile 固定）ではなく、Dockerfile.backend を明示した構成でビルドします。
-# これにより "Dockerfile: no such file or directory" の失敗を回避します。
-BUILDCONFIG_PATH="${REPO_ROOT}/cloudbuild.backend.yaml"
-if [[ ! -f "$BUILDCONFIG_PATH" ]]; then
-  err "Cloud Build config not found: $BUILDCONFIG_PATH"
-  exit 1
-fi
-
-SUBSTITUTIONS=("_IMAGE_URI=${IMAGE_URI}")
-CONFIG_TO_USE="$BUILDCONFIG_PATH"
-
-if [[ ${#EXTRA_BUILD_ARGS[@]} -gt 0 ]]; then
-  # --build-arg を指定された場合は Cloud Build config を一時生成して docker build args に反映します。
-  # macOS の mktemp は XXXXXX を template の末尾に要求するため、拡張子は付けずに生成する。
-  GENERATED_BUILDCONFIG="$(mktemp "${REPO_ROOT}/.cloudbuild.backend.XXXXXX")"
-  {
-    echo "steps:"
-    echo "  - name: gcr.io/cloud-builders/docker"
-    echo "    args:"
-    echo "      - build"
-    echo "      - -f"
-    echo "      - Dockerfile.backend"
-    echo "      - -t"
-    echo "      - \$_IMAGE_URI"
-    for build_arg in "${EXTRA_BUILD_ARGS[@]}"; do
-      echo "      - --build-arg"
-      echo "      - ${build_arg}"
-    done
-    echo "      - ."
-    echo ""
-    echo "images:"
-    echo "  - \$_IMAGE_URI"
-    echo ""
-    echo "options:"
-    echo "  logging: CLOUD_LOGGING_ONLY"
-  } >"$GENERATED_BUILDCONFIG"
-  CONFIG_TO_USE="$GENERATED_BUILDCONFIG"
-fi
-
-BUILD_CMD=(
-  gcloud builds submit
-  --project "$PROJECT_ID"
-  "--service-account=projects/${PROJECT_ID}/serviceAccounts/${BUILD_SA}"
-  --config "$CONFIG_TO_USE"
-  --substitutions "$(IFS=,; echo "${SUBSTITUTIONS[*]}")"
-  --machine-type "$MACHINE_TYPE"
-  --timeout "$BUILD_TIMEOUT"
-)
-"${BUILD_CMD[@]}"
 
 log "Preparing environment variable file for Cloud Run"
 # Cloud Run の `--set-env-vars` はカンマ区切りで扱いが難しいため、
