@@ -7,7 +7,7 @@
 - backend は `Dockerfile.backend` から既存の production workflow の build job で一度だけビルドし、検証済みの Artifact Registry digestを Cloud Run にデプロイします。
 - frontend は React + Vite の build artifact を Firebase Hosting API で配置します。
 - Firestore の複合インデックスと single-field override は `firestore.indexes.json` を同期します。既定の `gcloud` 経路は gcloud の認証情報で Firestore Admin API を直接呼び、Firebase CLI と `gcloud alpha` component には依存しません。
-- GitHub Actions の本番デプロイは `CI` の完了を受ける `workflow_run` 経路と、対象 SHA を明示する `workflow_dispatch` 経路だけです。自動経路は `conclusion=success`、`event=push`、`head_branch=main` を満たし、対象 SHA の一致を検証します。
+- GitHub Actions の本番デプロイは、`CI` の `quality_gate` 後に同じrun内で呼び出す `workflow_call` 経路と、対象 SHA を明示する `workflow_dispatch` 経路だけです。自動経路は呼び出し元runの `name=CI`、`event=push`、`head_branch=main`、対象 SHA、実行中の `Quality gate (selected checks)` 成功を照合します。PR / develop push からは呼び出しません。
 - GitHub Actions から Google Cloud への認証は Workload Identity Federation（WIF）を使い、長期 service account key を workflow へ渡しません。deploy と authenticated preflight は別 provider とし、job ごとの OIDC 権限だけを付与します。
 - 静的なデプロイ設定検証は `CI` の Cloud Run config guard などで行い、重複する dry-run workflow は持ちません。認証済み production deploy preflight は schedule と main ref の手動実行だけで、信頼済み main code の read-only probe を行います。
 
@@ -303,14 +303,14 @@ firebase deploy --only hosting --project <firebase-project-id>
 
 本番自動デプロイは `.github/workflows/deploy-production.yml` が担当します。
 
-- `CI` workflow の完了を受けて起動します。自動経路は completed event の `name=CI`、`conclusion=success`、`event=push`、`head_branch=main` を検証し、`workflow_run.head_sha` をそのまま対象にします。
-- CI workflow identity は固定 path `.github/workflows/ci.yml` と、live repository の API で解決した immutable workflow ID `187172373` を照合します。同一runの詳細と jobs API で canonical `Quality gate`（現行表示名: `Quality gate (selected checks)`）の completed/success も確認します。workflowを再作成してIDが変わった場合は、この定数を明示的に更新してから再開します。
+- `CI` の `quality_gate` 成功後、`ci.yml` の `deploy_production` job が local reusable workflow を `target_sha=${{ github.sha }}`、`ci_run_id=${{ github.run_id }}` で呼び出します。必要な `CLOUD_RUN_ENV_FILE_BASE64` は workflow_call へ明示的に渡します。called workflow は caller の ref / SHA / workflow 名と、GitHub API の run metadata（`name=CI`、`event=push`、`head_branch=main`、実行中）を照合し、同じrunの jobs API で canonical `Quality gate (selected checks)` の completed/success を再確認します。これにより production jobs は CI と同じ Actions check suite に表示され、別の `workflow_run` deploy は作られません。
+- CI workflow identity は固定 path `.github/workflows/ci.yml` と、live repository の API で解決した immutable workflow ID `187172373` を照合します。workflowを再作成してIDが変わった場合は、この定数を明示的に更新してから再開します。
 - 手動の break-glass 実行は trusted `main` ref からのみ起動でき、必須入力 `target_sha` と任意の boolean input `identity_exchange_only` を受け取ります。completed状態の候補runをGitHub APIで取得し、同一 SHA の `CI` 成功・push・main runを1件確定した後、自動経路と同じrun詳細／Quality gate検証を通過してから後続 job へ進みます。
 - `identity_exchange_only=true` の手動実行は `verify-target` を必ず通過した後、`production` environment の `verify-deploy-identity` で deploy 用 WIF の入力検証と、credentials fileを作らない pinned auth の `token_format: access_token` によるOIDC→Google access token exchangeだけを確認します。checkout、build、production env materialize、deploy、API write、traffic 操作は行わず、通常の deploy job と cutover guard は実行しません。
 - 通常の自動／手動 deploy は `authorize-deploy-cutover` が repository variable `PRODUCTION_DEPLOY_ENABLED` の文字列 `true` を fail-closed に確認した場合だけ進みます。通常の production 経路を許可するまで `verify-target` の CI / Quality gate 契約は変わりません。
 - checkout は検証済み対象 SHA に固定し、checkout 後の `git rev-parse HEAD` との一致を assert します。
-- 自動／手動の全 production release は単一の stable concurrency group に入り、`cancel-in-progress=false` でFIFO待機します。candidate tag、traffic、rollback操作を異なるSHA間で並行させません。
-- PR では本番 deploy job を作りません。
+- 自動／手動の全 production release は、旧 `workflow_run` と評価済み group が一致する固定の `deploy-production-Deploy to production` concurrency group に入り、`cancel-in-progress=false` です。同一 group では実行中を1件、pendingを最大1件だけ保持し、新しい queued run が古い pending run を置き換えます。進行中の production deploy は取消されません。CI 側は PR / develop の stale run を取消できますが、main push の CI run は run ID 固有 group のため相互に取消しません。candidate tag、traffic、rollback操作を同時に進めません。
+- PR / develop push では `deploy_production` jobをskipし、本番 deploy jobを作りません。
 - Cloud Run は traffic 0% の候補作成、tag URL の health check、10% canary、60 秒の継続確認、100% 昇格の順に進みます。canary 失敗時は直前の traffic 配分へ自動復旧します。
 - Cloud Run の minimum instances は repository variable `CLOUD_RUN_MIN_INSTANCES` で上書きできます。未設定時は紹介用 URL の初回体験を優先して `1` を使います。費用優先へ戻す場合は `0` を設定します。
 - Reader文章インポートなどレスポンス後も継続する非同期ジョブのため、デプロイ環境ファイルでは `CLOUD_RUN_NO_CPU_THROTTLING=true` を設定します。`false` のままでは202応答後にバックグラウンド処理が停止し得ます。
@@ -337,7 +337,7 @@ repository secret は次のとおりです。
 
 `PRODUCTION_DEPLOY_ENABLED` は初期値 `false` にします。main へこの変更を反映した後、`identity_exchange_only=true` の手動実行と Production deploy preflight が成功し、deploy service account の IAM disposition が完了するまで `true` に変更しません。これらの外部設定と確認が揃うまでは、通常の自動／手動 production deploy は cutover guard で停止します。
 
-`GCP_BUILD_SERVICE_ACCOUNT` は `build-backend-artifact` job だけが読み、`scripts/build_backend_artifact.sh` が `projects/<PROJECT_ID>/serviceAccounts/<GCP_BUILD_SERVICE_ACCOUNT>` 形式で一度だけのCloud Build submitへ渡します。helperは `git archive TARGET_SHA` のprivate temporary contextだけを送ります。identity-only、authenticated preflight、通常の PR/CI job には build service account を渡しません。通常の PR/CI job には OIDC 権限を渡さず、identity-only と preflight の OIDC はそれぞれのread-only token exchange / probeに限定します。
+`GCP_BUILD_SERVICE_ACCOUNT` は `build-backend-artifact` job だけが読み、`scripts/build_backend_artifact.sh` が `projects/<PROJECT_ID>/serviceAccounts/<GCP_BUILD_SERVICE_ACCOUNT>` 形式で一度だけのCloud Build submitへ渡します。helperは `git archive TARGET_SHA` のprivate temporary contextだけを送ります。identity-only、authenticated preflight、通常の PR/CI job には build service account を渡しません。通常の PR と deploy 以外の CI job には OIDC 権限を渡さず、CI の `deploy_production` caller jobには called jobsが必要とする `actions:read`、`id-token:write`、`attestations:write`、`contents:read` の unionだけを渡します。identity-only と preflight の OIDC はそれぞれのread-only token exchange / probeに限定します。
 
 `GCP_SA_KEY` と `GCP_SA_PROJECT_ID` は移行後の workflow から参照しません。旧 key は WIF 経路の検証が完了するまで無効化・削除せず、workflow に自動 fallback を追加しないでください。
 
@@ -355,16 +355,46 @@ repository secret は次のとおりです。
    attribute.workflow_ref=assertion.workflow_ref
    ```
 
-   deploy provider にだけ `attribute.environment=assertion.environment` を追加します。authenticated preflight job は GitHub environment を参照しないため、preflight provider では存在しない `environment` claim を mapping しません。
+   deploy provider にだけ `attribute.environment=assertion.environment` と optional な `attribute.job_workflow_ref='job_workflow_ref' in assertion ? assertion.job_workflow_ref : ''` を追加します。manual direct token には `job_workflow_ref` claim がないため空文字へ fallbackし、CI reusable auto の tokenだけ mapped attributeを exact照合します。authenticated preflight job は GitHub environment を参照しないため、preflight provider では存在しない `environment` claim を mapping しません。
 
 3. provider の attribute condition は repository 名だけに頼らず、numeric ID、main ref、workflow identity へ限定します。production deploy provider の例は次のとおりです。
 
    ```text
    assertion.repository_id == '<REPOSITORY_ID>' &&
    assertion.repository_owner_id == '<REPOSITORY_OWNER_ID>' &&
+   assertion.ref == 'refs/heads/main' &&
+   assertion.environment == 'production'
+   ```
+
+   手動 dispatch の deploy job は `workflow_ref` が deploy workflow 自身です。CI の reusable auto は caller の `workflow_ref` と called job の `job_workflow_ref` をともに固定します。
+
+   ```text
+   # manual dispatch
    assertion.workflow_ref == 'stillshore-chirp/wordpack-for-english/.github/workflows/deploy-production.yml@refs/heads/main' &&
    assertion.ref == 'refs/heads/main' &&
    assertion.environment == 'production'
+
+   # CI workflow_call
+   assertion.workflow_ref == 'stillshore-chirp/wordpack-for-english/.github/workflows/ci.yml@refs/heads/main' &&
+   attribute.job_workflow_ref == 'stillshore-chirp/wordpack-for-english/.github/workflows/deploy-production.yml@refs/heads/main' &&
+   assertion.ref == 'refs/heads/main' &&
+   assertion.environment == 'production'
+   ```
+
+   deploy provider の実際の condition は上記二経路のいずれかを許可し、repository ID / owner ID、main ref、production environment を両経路へ共通に要求します。
+
+   ```text
+   assertion.repository_id == '<REPOSITORY_ID>' &&
+   assertion.repository_owner_id == '<REPOSITORY_OWNER_ID>' &&
+   assertion.ref == 'refs/heads/main' &&
+   assertion.environment == 'production' &&
+   (
+     assertion.workflow_ref == 'stillshore-chirp/wordpack-for-english/.github/workflows/deploy-production.yml@refs/heads/main' ||
+     (
+       assertion.workflow_ref == 'stillshore-chirp/wordpack-for-english/.github/workflows/ci.yml@refs/heads/main' &&
+       attribute.job_workflow_ref == 'stillshore-chirp/wordpack-for-english/.github/workflows/deploy-production.yml@refs/heads/main'
+     )
+   )
    ```
 
    authenticated preflight provider は `environment` claim を要求せず、workflow identity までを次のように限定します。

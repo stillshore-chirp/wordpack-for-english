@@ -11,7 +11,9 @@ on:
       - develop
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  # Main runs use a unique group so a newer push cannot replace an in-progress deploy.
+  # PR/develop runs retain a ref group and may cancel stale work.
+  group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('ci-main-{0}', github.run_id) || format('ci-{0}-{1}', github.workflow, github.ref) }}
   cancel-in-progress: true
 
 permissions:
@@ -499,7 +501,7 @@ jobs:
         run: python -c 'import pathlib,yaml; [yaml.safe_load(p.read_text(encoding="utf-8")) for p in pathlib.Path(".github/workflows").glob("*.y*ml")]'
 
       - name: Run workflow and classifier contract tests
-        run: python -m pytest -q --no-cov tests/test_github_actions_branch_policy.py tests/test_verification_inputs.py tests/test_scheduled_maintenance_workflow.py
+        run: python -m pytest -q --no-cov tests/test_github_actions_branch_policy.py tests/test_llmops_ci_policy.py tests/test_verification_inputs.py tests/test_scheduled_maintenance_workflow.py
 
   playwright_smoke:
     name: Playwright smoke (selected flows)
@@ -768,3 +770,19 @@ jobs:
           check_selected "${WORKFLOW_SELECTED}" "${WORKFLOW_RESULT}" workflow_contract
           check_selected "${SMOKE_SELECTED}" "${SMOKE_RESULT}" playwright_smoke
           check_selected "${VISUAL_SELECTED}" "${VISUAL_RESULT}" playwright_visual
+
+  deploy_production:
+    name: Deploy production
+    needs: quality_gate
+    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.quality_gate.result == 'success' }}
+    uses: ./.github/workflows/deploy-production.yml
+    with:
+      target_sha: ${{ github.sha }}
+      ci_run_id: ${{ github.run_id }}
+    secrets:
+      CLOUD_RUN_ENV_FILE_BASE64: ${{ secrets.CLOUD_RUN_ENV_FILE_BASE64 }}
+    permissions:
+      contents: read
+      actions: read
+      id-token: write
+      attestations: write
