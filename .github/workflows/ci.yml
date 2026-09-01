@@ -774,7 +774,7 @@ jobs:
   deploy_production:
     name: Deploy production
     needs: quality_gate
-    if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.quality_gate.result == 'success' }}
+    if: ${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && needs.quality_gate.result == 'success' }}
     uses: ./.github/workflows/deploy-production.yml
     with:
       target_sha: ${{ github.sha }}
