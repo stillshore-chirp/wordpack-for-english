@@ -10,6 +10,13 @@ import subprocess
 
 import yaml
 
+
+BACKEND_DELIVERY_PREDICATE_TYPE = (
+    "https://github.com/stillshore-chirp/wordpack-for-english/"
+    "attestations/backend-delivery/v1"
+)
+SPDX_PREDICATE_TYPE = "https://spdx.dev/Document/v2.3"
+
 def test_cloud_build_has_backend_config_and_deploy_script_uses_it() -> None:
     """
     Contract: Cloud Build must not rely on a repo-root Dockerfile being present in the remote workspace.
@@ -1285,7 +1292,7 @@ def _run_attestation_verifier(
                 {
                     "verificationResult": {
                         "statement": {
-                            "predicateType": "https://slsa.dev/provenance/v1",
+                            "predicateType": BACKEND_DELIVERY_PREDICATE_TYPE,
                             "subject": [{"name": image_name, "digest": {"sha256": attested_digest}}],
                             "predicate": {
                                 "buildDefinition": {
@@ -1323,7 +1330,7 @@ def _run_attestation_verifier(
                 {
                     "verificationResult": {
                         "statement": {
-                            "predicateType": "https://spdx.dev/Document/v2.3",
+                            "predicateType": SPDX_PREDICATE_TYPE,
                             "subject": [{"name": image_name, "digest": {"sha256": attested_digest}}],
                             "predicate": {"spdxVersion": "SPDX-2.3"},
                         }
@@ -1341,7 +1348,9 @@ def _run_attestation_verifier(
         "#!/usr/bin/env bash\n"
         "set -euo pipefail\n"
         "printf '%s\\n' \"$*\" >> \"${GH_LOG}\"\n"
-        "if [[ \"$*\" == *'https://slsa.dev/provenance/v1'* ]]; then\n"
+        "if [[ \"$*\" == *'"
+        + BACKEND_DELIVERY_PREDICATE_TYPE
+        + "'* ]]; then\n"
         "  cat \"${PROVENANCE_ATTESTATION}\"\n"
         "else\n"
         "  cat \"${SBOM_ATTESTATION}\"\n"
@@ -1397,6 +1406,9 @@ def test_attestation_verifier_accepts_matching_provenance_and_sbom(tmp_path: Pat
     calls = (tmp_path / "gh.log").read_text(encoding="utf-8")
     assert calls.count("attestation verify") == 2
     assert "--deny-self-hosted-runners" in calls
+    assert f"--predicate-type {BACKEND_DELIVERY_PREDICATE_TYPE}" in calls
+    assert f"--predicate-type {SPDX_PREDICATE_TYPE}" in calls
+    assert "https://slsa.dev/provenance/v1" not in calls
 
 
 def test_attestation_verifier_separates_source_and_signer_digests_from_artifact_target(tmp_path: Path) -> None:

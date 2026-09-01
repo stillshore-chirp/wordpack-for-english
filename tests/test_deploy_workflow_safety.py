@@ -8,6 +8,12 @@ import subprocess
 import yaml
 
 
+BACKEND_DELIVERY_PREDICATE_TYPE = (
+    "https://github.com/stillshore-chirp/wordpack-for-english/"
+    "attestations/backend-delivery/v1"
+)
+
+
 def _read(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
@@ -307,6 +313,13 @@ def test_backend_artifact_is_built_once_checked_and_promoted_by_digest() -> None
     assert "unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN" in "\n".join(rendered_attest)
     assert 'spdxVersion == "SPDX-2.3"' in "\n".join(rendered_attest)
     assert "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" in "\n".join(rendered_attest)
+    delivery_attest_step = next(
+        step for step in attest_steps if step.get("name") == "Attest backend delivery provenance"
+    )
+    delivery_attest_with = delivery_attest_step.get("with")
+    assert isinstance(delivery_attest_with, dict)
+    assert delivery_attest_with.get("predicate-type") == BACKEND_DELIVERY_PREDICATE_TYPE
+    assert delivery_attest_with.get("predicate-type") != "https://slsa.dev/provenance/v1"
 
     verify_index = next(index for index, text in enumerate(rendered_deploy) if "Verify backend artifact attestations after auth" in text)
     auth_index = next(index for index, text in enumerate(rendered_deploy) if "Authenticate to Google Cloud" in text)
@@ -327,6 +340,9 @@ def test_backend_artifact_is_built_once_checked_and_promoted_by_digest() -> None
     assert "jq -e" in verify_helper
     for field in ("targetSha", "sourceRepository", "builderWorkflow", "builder", "digest", "nativeProvenanceSnapshotSha256"):
         assert field in verify_helper
+    assert f'DELIVERY_PREDICATE_TYPE="{BACKEND_DELIVERY_PREDICATE_TYPE}"' in verify_helper
+    assert 'verify_attestation "$DELIVERY_PREDICATE_TYPE"' in verify_helper
+    assert 'https://slsa.dev/provenance/v1' not in verify_helper
     assert 'BUILD_TYPE="${BUILDER_WORKFLOW}#backend-cloud-build-v1"' in verify_helper
     assert 'BUILDER_ID="${BUILDER_WORKFLOW}"' in verify_helper
     assert 'UNDERLYING_BUILDER="https://cloudbuild.googleapis.com/GoogleHostedWorker"' in verify_helper
