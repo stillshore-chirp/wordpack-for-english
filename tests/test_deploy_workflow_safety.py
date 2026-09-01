@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
+import subprocess
 
 import yaml
 
@@ -344,6 +346,140 @@ def test_backend_artifact_is_built_once_checked_and_promoted_by_digest() -> None
     assert "gcloud builds submit" not in deploy_script
     assert "make release-cloud-run" in workflow
     assert "VALIDATE_IN_IMAGE=true" in workflow
+
+
+def test_backend_artifact_handoff_tag_and_checksum_fail_closed_before_load(tmp_path: Path) -> None:
+    """The cross-job archive uses a tag and rejects a changed archive before Docker load."""
+    workflow, _ = _deploy_job_steps()
+    parsed = yaml.safe_load(workflow)
+    assert isinstance(parsed, dict)
+    jobs = parsed["jobs"]
+    build = jobs["build-backend-artifact"]
+    attest = jobs["attest-backend-artifact"]
+    deploy = jobs["deploy"]
+
+    archive_step = next(step for step in build["steps"] if step.get("id") == "archive-backend")
+    archive_run = str(archive_step["run"])
+    load_step = next(step for step in attest["steps"] if step.get("name") == "Load exact backend image")
+    load_run = str(load_step["run"])
+    syft_step = next(step for step in attest["steps"] if step.get("name") == "Download and run checksum-pinned Syft")
+    syft_run = str(syft_step["run"])
+    attest_run = "\n".join(str(step.get("run", "")) for step in attest["steps"])
+
+    assert build["outputs"]["handoff_image"] == "${{ steps.archive-backend.outputs.handoff_image }}"
+    assert build["outputs"]["handoff_archive_sha256"] == "${{ steps.archive-backend.outputs.archive_sha256 }}"
+    assert 'HANDOFF_IMAGE="wordpack-backend-handoff:${TARGET_SHA}"' in archive_run
+    assert 'docker tag "${IMAGE_URI}" "${HANDOFF_IMAGE}"' in archive_run
+    assert 'if ! source_image_id="$(docker image inspect --format=\'{{.Id}}\' "${IMAGE_URI}" 2>/dev/null)"; then' in archive_run
+    assert '::error::Could not inspect the verified source image.' in archive_run
+    assert 'handoff_image_id="$(docker image inspect --format=\'{{.Id}}\' "${HANDOFF_IMAGE}")"' in archive_run
+    assert '[[ "${handoff_image_id}" == "${source_image_id}" ]]' in archive_run
+    assert 'docker save "${HANDOFF_IMAGE}"' in archive_run
+    assert 'docker save "${IMAGE_URI}"' not in archive_run
+    assert 'archive_sha256="$(sha256sum "${ARCHIVE_PATH}"' in archive_run
+    assert 'archive_sha256' in archive_run
+
+    assert 'EXPECTED_ARCHIVE_SHA256: ${{ needs.build-backend-artifact.outputs.handoff_archive_sha256 }}' in workflow
+    assert load_step["env"]["HANDOFF_IMAGE"] == "${{ needs.build-backend-artifact.outputs.handoff_image }}"
+    assert 'printf \'%s  %s\\n\' "${EXPECTED_ARCHIVE_SHA256}" "${ARCHIVE_PATH}"' in load_run
+    assert 'sha256sum --check --strict' in load_run
+    assert load_run.index('sha256sum --check --strict') < load_run.index('docker load')
+    assert 'docker image inspect --format=\'{{json .RepoTags}}\' "${HANDOFF_IMAGE}"' in load_run
+    assert 'RepoDigests' not in load_run
+    assert 'IMAGE_URI' not in load_run
+    assert 'docker:${HANDOFF_IMAGE}' in syft_run
+    assert 'docker:${IMAGE_URI}' not in syft_run
+    assert "docker pull" not in attest_run
+    assert "docker save" not in attest_run
+    assert "gcloud builds submit" not in attest_run
+
+    deploy_text = str(
+        next(
+            step
+            for step in deploy["steps"]
+            if step.get("name") == "Run production Cloud Run release"
+        )["run"]
+    )
+    assert 'IMAGE_URI: ${{ needs.build-backend-artifact.outputs.image_uri }}' in workflow
+    assert 'subject-digest: ${{ needs.build-backend-artifact.outputs.image_digest }}' in workflow
+    assert 'IMAGE_URI="${IMAGE_URI}"' in deploy_text
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    docker_log = tmp_path / "docker.log"
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "printf '%s\\n' \"$*\" >> \"${DOCKER_LOG}\"\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    archive_path = tmp_path / "backend-image.tar.zst"
+    archive_path.write_bytes(b"synthetic archive")
+    env = {
+        **os.environ,
+        "PATH": f"{fake_bin}:{os.environ['PATH']}",
+        "IMAGE_NAME": "asia-northeast1-docker.pkg.dev/ci-placeholder-project/wordpack/backend",
+        "TARGET_SHA": "a" * 40,
+        "HANDOFF_IMAGE": "wordpack-backend-handoff:" + "a" * 40,
+        "EXPECTED_ARCHIVE_SHA256": "0" * 64,
+        "ARCHIVE_PATH": str(archive_path),
+        "DOCKER_LOG": str(docker_log),
+    }
+    result = subprocess.run(
+        ["bash", "-c", load_run],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode != 0, result.stdout + result.stderr
+    assert not docker_log.exists() or "load" not in docker_log.read_text(encoding="utf-8")
+
+
+def test_backend_handoff_source_inspect_failure_is_sanitized(tmp_path: Path) -> None:
+    """A Docker inspect error cannot expose the registry image reference."""
+    workflow, _ = _deploy_job_steps()
+    parsed = yaml.safe_load(workflow)
+    assert isinstance(parsed, dict)
+    build = parsed["jobs"]["build-backend-artifact"]
+    archive_step = next(step for step in build["steps"] if step.get("id") == "archive-backend")
+    archive_run = str(archive_step["run"])
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "printf 'docker diagnostic contains %s\\n' \"$*\" >&2\n"
+        "exit 17\n",
+        encoding="utf-8",
+    )
+    fake_docker.chmod(0o755)
+    image_name = "asia-northeast1-docker.pkg.dev/ci-placeholder-project/wordpack/backend"
+    image_uri = image_name + "@sha256:" + "b" * 64
+    result = subprocess.run(
+        ["bash", "-c", archive_run],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "IMAGE_URI": image_uri,
+            "IMAGE_NAME": image_name,
+            "TARGET_SHA": "a" * 40,
+            "ARCHIVE_PATH": str(tmp_path / "backend-image.tar.zst"),
+            "GITHUB_OUTPUT": str(tmp_path / "github-output"),
+        },
+    )
+    combined_output = result.stdout + result.stderr
+    assert result.returncode != 0
+    assert "::error::Could not inspect the verified source image." in combined_output
+    assert image_uri not in combined_output
+    assert "docker diagnostic contains" not in combined_output
 
 
 def test_artifact_provenance_permissions_are_job_scoped_and_pr_free() -> None:
