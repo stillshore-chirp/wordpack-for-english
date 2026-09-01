@@ -650,7 +650,7 @@ jobs:
         with:
           subject-name: ${{ needs.build-backend-artifact.outputs.image_name }}
           subject-digest: ${{ needs.build-backend-artifact.outputs.image_digest }}
-          predicate-type: https://slsa.dev/provenance/v1
+          predicate-type: https://github.com/stillshore-chirp/wordpack-for-english/attestations/backend-delivery/v1
           predicate-path: backend-provenance.json
           push-to-registry: false
 

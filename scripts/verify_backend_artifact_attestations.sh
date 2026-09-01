@@ -29,7 +29,7 @@ Options:
   --native-provenance-snapshot-sha256 <digest>
                                 SHA-256 of the validated Cloud Build provenance JSON snapshot
   --builder-workflow <uri>      Exact production workflow identity
-  --provenance <path>           Local SLSA v1 predicate file
+  --provenance <path>           Local backend delivery predicate file
   --sbom <path>                 Local SPDX JSON file
   -h, --help                    Show this help
 USAGE
@@ -140,6 +140,8 @@ IMAGE_DIGEST="${IMAGE_URI##*@}"
 DIGEST_HEX="${IMAGE_DIGEST#sha256:}"
 SOURCE_REPOSITORY="https://github.com/${REPOSITORY}"
 SIGNER_WORKFLOW="${REPOSITORY}/.github/workflows/deploy-production.yml"
+DELIVERY_PREDICATE_TYPE="https://github.com/stillshore-chirp/wordpack-for-english/attestations/backend-delivery/v1"
+SBOM_PREDICATE_TYPE="https://spdx.dev/Document/v2.3"
 BUILD_TYPE="${BUILDER_WORKFLOW}#backend-cloud-build-v1"
 BUILDER_ID="${BUILDER_WORKFLOW}"
 UNDERLYING_BUILDER="https://cloudbuild.googleapis.com/GoogleHostedWorker"
@@ -201,10 +203,11 @@ verify_attestation() {
     fail "GitHub attestation verification failed"
   fi
 
-  if [[ "$predicate_type" == "https://slsa.dev/provenance/v1" ]]; then
+  if [[ "$predicate_type" == "$DELIVERY_PREDICATE_TYPE" ]]; then
     jq -e \
       --arg image_name "$IMAGE_NAME" \
       --arg digest "$DIGEST_HEX" \
+      --arg predicate_type "$predicate_type" \
       --arg repository "$SOURCE_REPOSITORY" \
       --arg target "$TARGET_SHA" \
       --arg workflow "$BUILDER_WORKFLOW" \
@@ -213,7 +216,7 @@ verify_attestation() {
       --arg underlying_builder "$UNDERLYING_BUILDER" \
       --arg native_snapshot "$NATIVE_PROVENANCE_SNAPSHOT_SHA256" \
       'any(.[]?;
-        .verificationResult.statement.predicateType == "https://slsa.dev/provenance/v1"
+        .verificationResult.statement.predicateType == $predicate_type
         and any(.verificationResult.statement.subject[]?;
           .name == $image_name and .digest.sha256 == $digest)
         and .verificationResult.statement.predicate.buildDefinition.externalParameters.sourceRepository == $repository
@@ -227,7 +230,7 @@ verify_attestation() {
           .uri == $repository and .digest.gitCommit == $target)
         and .verificationResult.statement.predicate.runDetails.builder.id == $builder)' \
       "$attestation_json" >/dev/null || fail "provenance attestation policy checks failed"
-  else
+  elif [[ "$predicate_type" == "$SBOM_PREDICATE_TYPE" ]]; then
     jq -e \
       --arg image_name "$IMAGE_NAME" \
       --arg digest "$DIGEST_HEX" \
@@ -237,8 +240,10 @@ verify_attestation() {
           .name == $image_name and .digest.sha256 == $digest)
         and .verificationResult.statement.predicate.spdxVersion == "SPDX-2.3")' \
       "$attestation_json" >/dev/null || fail "SPDX attestation policy checks failed"
+  else
+    fail "unsupported attestation predicate type"
   fi
 }
 
-verify_attestation "https://slsa.dev/provenance/v1"
-verify_attestation "https://spdx.dev/Document/v2.3"
+verify_attestation "$DELIVERY_PREDICATE_TYPE"
+verify_attestation "$SBOM_PREDICATE_TYPE"
