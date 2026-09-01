@@ -208,6 +208,69 @@ classify_cloud_build_submit_error() {
   printf '%s' "$category"
 }
 
+cloud_build_submit_stderr_matches() {
+  LC_ALL=C grep -Eqi -- "$1" "$SUBMIT_ERROR" 2>/dev/null
+}
+
+detect_cloud_build_submit_surfaces() {
+  local surfaces=""
+  if cloud_build_submit_stderr_matches 'service[[:space:]_-]*account|serviceaccounts|iam[.]service'; then
+    surfaces="${surfaces:+${surfaces},}service_account"
+  fi
+  if cloud_build_submit_stderr_matches 'CLOUD_LOGGING_ONLY|logging|logs?[[:space:]_-]*(bucket|configuration|mode)|cloud[[:space:]]+logging'; then
+    surfaces="${surfaces:+${surfaces},}logging"
+  fi
+  if cloud_build_submit_stderr_matches 'requested[[:space:]_-]*verify|requestedVerifyOption|verify[[:space:]_-]*(option|setting)|verification|verified'; then
+    surfaces="${surfaces:+${surfaces},}requested_verify"
+  fi
+  if cloud_build_submit_stderr_matches 'substitution|_IMAGE_URI|_SOURCE_REPOSITORY|_TARGET_SHA|_BUILDER_WORKFLOW'; then
+    surfaces="${surfaces:+${surfaces},}substitutions"
+  fi
+  if cloud_build_submit_stderr_matches '(^|[^[:alnum:]_])source([^[:alnum:]_]|$)|source[[:space:]_-]*(context|archive|upload|staging)|gcs|gs://'; then
+    surfaces="${surfaces:+${surfaces},}source"
+  fi
+  if cloud_build_submit_stderr_matches 'image(s)?|container[[:space:]_-]*(image|registry)|artifact[[:space:]_-]*registry|docker'; then
+    surfaces="${surfaces:+${surfaces},}images"
+  fi
+  if cloud_build_submit_stderr_matches 'step(s)?|build[[:space:]_-]*step|args'; then
+    surfaces="${surfaces:+${surfaces},}steps"
+  fi
+  if cloud_build_submit_stderr_matches 'machine[[:space:]_-]*type|machineType|worker[[:space:]_-]*(pool|type)'; then
+    surfaces="${surfaces:+${surfaces},}machine_type"
+  fi
+  if cloud_build_submit_stderr_matches 'timeout|deadline|timed[[:space:]]+out'; then
+    surfaces="${surfaces:+${surfaces},}timeout"
+  fi
+  if cloud_build_submit_stderr_matches 'location|region|zone|multi[[:space:]_-]*region'; then
+    surfaces="${surfaces:+${surfaces},}location"
+  fi
+  if cloud_build_submit_stderr_matches '(^|[^[:alnum:]_])options?([^[:alnum:]_]|$)|build[[:space:]_-]*options?|buildOptions'; then
+    surfaces="${surfaces:+${surfaces},}options"
+  fi
+  printf '%s' "${surfaces:-none}"
+}
+
+classify_cloud_build_submit_reason() {
+  local category="$1"
+  if cloud_build_submit_stderr_matches 'service[[:space:]_-]*account' && \
+    cloud_build_submit_stderr_matches 'logging|logs?[[:space:]_-]*bucket|CLOUD_LOGGING_ONLY'; then
+    printf 'user_service_account_logging'
+  elif cloud_build_submit_stderr_matches 'service[[:space:]_-]*account' && \
+    cloud_build_submit_stderr_matches 'format|email|identifier|invalid|malformed|account[[:space:]_-]*id'; then
+    printf 'service_account_format'
+  elif cloud_build_submit_stderr_matches 'requested[[:space:]_-]*verify|requestedVerifyOption|verify[[:space:]_-]*(option|setting)|verification|verified'; then
+    printf 'requested_verify'
+  elif cloud_build_submit_stderr_matches 'substitution|_IMAGE_URI|_SOURCE_REPOSITORY|_TARGET_SHA|_BUILDER_WORKFLOW'; then
+    printf 'substitution'
+  elif cloud_build_submit_stderr_matches '(^|[^[:alnum:]_])source([^[:alnum:]_]|$)|source[[:space:]_-]*(context|archive|upload|staging)|gcs|gs://'; then
+    printf 'source'
+  elif [[ "$category" == invalid_argument ]]; then
+    printf 'generic_invalid'
+  else
+    printf 'unknown'
+  fi
+}
+
 detect_cloud_build_submit_http_status() {
   local status
   for status in 400 401 403 404 409 429 500 502 503 504; do
@@ -225,6 +288,8 @@ print_cloud_build_submit_summary() {
   local stderr_bytes=""
   local category=""
   local http_status=""
+  local surfaces=""
+  local reason=""
 
   stderr_lines="$(wc -l <"$SUBMIT_ERROR" | tr -d '[:space:]')"
   stderr_bytes="$(wc -c <"$SUBMIT_ERROR" | tr -d '[:space:]')"
@@ -232,11 +297,14 @@ print_cloud_build_submit_summary() {
   stderr_bytes="$(bounded_submit_stderr_count "$stderr_bytes" 999999)"
   category="$(classify_cloud_build_submit_error)"
   http_status="$(detect_cloud_build_submit_http_status)"
+  surfaces="$(detect_cloud_build_submit_surfaces)"
+  reason="$(classify_cloud_build_submit_reason "$category")"
 
   printf 'Cloud Build submit failure (sanitized):\n' >&2
   printf '  exit_status=%s\n' "$exit_status" >&2
   printf '  stderr_lines=%s stderr_bytes=%s\n' "$stderr_lines" "$stderr_bytes" >&2
-  printf '  category=%s http_status=%s\n' "$category" "$http_status" >&2
+  printf '  category=%s http_status=%s surfaces=%s reason=%s\n' \
+    "$category" "$http_status" "$surfaces" "$reason" >&2
 }
 
 # Build only the requested commit. The archive is intentionally made from the
