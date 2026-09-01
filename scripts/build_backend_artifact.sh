@@ -508,6 +508,91 @@ if ! jq -e \
         or . == ($source_repository + "@" + $target_sha)
       );
 
+    def has_expected_substitutions($substitutions):
+      ($substitutions | type) == "object"
+      and ($substitutions | has("_SOURCE_REPOSITORY"))
+      and ($substitutions._SOURCE_REPOSITORY | type) == "string"
+      and $substitutions._SOURCE_REPOSITORY == $source_repository
+      and ($substitutions | has("_TARGET_SHA"))
+      and ($substitutions._TARGET_SHA | type) == "string"
+      and $substitutions._TARGET_SHA == $target_sha
+      and ($substitutions | has("_BUILDER_WORKFLOW"))
+      and ($substitutions._BUILDER_WORKFLOW | type) == "string"
+      and $substitutions._BUILDER_WORKFLOW == $builder_workflow;
+
+    # `// null` treats JSON false as absent in jq. Preserve explicitly
+    # malformed values so origin selection rejects them fail-closed.
+    def field_or_null($object; $name):
+      if ($object | has($name)) then $object[$name] else null end;
+
+    def is_scm_uri:
+      startswith("git+")
+      or test("^https?://github\\.com(?:/|$)")
+      or test("^git://github\\.com(?:/|$)")
+      or test("^ssh://(?:git@)?github\\.com(?:/|$)");
+
+    def has_scm_digest($dependency):
+      if ($dependency.digest | type) != "object" then
+        false
+      else
+        ($dependency.digest | has("gitCommit"))
+        or ($dependency.digest | has("sha1"))
+      end;
+
+    def scm_digest_matches($dependency):
+      if ($dependency.digest | type) != "object" then
+        false
+      elif (($dependency.digest | has("gitCommit"))
+            and ($dependency.digest | has("sha1"))) then
+        ($dependency.digest.gitCommit | type) == "string"
+        and ($dependency.digest.sha1 | type) == "string"
+        and $dependency.digest.gitCommit == $target_sha
+        and $dependency.digest.sha1 == $target_sha
+      elif ($dependency.digest | has("gitCommit")) then
+        ($dependency.digest.gitCommit | type) == "string"
+        and $dependency.digest.gitCommit == $target_sha
+      elif ($dependency.digest | has("sha1")) then
+        ($dependency.digest.sha1 | type) == "string"
+        and $dependency.digest.sha1 == $target_sha
+      else
+        false
+      end;
+
+    # Keep non-SCM dependencies compatible with Cloud Build resource forms
+    # while routing GitHub/SCM-shaped inputs through the exact source policy.
+    def is_allowed_non_scm_uri:
+      # jq `$` can match before a terminal newline; reject all whitespace
+      # before applying the URI shape checks.
+      (test("[[:space:]]") | not)
+      and (
+        test("^gs://[^/[:space:]]+(?:/[^[:space:]]*)?$")
+        or test("^(?:https?://)?(?:[a-z0-9-]+\\.)?gcr\\.io/[^[:space:]]+$")
+        or test("^(?:https?://)?[a-z0-9][a-z0-9-]*-docker\\.pkg\\.dev/[^[:space:]]+$")
+      );
+
+    def dependency_matches($dependency):
+      if (($dependency.uri | is_scm_uri) or has_scm_digest($dependency)) then
+        ($dependency.uri | source_uri)
+        and scm_digest_matches($dependency)
+      else
+        ($dependency.uri | is_allowed_non_scm_uri)
+      end;
+
+    def decode_inline_build_config:
+      if (type != "string"
+          or length == 0
+          or (test("^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$") | not))
+      then error("invalid inline build config encoding")
+      else
+        . as $encoded
+        | ($encoded | @base64d) as $decoded
+        | if (($decoded | @base64) != $encoded) then
+            error("non-canonical inline build config encoding")
+          else
+            ($decoded | fromjson)
+          end
+      end;
+
     if (.image_summary | type) != "object"
        or .image_summary.digest != $digest
        or .image_summary.fully_qualified_digest != $image_uri
@@ -531,46 +616,56 @@ if ! jq -e \
             [$metadata.invocationId?, $metadata.invocation_id?][];
             (type == "string") and (. == $build_id or endswith("/builds/" + $build_id))
           ))
-        | ($statement.predicate.buildDefinition.resolvedDependencies // []) as $dependencies
+        | (field_or_null($statement.predicate.buildDefinition; "resolvedDependencies")) as $raw_dependencies
+        | (if $raw_dependencies == null then [] else $raw_dependencies end) as $dependencies
         | select(($dependencies | type) == "array")
         # `gcloud builds submit <local-archive>` can omit SCM dependencies.
         # If Cloud Build reports one, it must identify this repository and SHA.
         | select(all(
             $dependencies[];
-            ((.uri | type) != "string" or (.uri | startswith("git+") | not))
-            or ((.uri | source_uri)
-                and ((.digest.gitCommit // .digest.sha1 // "") == $target_sha))
+            . as $dependency
+            | if ($dependency | type) != "object" then
+                false
+              elif ($dependency.uri | type) != "string"
+                   or ($dependency.uri | length) == 0 then
+                false
+              else
+                dependency_matches($dependency)
+              end
           ))
         | ($statement.predicate.buildDefinition.externalParameters // null) as $external_parameters
         | select(($external_parameters | type) == "object")
-        | ($external_parameters.substitutions // null) as $substitutions
-        | select(($substitutions | type) == "object")
-        | select(
-            ($substitutions | has("_SOURCE_REPOSITORY"))
-            and ($substitutions._SOURCE_REPOSITORY | type) == "string"
-            and $substitutions._SOURCE_REPOSITORY == $source_repository
-            and ($substitutions | has("_TARGET_SHA"))
-            and ($substitutions._TARGET_SHA | type) == "string"
-            and $substitutions._TARGET_SHA == $target_sha
-            and ($substitutions | has("_BUILDER_WORKFLOW"))
-            and ($substitutions._BUILDER_WORKFLOW | type) == "string"
-            and $substitutions._BUILDER_WORKFLOW == $builder_workflow
-          )
-        | ($external_parameters.buildConfigSource // null) as $build_source
-        | ($external_parameters.buildConfig // null) as $inline_build_config
+        | (field_or_null($external_parameters; "substitutions")) as $external_substitutions
+        | (field_or_null($external_parameters; "buildConfigSource")) as $build_source
+        | (field_or_null($external_parameters; "buildConfig")) as $inline_build_config
         # Cloud Build v1 records exactly one build-config origin. A local
         # archived submit uses a non-empty base64 inline config; an SCM-backed
         # config must identify this repository, ref, and path.
-        | select(
-            ($build_source == null
+        | if ($build_source == null
              and ($inline_build_config | type) == "string"
-             and ($inline_build_config | length) > 0)
-            or ($inline_build_config == null
+             and ($inline_build_config | length) > 0) then
+            ($inline_build_config | decode_inline_build_config) as $decoded_build_config
+            | select(($decoded_build_config | type) == "object")
+            | ($decoded_build_config.substitutions // null) as $inline_substitutions
+            | select(has_expected_substitutions($inline_substitutions))
+            # A local archive may report caller substitutions outside the
+            # inline config too. Empty/null is the observed shape; if values
+            # are present, they must independently match the same policy.
+            | select(
+                $external_substitutions == null
+                or (($external_substitutions | type) == "object"
+                    and ($external_substitutions | length) == 0)
+                or has_expected_substitutions($external_substitutions)
+              )
+          elif ($inline_build_config == null
                 and ($build_source | type) == "object"
                 and ($build_source.repository | source_uri)
                 and $build_source.ref == "refs/heads/main"
-                and $build_source.path == "cloudbuild.backend.yaml")
-          )
+                and $build_source.path == "cloudbuild.backend.yaml") then
+            select(has_expected_substitutions($external_substitutions))
+          else
+            empty
+          end
       ] as $matches
       | ($matches | length) == 1
     end' \
