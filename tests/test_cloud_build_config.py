@@ -28,6 +28,32 @@ def test_cloud_build_has_backend_config_and_deploy_script_uses_it() -> None:
     assert "gcloud builds submit" not in deploy_script
 
 
+def test_cloud_build_references_metadata_substitutions_in_step_env_and_stays_strict() -> None:
+    """Every caller-provided provenance substitution must be referenced by a step."""
+    config_path = Path("cloudbuild.backend.yaml")
+    config_text = config_path.read_text(encoding="utf-8")
+    config = yaml.safe_load(config_text)
+
+    assert isinstance(config, dict)
+    assert "ALLOW_LOOSE" not in config_text
+
+    steps = config.get("steps")
+    assert isinstance(steps, list)
+    docker_steps = [
+        step
+        for step in steps
+        if isinstance(step, dict) and step.get("name") == "gcr.io/cloud-builders/docker"
+    ]
+    assert len(docker_steps) == 1
+    docker_env = docker_steps[0].get("env")
+    assert isinstance(docker_env, list)
+    env_map = dict(entry.split("=", 1) for entry in docker_env if isinstance(entry, str))
+
+    assert env_map["BUILD_METADATA_SOURCE_REPOSITORY"] == "$_SOURCE_REPOSITORY"
+    assert env_map["BUILD_METADATA_TARGET_SHA"] == "$_TARGET_SHA"
+    assert env_map["BUILD_METADATA_BUILDER_WORKFLOW"] == "$_BUILDER_WORKFLOW"
+
+
 def test_cloud_build_uses_explicit_dedicated_service_account_and_cloud_logging() -> None:
     """The build config keeps its explicit builder and log sink contract."""
     config_path = Path("cloudbuild.backend.yaml")
