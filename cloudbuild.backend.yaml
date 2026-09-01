@@ -2,6 +2,10 @@ steps:
   # Cloud Run 用のバックエンドイメージを Dockerfile.backend でビルドします。
   # repo-root の Dockerfile がアップロードに含まれないケースでも、こちらは明示指定で動作します。
   - name: gcr.io/cloud-builders/docker
+    env:
+      - BUILD_METADATA_SOURCE_REPOSITORY=$_SOURCE_REPOSITORY
+      - BUILD_METADATA_TARGET_SHA=$_TARGET_SHA
+      - BUILD_METADATA_BUILDER_WORKFLOW=$_BUILDER_WORKFLOW
     args:
       - build
       - -f
