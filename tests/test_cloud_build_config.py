@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import os
 from pathlib import Path
@@ -218,6 +219,11 @@ def _run_backend_artifact_helper(
     native_build_id: str | None = None,
     native_omit_scm_metadata: bool = False,
     native_missing_build_config: bool = False,
+    native_inline_build_config: object | None = None,
+    native_inline_build_config_noncanonical: bool = False,
+    native_inline_substitutions: dict[str, str] | None = None,
+    native_external_substitutions: object | None = None,
+    native_resolved_dependencies: object | None = None,
     dirty_tree: bool = False,
     dirty_tree_kind: str = "tracked",
     inject_archive_hazards: bool = False,
@@ -373,6 +379,83 @@ def _run_backend_artifact_helper(
         "https://github.com/stillshore-chirp/wordpack-for-english/"
         ".github/workflows/deploy-production.yml@refs/heads/main"
     )
+    source_repository = "https://github.com/stillshore-chirp/wordpack-for-english"
+    fixture_substitutions = {
+        "_SOURCE_REPOSITORY": native_source_repository or source_repository,
+        "_TARGET_SHA": native_target_sha or target_sha,
+        "_BUILDER_WORKFLOW": builder_workflow,
+    }
+    inline_substitutions = (
+        native_inline_substitutions
+        if native_inline_substitutions is not None
+        else {
+            "_IMAGE_URI": (
+                "asia-northeast1-docker.pkg.dev/ci-placeholder-project/"
+                f"wordpack/backend:{target_sha}"
+            ),
+            **fixture_substitutions,
+        }
+    )
+    if native_omit_scm_metadata:
+        if native_missing_build_config:
+            inline_build_config = None
+        elif native_inline_build_config is not None:
+            inline_build_config = native_inline_build_config
+        else:
+            inline_build_config = base64.b64encode(
+                json.dumps(
+                    {"steps": [], "substitutions": inline_substitutions},
+                    separators=(",", ":"),
+                ).encode("utf-8")
+                + b"\n"
+            ).decode("ascii")
+            if native_inline_build_config_noncanonical:
+                padding = len(inline_build_config) - len(inline_build_config.rstrip("="))
+                assert padding in (1, 2)
+                last_index = len(inline_build_config.rstrip("=")) - 1
+                alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
+                value = alphabet.index(inline_build_config[last_index])
+                unused_bits = 0x03 if padding == 1 else 0x0F
+                assert value & unused_bits == 0
+                noncanonical_inline_build_config = (
+                    inline_build_config[:last_index]
+                    + alphabet[value + 1]
+                    + inline_build_config[last_index + 1 :]
+                )
+                assert (
+                    base64.b64decode(noncanonical_inline_build_config, validate=True)
+                    == base64.b64decode(inline_build_config, validate=True)
+                )
+                inline_build_config = noncanonical_inline_build_config
+        external_substitutions = (
+            native_external_substitutions
+            if native_external_substitutions is not None
+            else {}
+        )
+    else:
+        inline_build_config = None
+        external_substitutions = (
+            native_external_substitutions
+            if native_external_substitutions is not None
+            else fixture_substitutions
+        )
+    resolved_dependencies = (
+        native_resolved_dependencies
+        if native_resolved_dependencies is not None
+        else (
+            []
+            if native_omit_scm_metadata
+            else [
+                {
+                    "digest": {"gitCommit": native_target_sha or target_sha},
+                    "uri": (
+                        "git+https://github.com/stillshore-chirp/wordpack-for-english"
+                        "@refs/heads/main"
+                    ),
+                }
+            ]
+        )
+    )
     native_digest = native_digest or build_digest
     native_provenance_path = tmp_path / "native-provenance.json"
     if not native_provenance_missing:
@@ -413,33 +496,10 @@ def _run_backend_artifact_helper(
                                                         "path": native_build_source_path
                                                         or "cloudbuild.backend.yaml",
                                                     },
-                                                    "buildConfig": (
-                                                        None
-                                                        if not native_omit_scm_metadata
-                                                        else (
-                                                            None
-                                                            if native_missing_build_config
-                                                            else "eyJzdGVwcyI6W119"
-                                                        )
-                                                    ),
-                                                    "substitutions": {
-                                                        "_SOURCE_REPOSITORY": native_source_repository
-                                                        or "https://github.com/stillshore-chirp/wordpack-for-english",
-                                                        "_TARGET_SHA": native_target_sha or target_sha,
-                                                        "_BUILDER_WORKFLOW": builder_workflow,
-                                                    }
+                                                    "buildConfig": inline_build_config,
+                                                    "substitutions": external_substitutions,
                                                 },
-                                                "resolvedDependencies": []
-                                                if native_omit_scm_metadata
-                                                else [
-                                                    {
-                                                        "digest": {"gitCommit": native_target_sha or target_sha},
-                                                        "uri": (
-                                                            "git+https://github.com/stillshore-chirp/wordpack-for-english"
-                                                            "@refs/heads/main"
-                                                        ),
-                                                    }
-                                                ],
+                                                "resolvedDependencies": resolved_dependencies,
                                             },
                                             "runDetails": {
                                                 "builder": {
@@ -939,6 +999,12 @@ def test_backend_artifact_helper_smokes_the_same_digest_and_writes_only_immutabl
 
 def test_backend_artifact_helper_rejects_invalid_native_provenance(tmp_path: Path) -> None:
     digest = "sha256:" + "a" * 64
+    target_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    source_repository = "https://github.com/stillshore-chirp/wordpack-for-english"
+    builder_workflow = (
+        "https://github.com/stillshore-chirp/wordpack-for-english/"
+        ".github/workflows/deploy-production.yml@refs/heads/main"
+    )
     cases = (
         {"native_provenance_missing": True},
         {"native_builder": "https://example.invalid/builder"},
@@ -950,8 +1016,119 @@ def test_backend_artifact_helper_rejects_invalid_native_provenance(tmp_path: Pat
         {"native_build_id": "different-build"},
         {
             "native_omit_scm_metadata": True,
+            "native_inline_build_config": "not-base64",
+        },
+        {
+            "native_omit_scm_metadata": True,
+            "native_inline_build_config": base64.b64encode(b"{not-json").decode("ascii"),
+        },
+        {
+            "native_omit_scm_metadata": True,
+            "native_inline_build_config_noncanonical": True,
+        },
+        {
+            "native_omit_scm_metadata": True,
             "native_missing_build_config": True,
         },
+        {
+            "native_omit_scm_metadata": True,
+            "native_inline_substitutions": {
+                "_SOURCE_REPOSITORY": source_repository,
+            },
+        },
+        {
+            "native_omit_scm_metadata": True,
+            "native_inline_substitutions": {
+                "_SOURCE_REPOSITORY": source_repository,
+                "_TARGET_SHA": "b" * 40,
+                "_BUILDER_WORKFLOW": builder_workflow,
+            },
+        },
+        {
+            "native_omit_scm_metadata": True,
+            "native_external_substitutions": {
+                "_SOURCE_REPOSITORY": source_repository,
+                "_TARGET_SHA": "b" * 40,
+                "_BUILDER_WORKFLOW": builder_workflow,
+            },
+        },
+        {
+            "native_omit_scm_metadata": True,
+            "native_external_substitutions": False,
+        },
+        {
+            "native_omit_scm_metadata": True,
+            "native_inline_build_config": False,
+        },
+        {"native_resolved_dependencies": False},
+        {"native_resolved_dependencies": {}},
+        {"native_resolved_dependencies": [{"uri": None}]},
+        {"native_resolved_dependencies": [{}]},
+        {"native_resolved_dependencies": [False]},
+        {"native_resolved_dependencies": [{"uri": ""}]},
+        {"native_resolved_dependencies": [{"uri": source_repository}]},
+        {
+            "native_resolved_dependencies": [
+                {"uri": source_repository, "digest": {"gitCommit": "b" * 40}}
+            ]
+        },
+        {"native_resolved_dependencies": [{"uri": "https://github.com/other/repository"}]},
+        {
+            "native_resolved_dependencies": [
+                {
+                    "uri": "https://github.com/other/repository",
+                    "digest": {"gitCommit": target_sha},
+                }
+            ]
+        },
+        {
+            "native_resolved_dependencies": [
+                {
+                    "uri": "git+https://github.com/other/repository",
+                    "digest": {"gitCommit": target_sha},
+                }
+            ]
+        },
+        {
+            "native_resolved_dependencies": [
+                {
+                    "uri": source_repository,
+                    "digest": {"gitCommit": False, "sha1": target_sha},
+                }
+            ]
+        },
+        {
+            "native_resolved_dependencies": [
+                {
+                    "uri": source_repository,
+                    "digest": {"gitCommit": target_sha, "sha1": "b" * 40},
+                }
+            ]
+        },
+        {
+            "native_resolved_dependencies": [
+                {"uri": source_repository, "digest": {"gitCommit": {}}}
+            ]
+        },
+        {"native_resolved_dependencies": [{"uri": "https://example.invalid/dependency"}]},
+        {
+            "native_resolved_dependencies": [
+                {"uri": "gcr.io/ci-placeholder-project/base@sha256:" + "b" * 64 + "\n"}
+            ]
+        },
+        {"native_resolved_dependencies": [{"uri": "gs://wordpack-build-source/private/context.tar\n"}]},
+        {
+            "native_resolved_dependencies": [
+                {"uri": " gcr.io/ci-placeholder-project/base@sha256:" + "b" * 64}
+            ]
+        },
+        {"native_resolved_dependencies": [{"uri": "\tgs://wordpack-build-source/private/context.tar"}]},
+        {
+            "native_resolved_dependencies": [
+                {"uri": "gcr.io/ci-placeholder-project/base image"}
+            ]
+        },
+        {"native_resolved_dependencies": [{"uri": "gs://wordpack-build-source/private/context tar"}]},
     )
     for index, overrides in enumerate(cases):
         proc, docker_log = _run_backend_artifact_helper(
@@ -971,6 +1148,31 @@ def test_backend_artifact_helper_accepts_local_archive_provenance_without_scm_me
         tmp_path,
         digest,
         native_omit_scm_metadata=True,
+    )
+
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "pull" in docker_log.read_text(encoding="utf-8")
+
+
+def test_backend_artifact_helper_accepts_expected_and_known_non_scm_dependencies(
+    tmp_path: Path,
+) -> None:
+    digest = "sha256:" + "a" * 64
+    target_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    proc, docker_log = _run_backend_artifact_helper(
+        tmp_path,
+        digest,
+        native_resolved_dependencies=[
+            {
+                "uri": "https://github.com/stillshore-chirp/wordpack-for-english",
+                "digest": {"gitCommit": target_sha},
+            },
+            {
+                "uri": "gcr.io/ci-placeholder-project/base@sha256:" + "b" * 64,
+                "digest": {"sha256": "b" * 64},
+            },
+            {"uri": "gs://wordpack-build-source/private/context.tar"},
+        ],
     )
 
     assert proc.returncode == 0, proc.stdout + proc.stderr
