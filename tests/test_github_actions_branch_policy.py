@@ -416,17 +416,33 @@ def test_production_runtime_and_single_version_jobs_default_to_python_314() -> N
 
 def test_ci_does_not_embed_production_deploy_job() -> None:
     """
-    Contract: production deployment is owned by deploy-production.yml.
-    CI may run guards and dry-runs, but it must not contain the production deploy job.
+    Contract: production deployment implementation is owned by deploy-production.yml.
+    CI owns only the main-only caller job; called jobs stay in the deploy workflow.
     """
     yml = _read_text(".github/workflows/ci.yml")
-    _assert_contains_none(
-        yml,
-        [
-            "deploy_production:",
-            "environment: production",
-        ],
+    ci_workflow = yaml.safe_load(yml)
+    assert isinstance(ci_workflow, dict)
+    deploy_job = ci_workflow["jobs"]["deploy_production"]
+    assert deploy_job["uses"] == "./.github/workflows/deploy-production.yml"
+    assert deploy_job["needs"] == "quality_gate"
+    assert deploy_job["if"] == (
+        "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && "
+        "needs.quality_gate.result == 'success' }}"
     )
+    assert deploy_job["with"] == {
+        "target_sha": "${{ github.sha }}",
+        "ci_run_id": "${{ github.run_id }}",
+    }
+    assert deploy_job["secrets"] == {
+        "CLOUD_RUN_ENV_FILE_BASE64": "${{ secrets.CLOUD_RUN_ENV_FILE_BASE64 }}",
+    }
+    assert deploy_job["permissions"] == {
+        "contents": "read",
+        "actions": "read",
+        "id-token": "write",
+        "attestations": "write",
+    }
+    _assert_contains_none(yml, ["environment: production"])
     _assert_contains_all(
         yml,
         [
@@ -440,6 +456,16 @@ def test_ci_does_not_embed_production_deploy_job() -> None:
             "--no-traffic --traffic-tag candidate",
         ],
     )
+
+
+def test_ci_concurrency_does_not_cancel_main_push_deploys() -> None:
+    """Main CI runs must remain alive while the reusable production deploy is active."""
+    workflow = yaml.safe_load(_read_text(".github/workflows/ci.yml"))
+    assert isinstance(workflow, dict)
+    assert workflow["concurrency"] == {
+        "group": "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('ci-main-{0}', github.run_id) || format('ci-{0}-{1}', github.workflow, github.ref) }}",
+        "cancel-in-progress": True,
+    }
 
 
 def test_deploy_preflight_runs_focused_behavioral_contracts() -> None:
@@ -474,10 +500,9 @@ def test_deploy_production_workflow_requires_successful_ci_or_manual_main() -> N
     _assert_contains_all(
         on_block,
         [
-            "workflow_run:",
-            "workflows:",
-            "CI",
-            "completed",
+            "workflow_call:",
+            "target_sha:",
+            "ci_run_id:",
             "workflow_dispatch:",
             "identity_exchange_only:",
             "required: false",
@@ -485,9 +510,10 @@ def test_deploy_production_workflow_requires_successful_ci_or_manual_main() -> N
             "type: boolean",
         ],
     )
-    _assert_contains_none(on_block, ["push:", "pull_request:"])
-    _assert_contains_all(yml, ["WORKFLOW_RUN_CONCLUSION", "WORKFLOW_RUN_BRANCH", "conclusion == \"success\"", "TARGET_SHA"])
+    _assert_contains_none(on_block, ["workflow_run:", "push:", "pull_request:"])
+    _assert_contains_all(yml, ["CALLER_REF", "CALLER_SHA", "CALLER_RUN_ID", "CALLER_WORKFLOW_NAME", "CALLER_WORKFLOW_REF", "EXPECTED_CI_WORKFLOW_REF", "conclusion == \"success\"", "TARGET_SHA", ".status == \"in_progress\""])
     assert "cancel-in-progress: false" in yml
+    assert "group: deploy-production-Deploy to production" in yml
 
 
 def test_deploy_cutover_guard_and_identity_exchange_are_scoped() -> None:
@@ -736,7 +762,17 @@ def test_wif_permissions_are_scoped_and_normal_ci_has_no_oidc_token() -> None:
     )["permissions"] == {"contents": "read"}
 
     ci_jobs = ci_workflow["jobs"]
-    assert all("id-token" not in job.get("permissions", {}) for job in ci_jobs.values())
+    assert ci_jobs["deploy_production"]["permissions"] == {
+        "contents": "read",
+        "actions": "read",
+        "id-token": "write",
+        "attestations": "write",
+    }
+    assert all(
+        "id-token" not in job.get("permissions", {})
+        for job_id, job in ci_jobs.items()
+        if job_id != "deploy_production"
+    )
 
 
 def test_production_workflows_are_key_free() -> None:

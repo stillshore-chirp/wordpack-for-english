@@ -117,7 +117,7 @@ cd apps/frontend && npm run dev
 
 ## CI/CD パイプライン
 
-GitHub Actions は、`ci.yml`（PRと`main` / `develop` push）、`deploy-production.yml`（CI成功の同一SHAまたは手動指定SHA）、`production-deploy-preflight.yml`（daily schedule / main手動のread-only probe）、`scheduled-maintenance.yml`（weekly schedule / suite選択の手動実行）の4 workflowで構成する。
+GitHub Actions は、`ci.yml`（PRと`main` / `develop` push）、`deploy-production.yml`（CI `quality_gate` 後の reusable call または手動指定SHA）、`production-deploy-preflight.yml`（daily schedule / main手動のread-only probe）、`scheduled-maintenance.yml`（weekly schedule / suite選択の手動実行）の4 workflowで構成する。
 
 ```mermaid
 flowchart LR
@@ -128,7 +128,7 @@ flowchart LR
 
     subgraph Workflows["GitHub Actions（4 workflows）"]
         CI["CI<br/>(PR / push main, develop)"]
-        ProductionDeploy["Deploy to production<br/>(CI success same SHA / manual SHA)"]
+        ProductionDeploy["Deploy to production<br/>(CI quality_gate same SHA / manual SHA)"]
         DeployPreflight["Production deploy preflight<br/>(daily schedule / main manual, read-only)"]
         Maintenance["Scheduled maintenance<br/>(weekly schedule / manual suite)"]
     end
@@ -143,7 +143,7 @@ flowchart LR
     end
 
     Push --> Actions --> CI
-    CI -->|completed successfully / same SHA| ProductionDeploy
+    CI -->|quality_gate success / same SHA| ProductionDeploy
     DeployPreflight -.->|read-only probe| Actions
     Maintenance -.->|scheduled / selected suite| Actions
     ProductionDeploy --> FirestoreIndex
@@ -159,7 +159,7 @@ flowchart LR
 | workflow | トリガー | 主な内容 |
 |---------|---------|------|
 | **CI** (`.github/workflows/ci.yml`) | `push`（`main` / `develop`） / `pull_request`（`main` / `develop`） | `verification_scope` で10出力を分類し、選択された検証、security text scan、`Quality gate`を実行 |
-| **Deploy to production** (`.github/workflows/deploy-production.yml`) | `CI`の`workflow_run`（completed） / `workflow_dispatch`（`target_sha`必須） | CI成功と同一SHAを照合してからCloud Run canary / rollback / Firebase Hosting deployを実行 |
+| **Deploy to production** (`.github/workflows/deploy-production.yml`) | `workflow_call`（CI main pushの`quality_gate`後、`target_sha` / `ci_run_id`） / `workflow_dispatch`（`target_sha`必須） | caller CIのrun・SHA・Quality gate成功を照合してからCloud Run canary / rollback / Firebase Hosting deployを実行 |
 | **Production deploy preflight** (`.github/workflows/production-deploy-preflight.yml`) | daily schedule（`17 3 * * *`） / `workflow_dispatch`（main refのみ） | 信頼済みmain codeでgcloud、Firestore、Firebase Hostingのread-only probe。credential欠如はfail-closed |
 | **Scheduled maintenance** (`.github/workflows/scheduled-maintenance.yml`) | weekly schedule（`0 3 * * 1`） / `workflow_dispatch`（`all` / `codeql` / `scorecard` / `backend-performance` / `playwright`） | CodeQL、OpenSSF Scorecard、backend performance、全Playwright回帰をsuite単位で実行 |
 
@@ -181,9 +181,9 @@ flowchart LR
 | **Visual regression** | 中央classifierが選択した push / PR | 選択時だけ `tests/e2e/visual.spec.ts` を実行。分類失敗や予期しないskipは `Quality gate` で失敗扱い |
 | **Quality gate** | push / PR | 中央classifierの結果と、選択されたBackend／Frontend／deploy／Playwright smoke・visual等の結果を集約し、未選択jobの予期しない実行も含めてfail-closed |
 
-静的な Cloud Run dry-run と deploy contract 検証は `CI` lane に集約し、重複する `deploy-dry-run.yml` workflow は置かない。本番デプロイは `CI` の同一SHA成功を `workflow_run` 側で再検証してから開始する。PR では本番デプロイ job を作らず、認証済み probe は schedule または main ref の手動実行に限定する。backend artifactの処理は既存の `Deploy to production` workflow内で `prepare-release-artifacts`、`build-backend-artifact`、`attest-backend-artifact`、`deploy` の4 jobへ分離する。新しいworkflowは増やしていない。job-wide OIDC/permissionsを最小化し、Cloud Build・Syft・GitHub attestation・deploy SDKとsecretの依存を隔離し、credential cleanupとartifact handoffを明示するための分離である。
+静的な Cloud Run dry-run と deploy contract 検証は `CI` lane に集約し、重複する `deploy-dry-run.yml` workflow は置かない。本番デプロイは `CI` の `quality_gate` 後に同じrun内で reusable call し、called workflow が run metadata・同一SHA・Quality gate成功を再検証してから開始する。PR / develop push では caller jobをskipし、別の production runを作らない。認証済み probe は schedule または main ref の手動実行に限定する。backend artifactの処理は既存の `Deploy to production` workflow内で `prepare-release-artifacts`、`build-backend-artifact`、`attest-backend-artifact`、`deploy` の4 jobへ分離する。新しいworkflowは増やしていない。job-wide OIDC/permissionsを最小化し、Cloud Build・Syft・GitHub attestation・deploy SDKとsecretの依存を隔離し、credential cleanupとartifact handoffを明示するための分離である。
 
-CD のチェック表示は GitHub Actions に集約する。`workflow_run` は検証済み `workflow_run.head_sha` を checkout し、manual break-glass は completed候補から1件確定した後、同じrunの詳細とjobs APIで指定 SHAの成功CI／`Quality gate`を照合する。workflow再作成時のID変更はworkflow側の定数を明示更新する。`prepare-release-artifacts` はtarget SHAのcheckout、frontend build、1日retentionのfrontend artifactを担当する。`build-backend-artifact` は `scripts/build_backend_artifact.sh` が `git archive TARGET_SHA` で作るprivate temporary contextをCloud Buildへ一度だけsubmitし、build result と Artifact Registry manifest digestを照合する。`cloudbuild.backend.yaml` の `options.requestedVerifyOption: VERIFIED` でnative provenanceを独立要求し、`gcloud artifacts docker images describe <image>@<digest> --show-provenance --format=json` で同じexact digestから取得するJSONについて、image digest、GoogleHostedWorker、invocation、`_SOURCE_REPOSITORY` / `_TARGET_SHA` / `_BUILDER_WORKFLOW` substitutionsを検証する。local archiveではSCM metadataを省略でき、存在時はrepository/ref/SHAを照合する。検証済みJSONのSHA256を `nativeProvenanceSnapshotSha256` としてworkflow predicateへ結合し、同jobで同digestのhealth smokeと1日retentionのimage archiveをhandoffする。`attest-backend-artifact` は別runnerでexact imageをloadし、Google credentialを持たずにchecksum-pinned Syft 1.51.1 CLIで SPDX 2.3 SBOMを生成し、GitHub APIへcustom SLSA provenance attestationとSBOMを保存する。Anchore Actionは使わない。`deploy` はGCPへWIFで再認証してprivate GAR向けDocker authを設定した後、`gh attestation verify` を同じdigestへ実行し、成功してからsecret materialize、Cloud Run、traffic、Hosting writeへ進む。GitHub verificationの `--source-digest` はattestation certificateのsource repository digest（`github.sha`）、`--signer-digest` はworkflow file revision（`github.workflow_sha`）であり、build対象 `TARGET_SHA` はcustom predicate内で別に固定する。GitHub workflow-level attestationのbuilder値はdeploy workflow URIで、`underlyingBuilder`は独立して要求したCloud Build native provenanceとの対応を示すpredicate値です。GitHub署名者identityがGoogle builder identityを代替するわけではありません。GitHub Checks APIへの通知やPRからのpublishは行いません。
+CD のチェック表示は GitHub Actions に集約する。CI の `deploy_production` caller jobは main push かつ `quality_gate` 成功時だけ local reusable workflowを呼び出し、called workflowの実ジョブが同じCI check suiteへ表示される。called workflowは `github.sha`、caller `ci_run_id`、CI workflow identity、main push、同一runの `Quality gate (selected checks)` 成功を検証する。manual break-glass は completed候補から1件確定した後、同じrunの詳細とjobs APIで指定 SHAの completed CI／`Quality gate (selected checks)` success を照合する。CI run 全体の conclusion は、automatic deploy failure が enclosing run を failure にしていても候補条件にしない。workflow再作成時のID変更はworkflow側の定数を明示更新する。`prepare-release-artifacts` はtarget SHAのcheckout、frontend build、1日retentionのfrontend artifactを担当する。`build-backend-artifact` は `scripts/build_backend_artifact.sh` が `git archive TARGET_SHA` で作るprivate temporary contextをCloud Buildへ一度だけsubmitし、build result と Artifact Registry manifest digestを照合する。`cloudbuild.backend.yaml` の `options.requestedVerifyOption: VERIFIED` でnative provenanceを独立要求し、`gcloud artifacts docker images describe <image>@<digest> --show-provenance --format=json` で同じexact digestから取得するJSONについて、image digest、GoogleHostedWorker、invocation、`_SOURCE_REPOSITORY` / `_TARGET_SHA` / `_BUILDER_WORKFLOW` substitutionsを検証する。local archiveではSCM metadataを省略でき、存在時はrepository/ref/SHAを照合する。検証済みJSONのSHA256を `nativeProvenanceSnapshotSha256` としてworkflow predicateへ結合し、同jobで同digestのhealth smokeと1日retentionのimage archiveをhandoffする。`attest-backend-artifact` は別runnerでexact imageをloadし、Google credentialを持たずにchecksum-pinned Syft 1.51.1 CLIで SPDX 2.3 SBOMを生成し、GitHub APIへcustom SLSA provenance attestationとSBOMを保存する。Anchore Actionは使わない。`deploy` はGCPへWIFで再認証してprivate GAR向けDocker authを設定した後、`gh attestation verify` を同じdigestへ実行し、成功してからsecret materialize、Cloud Run、traffic、Hosting writeへ進む。GitHub verificationの `--source-digest` はattestation certificateのsource repository digest（`github.sha`）、`--signer-digest` はworkflow file revision（`github.workflow_sha`）であり、build対象 `TARGET_SHA` はcustom predicate内で別に固定する。GitHub workflow-level attestationのbuilder値はdeploy workflow URIで、`underlyingBuilder`は独立して要求したCloud Build native provenanceとの対応を示すpredicate値です。GitHub署名者identityがGoogle builder identityを代替するわけではありません。GitHub Checks APIへの通知やPRからのpublishは行いません。
 
 Cloud Buildへのlocal source stagingはtarget SHA内の `.gcloudignore` allowlistでDockerfile、build config、requirements、backend runtime sourceだけへ限定する。native provenanceはSCM `buildConfigSource` または空でないinline `buildConfig` のちょうど一方を必要とし、どちらもない形状を拒否する。
 
@@ -228,10 +228,10 @@ sequenceDiagram
     Dev->>GitHub: git push main
     GitHub->>Actions: CI トリガー
     Actions->>Actions: pytest / vitest / Playwright smoke
-    Actions-->>Actions: CI success / target SHA確定
-    Actions->>Actions: workflow_run が同一SHAを検証
+    Actions-->>Actions: Quality gate success / target SHA・run id確定
+    Actions->>Actions: workflow_call が同一SHA・run・Quality gateを検証
 
-    Note over Dev: manual break-glass は target SHA と成功CIを要求
+    Note over Dev: manual break-glass は target SHA と completed CI / Quality gate success を要求（run全体 conclusion は不要）
     Dev->>GCloud: make release-cloud-run
     GCloud->>FS: Firestore インデックス同期
     GCloud->>AR: Cloud Build (一度だけbuild / manifest digest)

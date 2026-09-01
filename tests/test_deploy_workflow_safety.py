@@ -10,21 +10,34 @@ def _read(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
-def test_production_deploy_is_gated_by_a_successful_same_sha_ci_run() -> None:
+def test_production_deploy_is_gated_by_a_same_sha_ci_quality_gate() -> None:
     workflow = _read(".github/workflows/deploy-production.yml")
+    parsed_workflow = yaml.safe_load(workflow)
+    assert isinstance(parsed_workflow, dict)
     verify = workflow[workflow.index("  verify-target:"): workflow.index("  verify-deploy-identity:")]
     deploy = workflow[workflow.index("  deploy:"):]
     concurrency = workflow[workflow.index("concurrency:"): workflow.index("permissions:")]
+    manual_start = verify.index('elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then')
+    manual_end = verify.index("\n          else", manual_start)
+    manual = verify[manual_start:manual_end]
+    completed_start = verify.index('elif [[ "${expected_status}" == "completed" ]]; then')
+    completed_end = verify.index("\n            else", completed_start)
+    completed = verify[completed_start:completed_end]
 
-    assert "workflow_run:" in workflow
-    assert "- CI" in workflow
-    assert "- completed" in workflow
+    assert "workflow_call:" in workflow
+    assert "workflow_run:" not in workflow
+    assert "- CI" not in workflow
     assert "push:" not in workflow
     assert "target_sha:" in workflow
+    assert "ci_run_id:" in workflow
+    assert "CLOUD_RUN_ENV_FILE_BASE64:" in workflow
     assert "required: true" in workflow
-    assert "github.event.workflow_run.conclusion" in verify
-    assert "github.event.workflow_run.event" in verify
-    assert "github.event.workflow_run.head_branch" in verify
+    assert "CALLER_REF" in verify
+    assert "CALLER_SHA" in verify
+    assert "CALLER_RUN_ID" in verify
+    assert "CALLER_WORKFLOW_NAME" in verify
+    assert "CALLER_WORKFLOW_REF" in verify
+    assert '"push"' in verify
     assert "gh api" in verify
     assert "actions/runs" in verify
     assert '"CI"' in verify
@@ -38,16 +51,28 @@ def test_production_deploy_is_gated_by_a_successful_same_sha_ci_run() -> None:
     assert "actions/workflows/${CI_WORKFLOW_ID}/runs" in verify
     assert 'status=completed' in verify
     assert 'conclusion == "success"' in verify
+    assert '.status == "in_progress"' in verify
     assert "actions/runs/${run_id}/jobs?per_page=100" in verify
-    assert '(.name == "Quality gate"' in verify
-    assert 'verify_ci_run "${WORKFLOW_RUN_ID}"' in verify
-    assert 'verify_ci_run "${candidate_run_id}"' in verify
+    assert "CI_QUALITY_GATE_NAME: Quality gate (selected checks)" in verify
+    assert ".name == $expected_gate" in verify
+    assert 'or .name == "Quality gate"' not in verify
+    assert 'verify_ci_run "${CI_RUN_ID}" "in_progress"' in verify
+    assert 'verify_ci_run "${candidate_run_id}" "completed"' in verify
+    assert '.head_sha == $target and .status == "completed"' in manual
+    assert '.conclusion == "success"' not in manual
+    assert 'verify_ci_run "${candidate_run_id}" "completed"' in manual
+    assert '.head_sha == $target and .status == "completed"' in completed
+    assert '.conclusion' not in completed
     assert "environment: production" not in verify
     assert "needs:\n      - verify-target\n      - authorize-deploy-cutover\n      - prepare-release-artifacts\n      - build-backend-artifact\n      - attest-backend-artifact" in deploy
     assert "environment: production" in deploy
     assert "ref: ${{ needs.verify-target.outputs.target_sha }}" in deploy
     assert 'checked_out_sha="$(git rev-parse HEAD)"' in deploy
-    assert "group: deploy-production-${{ github.workflow }}" in concurrency
+    assert parsed_workflow["concurrency"] == {
+        "group": "deploy-production-Deploy to production",
+        "cancel-in-progress": False,
+    }
+    assert "group: deploy-production-Deploy to production" in concurrency
     assert "head_sha" not in concurrency
     assert "inputs." not in concurrency
     assert "github.ref" not in concurrency
@@ -57,6 +82,10 @@ def test_production_deploy_is_gated_by_a_successful_same_sha_ci_run() -> None:
     assert ".github/workflows/ci.yml" in deployment_docs
     assert "187172373" in deployment_docs
     assert "Quality gate" in deployment_docs
+    assert "deploy-production-Deploy to production" in deployment_docs
+    assert "FIFO" not in deployment_docs
+    assert "attribute.job_workflow_ref='job_workflow_ref' in assertion ? assertion.job_workflow_ref : ''" in deployment_docs
+    assert "attribute.job_workflow_ref == 'stillshore-chirp/wordpack-for-english/.github/workflows/deploy-production.yml@refs/heads/main'" in deployment_docs
 
 
 def test_identity_exchange_cutover_is_manual_only_and_fail_closed() -> None:

@@ -1,15 +1,28 @@
 name: Deploy to production
 
 on:
-  workflow_run:
-    workflows:
-      - CI
-    types:
-      - completed
+  workflow_call:
+    inputs:
+      target_sha:
+        description: 40文字のコミットSHA（呼び出し元CIのgithub.shaと一致必須）
+        required: true
+        type: string
+      ci_run_id:
+        description: 呼び出し元CIの現在のrun id（Quality gate成功runと一致必須）
+        required: true
+        type: string
+      identity_exchange_only:
+        description: WIFのtoken exchangeだけを確認し、本番デプロイは実行しない
+        required: false
+        default: false
+        type: boolean
+    secrets:
+      CLOUD_RUN_ENV_FILE_BASE64:
+        required: true
   workflow_dispatch:
     inputs:
       target_sha:
-        description: 40文字のコミットSHA（同SHAのCI成功runが必須）
+        description: 40文字のコミットSHA（同SHAのcompleted CI runとQuality gate成功が手動で必須）
         required: true
         type: string
       identity_exchange_only:
@@ -19,9 +32,9 @@ on:
         type: boolean
 
 concurrency:
-  # auto/manual を同じ単一キューへ入れ、candidate tag と traffic/rollback 操作を直列化する。
-  group: deploy-production-${{ github.workflow }}
-  # canary 中断で traffic split を残さないよう、進行中の本番リリースは完走させて次を待機させる。
+  # 旧 workflow_run と reusable/manual の評価済み group を共有し、candidate tag と traffic/rollback 操作を直列化する。
+  group: deploy-production-Deploy to production
+  # 同一groupでは実行中1件とpending最新1件を保持し、進行中の本番リリースは取消さない。
   cancel-in-progress: false
 
 permissions:
@@ -38,19 +51,20 @@ jobs:
       contents: read
       actions: read
     env:
-      TARGET_SHA: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.target_sha }}
-      WORKFLOW_RUN_ID: ${{ github.event.workflow_run.id }}
-      WORKFLOW_RUN_NAME: ${{ github.event.workflow_run.name }}
-      WORKFLOW_RUN_CONCLUSION: ${{ github.event.workflow_run.conclusion }}
-      WORKFLOW_RUN_EVENT: ${{ github.event.workflow_run.event }}
-      WORKFLOW_RUN_BRANCH: ${{ github.event.workflow_run.head_branch }}
-      WORKFLOW_RUN_HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+      TARGET_SHA: ${{ inputs.target_sha }}
+      CI_RUN_ID: ${{ inputs.ci_run_id }}
+      CALLER_EVENT_NAME: ${{ github.event_name }}
+      CALLER_REF: ${{ github.ref }}
+      CALLER_SHA: ${{ github.sha }}
+      CALLER_RUN_ID: ${{ github.run_id }}
+      CALLER_WORKFLOW_NAME: ${{ github.workflow }}
+      CALLER_WORKFLOW_REF: ${{ github.workflow_ref }}
       CI_WORKFLOW_PATH: .github/workflows/ci.yml
       # Live repository workflow ID resolved on 2026-08-30. Update this constant explicitly if the workflow is recreated.
       CI_WORKFLOW_ID: "187172373"
       CI_QUALITY_GATE_NAME: Quality gate (selected checks)
     steps:
-      - name: Verify target trigger and successful CI
+      - name: Verify target trigger and Quality gate
         id: verify
         env:
           GH_TOKEN: ${{ github.token }}
@@ -81,6 +95,7 @@ jobs:
 
           verify_ci_run() {
             local run_id="$1"
+            local expected_status="$2"
             [[ "${run_id}" =~ ^[0-9]+$ ]] || \
               fail_verification "CI workflow run ID is invalid."
 
@@ -89,16 +104,30 @@ jobs:
               fail_verification "Could not resolve the CI workflow run from the GitHub API."
             jq -e \
               --arg target "${TARGET_SHA}" \
+              --arg expected_run_id "${run_id}" \
               --arg expected_workflow_id "${CI_WORKFLOW_ID}" \
-              '.workflow_id | tostring == $expected_workflow_id' \
+              '(.id | tostring == $expected_run_id) and
+               (.workflow_id | tostring == $expected_workflow_id)' \
               <<<"${run_json}" >/dev/null || \
-              fail_verification "The CI workflow run does not belong to the immutable CI workflow ID."
-            jq -e \
-              --arg target "${TARGET_SHA}" \
-              '.name == "CI" and .event == "push" and .head_branch == "main" and
-               .head_sha == $target and .status == "completed" and .conclusion == "success"' \
-              <<<"${run_json}" >/dev/null || \
-              fail_verification "The CI workflow run is not a successful completed push on main for target_sha."
+              fail_verification "The CI workflow run ID or immutable workflow ID did not match."
+            if [[ "${expected_status}" == "in_progress" ]]; then
+              jq -e \
+                --arg target "${TARGET_SHA}" \
+                '.name == "CI" and .event == "push" and .head_branch == "main" and
+                 .head_sha == $target and .status == "in_progress" and
+                 (.conclusion == null or .conclusion == "")' \
+                <<<"${run_json}" >/dev/null || \
+                fail_verification "The caller is not an in-progress CI push on main for target_sha."
+            elif [[ "${expected_status}" == "completed" ]]; then
+              jq -e \
+                --arg target "${TARGET_SHA}" \
+                '.name == "CI" and .event == "push" and .head_branch == "main" and
+                 .head_sha == $target and .status == "completed"' \
+                <<<"${run_json}" >/dev/null || \
+                fail_verification "The CI workflow run is not a completed push on main for target_sha."
+            else
+              fail_verification "Unsupported CI workflow run status check."
+            fi
 
             jobs_json="$(gh api \
               "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100")" || \
@@ -106,7 +135,7 @@ jobs:
             jq -e \
               --arg expected_gate "${CI_QUALITY_GATE_NAME}" \
               '[.jobs[]? | select(
-                 (.name == "Quality gate" or .name == $expected_gate) and
+                 .name == $expected_gate and
                  .status == "completed" and .conclusion == "success"
                )] | length == 1' \
               <<<"${jobs_json}" >/dev/null || \
@@ -124,19 +153,24 @@ jobs:
 
           resolve_ci_workflow
 
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_run" ]]; then
-            [[ "${WORKFLOW_RUN_ID}" =~ ^[0-9]+$ ]] || {
-              fail_verification "workflow_run id is invalid."
-            }
-            if [[ "${WORKFLOW_RUN_NAME}" != "CI" ||
-                  "${WORKFLOW_RUN_CONCLUSION}" != "success" ||
-                  "${WORKFLOW_RUN_EVENT}" != "push" ||
-                  "${WORKFLOW_RUN_BRANCH}" != "main" ||
-                  "${WORKFLOW_RUN_HEAD_SHA,,}" != "${TARGET_SHA}" ]]; then
-              fail_verification "The completed workflow_run is not a successful CI push on main for target_sha."
-            fi
-            verify_ci_run "${WORKFLOW_RUN_ID}"
+          EXPECTED_CI_WORKFLOW_REF="${GITHUB_REPOSITORY}/${CI_WORKFLOW_PATH}@refs/heads/main"
+          EXPECTED_DEPLOY_WORKFLOW_REF="${GITHUB_REPOSITORY}/.github/workflows/deploy-production.yml@refs/heads/main"
+
+          if [[ "${CALLER_WORKFLOW_REF}" == "${EXPECTED_CI_WORKFLOW_REF}" ]]; then
+            [[ "${GITHUB_EVENT_NAME}" == "push" && "${CALLER_EVENT_NAME}" == "push" ]] || \
+              fail_verification "Automatic production deployment requires a push caller event."
+            [[ "${CALLER_REF}" == "refs/heads/main" ]] || \
+              fail_verification "Automatic production deployment requires the caller ref refs/heads/main."
+            [[ "${CALLER_SHA,,}" == "${TARGET_SHA}" ]] || \
+              fail_verification "The caller github.sha does not match target_sha."
+            [[ "${CALLER_RUN_ID}" =~ ^[0-9]+$ && "${CI_RUN_ID}" == "${CALLER_RUN_ID}" ]] || \
+              fail_verification "The caller run id does not match ci_run_id."
+            [[ "${CALLER_WORKFLOW_NAME}" == "CI" ]] || \
+              fail_verification "Automatic production deployment must be called by the CI workflow."
+            verify_ci_run "${CI_RUN_ID}" "in_progress"
           elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            [[ "${CALLER_WORKFLOW_REF}" == "${EXPECTED_DEPLOY_WORKFLOW_REF}" ]] || \
+              fail_verification "Manual production deployment must run from the deploy workflow itself."
             completed_runs="$(gh api \
               --method GET \
               "repos/${GITHUB_REPOSITORY}/actions/workflows/${CI_WORKFLOW_ID}/runs" \
@@ -151,15 +185,15 @@ jobs:
               '[.workflow_runs[]? | select(
                  (.workflow_id | tostring) == $expected_workflow_id and
                  .name == "CI" and .event == "push" and .head_branch == "main" and
-                 .head_sha == $target and .status == "completed" and .conclusion == "success"
+                 .head_sha == $target and .status == "completed"
                )]
                | sort_by(.id)
-               | if length == 0 then error("no successful CI run") else .[-1].id end' \
+               | if length == 0 then error("no completed CI run") else .[-1].id end' \
               <<<"${completed_runs}")" || \
-              fail_verification "No successful completed CI push on main was found for target_sha."
-            verify_ci_run "${candidate_run_id}"
+              fail_verification "No completed CI push on main was found for target_sha."
+            verify_ci_run "${candidate_run_id}" "completed"
           else
-            fail_verification "Unsupported production deployment event."
+            fail_verification "Unsupported production deployment caller or event."
           fi
 
           echo "target_sha=${TARGET_SHA}" >> "${GITHUB_OUTPUT}"
