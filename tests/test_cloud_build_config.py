@@ -507,6 +507,33 @@ def _run_backend_artifact_helper(
     return proc, docker_log
 
 
+def _assert_cloud_build_submit_output_schema(
+    output: str,
+    *,
+    stderr_lines: int,
+    category: str,
+    http_status: str,
+    surfaces: str,
+    reason: str,
+) -> None:
+    output_lines = output.splitlines()
+    output_patterns = (
+        r"Cloud Build submit failure \(sanitized\):",
+        r"  exit_status=17",
+        rf"  stderr_lines={stderr_lines} stderr_bytes=[0-9]+",
+        (
+            rf"  category={re.escape(category)} "
+            rf"http_status={re.escape(http_status)} "
+            rf"surfaces={re.escape(surfaces)} reason={re.escape(reason)}"
+        ),
+        r"Error: Cloud Build submission failed",
+    )
+    assert len(output_lines) == len(output_patterns)
+    for line, pattern in zip(output_lines, output_patterns, strict=True):
+        assert re.fullmatch(pattern, line), line
+    assert len(output.encode("utf-8")) <= 4096
+
+
 def test_backend_artifact_helper_rejects_build_registry_digest_mismatch(tmp_path: Path) -> None:
     proc, docker_log = _run_backend_artifact_helper(tmp_path, "sha256:" + "b" * 64)
 
@@ -527,17 +554,14 @@ def test_backend_artifact_helper_reports_only_allowlisted_submit_summary(
 
     combined_output = proc.stdout + proc.stderr
     assert proc.returncode != 0
-    output_lines = combined_output.splitlines()
-    output_patterns = (
-        r"Cloud Build submit failure \(sanitized\):",
-        r"  exit_status=17",
-        r"  stderr_lines=49 stderr_bytes=[0-9]+",
-        r"  category=permission_denied http_status=403",
-        r"Error: Cloud Build submission failed",
+    _assert_cloud_build_submit_output_schema(
+        combined_output,
+        stderr_lines=49,
+        category="permission_denied",
+        http_status="403",
+        surfaces="service_account,source",
+        reason="source",
     )
-    assert len(output_lines) == len(output_patterns)
-    for line, pattern in zip(output_lines, output_patterns, strict=True):
-        assert re.fullmatch(pattern, line), line
     for raw_value in (
         "ci-placeholder-project",
         "build-sa@ci-placeholder-project.iam.gserviceaccount.com",
@@ -577,20 +601,106 @@ def test_backend_artifact_helper_reports_unknown_submit_summary(tmp_path: Path) 
 
     combined_output = proc.stdout + proc.stderr
     assert proc.returncode != 0
-    output_lines = combined_output.splitlines()
-    output_patterns = (
-        r"Cloud Build submit failure \(sanitized\):",
-        r"  exit_status=17",
-        r"  stderr_lines=1 stderr_bytes=[0-9]+",
-        r"  category=unknown http_status=none",
-        r"Error: Cloud Build submission failed",
+    _assert_cloud_build_submit_output_schema(
+        combined_output,
+        stderr_lines=1,
+        category="unknown",
+        http_status="none",
+        surfaces="none",
+        reason="unknown",
     )
-    assert len(output_lines) == len(output_patterns)
-    for line, pattern in zip(output_lines, output_patterns, strict=True):
-        assert re.fullmatch(pattern, line), line
     assert raw_stderr.strip() not in combined_output
     assert "secret-value" not in combined_output
     assert "日本語" not in combined_output
+
+
+def test_backend_artifact_helper_classifies_submit_validation_surfaces_and_reasons(
+    tmp_path: Path,
+) -> None:
+    validation_cases = (
+        (
+            "all-surfaces",
+            "INVALID_ARGUMENT HTTP 400 user service account logging "
+            "requestedVerifyOption substitution source images build step args "
+            "machineType timeout location options project=ci-placeholder-project "
+            "buildId=build-short path=/opt/actions/workspace "
+            "url=https://cloudbuild.googleapis.com/builds?access_token=secret#fragment "
+            "token=secret-value id=550e8400-e29b-41d4-a716-446655440000 日本語",
+            "invalid_argument",
+            "400",
+            "service_account,logging,requested_verify,substitutions,source,images,steps,machine_type,timeout,location,options",
+            "user_service_account_logging",
+        ),
+        (
+            "service-account-format",
+            "INVALID_ARGUMENT HTTP 400 serviceAccount format invalid email=private@example.com",
+            "invalid_argument",
+            "400",
+            "service_account",
+            "service_account_format",
+        ),
+        (
+            "requested-verify",
+            "INVALID_ARGUMENT HTTP 400 requestedVerifyOption invalid",
+            "invalid_argument",
+            "400",
+            "requested_verify",
+            "requested_verify",
+        ),
+        (
+            "substitution",
+            "INVALID_ARGUMENT HTTP 400 substitution is invalid",
+            "invalid_argument",
+            "400",
+            "substitutions",
+            "substitution",
+        ),
+        (
+            "source",
+            "INVALID_ARGUMENT HTTP 400 source context is invalid",
+            "invalid_argument",
+            "400",
+            "source",
+            "source",
+        ),
+        (
+            "generic-invalid",
+            "INVALID_ARGUMENT HTTP 400 request rejected",
+            "invalid_argument",
+            "400",
+            "none",
+            "generic_invalid",
+        ),
+    )
+
+    for index, (
+        case_name,
+        raw_stderr,
+        category,
+        http_status,
+        surfaces,
+        reason,
+    ) in enumerate(validation_cases):
+        proc, _ = _run_backend_artifact_helper(
+            tmp_path / case_name / str(index),
+            "sha256:" + "a" * 64,
+            submit_failure_stderr=raw_stderr,
+        )
+
+        combined_output = proc.stdout + proc.stderr
+        assert proc.returncode != 0
+        _assert_cloud_build_submit_output_schema(
+            combined_output,
+            stderr_lines=1,
+            category=category,
+            http_status=http_status,
+            surfaces=surfaces,
+            reason=reason,
+        )
+        assert raw_stderr not in combined_output
+        assert "ci-placeholder-project" not in combined_output
+        assert "private@example.com" not in combined_output
+        assert "日本語" not in combined_output
 
 
 def test_backend_artifact_helper_archives_target_commit_and_excludes_dirty_inputs(tmp_path: Path) -> None:
