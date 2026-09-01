@@ -163,7 +163,8 @@ gh attestation verify "oci://${IMMUTABLE_IMAGE}" \
   --signer-workflow "<owner>/<repository>/.github/workflows/<trusted-workflow>.yml" \
   --source-ref refs/heads/main \
   --source-digest "${SOURCE_DIGEST}" \
-  --signer-digest "${SIGNER_DIGEST}"
+  --signer-digest "${SIGNER_DIGEST}" \
+  --predicate-type https://github.com/stillshore-chirp/wordpack-for-english/attestations/backend-delivery/v1
 
 gh attestation verify "oci://${IMMUTABLE_IMAGE}" \
   --repo "<owner>/<repository>" \

@@ -154,6 +154,20 @@ def test_cloud_build_uses_explicit_dedicated_service_account_and_cloud_logging()
         assert "gcloud builds submit ." not in doc_text
 
 
+def test_manual_attestation_example_uses_exact_delivery_predicate_type() -> None:
+    deployment_docs = Path("docs/deployment.md").read_text(encoding="utf-8")
+    examples_start = deployment_docs.index("GitHub API 上の attestation を確認する例:")
+    examples_end = deployment_docs.index("`--source-digest`", examples_start)
+    examples = deployment_docs[examples_start:examples_end]
+
+    assert (
+        '  --signer-digest "${SIGNER_DIGEST}" \\\n'
+        f"  --predicate-type {BACKEND_DELIVERY_PREDICATE_TYPE}"
+    ) in examples
+    assert "https://slsa.dev/provenance/v1" not in examples
+    assert "--predicate-type https://spdx.dev/Document/v2.3" in examples
+
+
 def test_deploy_script_requires_a_digest_bound_image_and_never_builds() -> None:
     """Cloud Build is owned by the workflow; the deploy helper consumes only a digest."""
     script = Path("scripts/deploy_cloud_run.sh").read_text(encoding="utf-8")
