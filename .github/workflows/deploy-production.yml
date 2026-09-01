@@ -22,7 +22,7 @@ on:
   workflow_dispatch:
     inputs:
       target_sha:
-        description: 40文字のコミットSHA（同SHAのCI成功runが必須）
+        description: 40文字のコミットSHA（同SHAのcompleted CI runとQuality gate成功が手動で必須）
         required: true
         type: string
       identity_exchange_only:
@@ -64,7 +64,7 @@ jobs:
       CI_WORKFLOW_ID: "187172373"
       CI_QUALITY_GATE_NAME: Quality gate (selected checks)
     steps:
-      - name: Verify target trigger and successful CI
+      - name: Verify target trigger and Quality gate
         id: verify
         env:
           GH_TOKEN: ${{ github.token }}
@@ -118,13 +118,15 @@ jobs:
                  (.conclusion == null or .conclusion == "")' \
                 <<<"${run_json}" >/dev/null || \
                 fail_verification "The caller is not an in-progress CI push on main for target_sha."
-            else
+            elif [[ "${expected_status}" == "completed" ]]; then
               jq -e \
                 --arg target "${TARGET_SHA}" \
                 '.name == "CI" and .event == "push" and .head_branch == "main" and
-                 .head_sha == $target and .status == "completed" and .conclusion == "success"' \
+                 .head_sha == $target and .status == "completed"' \
                 <<<"${run_json}" >/dev/null || \
-                fail_verification "The CI workflow run is not a successful completed push on main for target_sha."
+                fail_verification "The CI workflow run is not a completed push on main for target_sha."
+            else
+              fail_verification "Unsupported CI workflow run status check."
             fi
 
             jobs_json="$(gh api \
@@ -133,7 +135,7 @@ jobs:
             jq -e \
               --arg expected_gate "${CI_QUALITY_GATE_NAME}" \
               '[.jobs[]? | select(
-                 (.name == "Quality gate" or .name == $expected_gate) and
+                 .name == $expected_gate and
                  .status == "completed" and .conclusion == "success"
                )] | length == 1' \
               <<<"${jobs_json}" >/dev/null || \
@@ -183,12 +185,12 @@ jobs:
               '[.workflow_runs[]? | select(
                  (.workflow_id | tostring) == $expected_workflow_id and
                  .name == "CI" and .event == "push" and .head_branch == "main" and
-                 .head_sha == $target and .status == "completed" and .conclusion == "success"
+                 .head_sha == $target and .status == "completed"
                )]
                | sort_by(.id)
-               | if length == 0 then error("no successful CI run") else .[-1].id end' \
+               | if length == 0 then error("no completed CI run") else .[-1].id end' \
               <<<"${completed_runs}")" || \
-              fail_verification "No successful completed CI push on main was found for target_sha."
+              fail_verification "No completed CI push on main was found for target_sha."
             verify_ci_run "${candidate_run_id}" "completed"
           else
             fail_verification "Unsupported production deployment caller or event."

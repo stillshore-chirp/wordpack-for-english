@@ -10,13 +10,19 @@ def _read(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
-def test_production_deploy_is_gated_by_a_successful_same_sha_ci_run() -> None:
+def test_production_deploy_is_gated_by_a_same_sha_ci_quality_gate() -> None:
     workflow = _read(".github/workflows/deploy-production.yml")
     parsed_workflow = yaml.safe_load(workflow)
     assert isinstance(parsed_workflow, dict)
     verify = workflow[workflow.index("  verify-target:"): workflow.index("  verify-deploy-identity:")]
     deploy = workflow[workflow.index("  deploy:"):]
     concurrency = workflow[workflow.index("concurrency:"): workflow.index("permissions:")]
+    manual_start = verify.index('elif [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then')
+    manual_end = verify.index("\n          else", manual_start)
+    manual = verify[manual_start:manual_end]
+    completed_start = verify.index('elif [[ "${expected_status}" == "completed" ]]; then')
+    completed_end = verify.index("\n            else", completed_start)
+    completed = verify[completed_start:completed_end]
 
     assert "workflow_call:" in workflow
     assert "workflow_run:" not in workflow
@@ -47,9 +53,16 @@ def test_production_deploy_is_gated_by_a_successful_same_sha_ci_run() -> None:
     assert 'conclusion == "success"' in verify
     assert '.status == "in_progress"' in verify
     assert "actions/runs/${run_id}/jobs?per_page=100" in verify
-    assert '(.name == "Quality gate"' in verify
+    assert "CI_QUALITY_GATE_NAME: Quality gate (selected checks)" in verify
+    assert ".name == $expected_gate" in verify
+    assert 'or .name == "Quality gate"' not in verify
     assert 'verify_ci_run "${CI_RUN_ID}" "in_progress"' in verify
     assert 'verify_ci_run "${candidate_run_id}" "completed"' in verify
+    assert '.head_sha == $target and .status == "completed"' in manual
+    assert '.conclusion == "success"' not in manual
+    assert 'verify_ci_run "${candidate_run_id}" "completed"' in manual
+    assert '.head_sha == $target and .status == "completed"' in completed
+    assert '.conclusion' not in completed
     assert "environment: production" not in verify
     assert "needs:\n      - verify-target\n      - authorize-deploy-cutover\n      - prepare-release-artifacts\n      - build-backend-artifact\n      - attest-backend-artifact" in deploy
     assert "environment: production" in deploy

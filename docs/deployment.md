@@ -128,7 +128,7 @@ make release-cloud-run \
 - SBOM はchecksum-pinned Syft 1.51.1 CLIで生成した SPDX JSON（attestation predicate type: `https://spdx.dev/Document/v2.3`）をdigestに結び付け、attestation と同じ対象を示します。Anchore Actionは使用しません。raw secret、token、`.env.deploy` の内容は SBOM、attestation、summary、log に含めません。
 - `scripts/deploy_cloud_run.sh` は immutable digest の deploy 専用です。build、tag解決、別project / repositoryへの読み替えを行わず、候補の traffic 0%、canary、health、rollback の既存順序を維持します。
 
-手動で build と検証対象を準備する場合の例です。対象SHAをcheckout済みのtreeから実行し、値は実環境の識別子へ置き換え、production deploy の明示許可と `main` の成功CI / Quality gate を別途確認します。
+手動で build と検証対象を準備する場合の例です。対象SHAをcheckout済みのtreeから実行し、値は実環境の識別子へ置き換え、production deploy の明示許可と `main` の completed CI / Quality gate success を別途確認します。CI run 全体の conclusion は、automatic deploy failure 後の manual retry では条件にしません。
 
 ```bash
 export TARGET_SHA="<40-char-main-commit-sha>"
@@ -305,7 +305,7 @@ firebase deploy --only hosting --project <firebase-project-id>
 
 - `CI` の `quality_gate` 成功後、`ci.yml` の `deploy_production` job が local reusable workflow を `target_sha=${{ github.sha }}`、`ci_run_id=${{ github.run_id }}` で呼び出します。必要な `CLOUD_RUN_ENV_FILE_BASE64` は workflow_call へ明示的に渡します。called workflow は caller の ref / SHA / workflow 名と、GitHub API の run metadata（`name=CI`、`event=push`、`head_branch=main`、実行中）を照合し、同じrunの jobs API で canonical `Quality gate (selected checks)` の completed/success を再確認します。これにより production jobs は CI と同じ Actions check suite に表示され、別の `workflow_run` deploy は作られません。
 - CI workflow identity は固定 path `.github/workflows/ci.yml` と、live repository の API で解決した immutable workflow ID `187172373` を照合します。workflowを再作成してIDが変わった場合は、この定数を明示的に更新してから再開します。
-- 手動の break-glass 実行は trusted `main` ref からのみ起動でき、必須入力 `target_sha` と任意の boolean input `identity_exchange_only` を受け取ります。completed状態の候補runをGitHub APIで取得し、同一 SHA の `CI` 成功・push・main runを1件確定した後、自動経路と同じrun詳細／Quality gate検証を通過してから後続 job へ進みます。
+- 手動の break-glass 実行は trusted `main` ref からのみ起動でき、必須入力 `target_sha` と任意の boolean input `identity_exchange_only` を受け取ります。completed状態の候補runをGitHub APIで取得し、同一 SHA の `CI` push・main・completed runを1件確定した後、同じrunの canonical `Quality gate (selected checks)` が completed/success であることを検証してから後続 job へ進みます。自動 deploy failure で CI run 全体の conclusion が failure になっていても、Quality gate が成功していれば手動 retry の候補にできます。
 - `identity_exchange_only=true` の手動実行は `verify-target` を必ず通過した後、`production` environment の `verify-deploy-identity` で deploy 用 WIF の入力検証と、credentials fileを作らない pinned auth の `token_format: access_token` によるOIDC→Google access token exchangeだけを確認します。checkout、build、production env materialize、deploy、API write、traffic 操作は行わず、通常の deploy job と cutover guard は実行しません。
 - 通常の自動／手動 deploy は `authorize-deploy-cutover` が repository variable `PRODUCTION_DEPLOY_ENABLED` の文字列 `true` を fail-closed に確認した場合だけ進みます。通常の production 経路を許可するまで `verify-target` の CI / Quality gate 契約は変わりません。
 - checkout は検証済み対象 SHA に固定し、checkout 後の `git rev-parse HEAD` との一致を assert します。
