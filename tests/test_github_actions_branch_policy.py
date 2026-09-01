@@ -417,7 +417,8 @@ def test_production_runtime_and_single_version_jobs_default_to_python_314() -> N
 def test_ci_does_not_embed_production_deploy_job() -> None:
     """
     Contract: production deployment implementation is owned by deploy-production.yml.
-    CI owns only the main-only caller job; called jobs stay in the deploy workflow.
+    CI owns only the cancellation-safe main-only caller job; called jobs stay in the
+    deploy workflow.
     """
     yml = _read_text(".github/workflows/ci.yml")
     ci_workflow = yaml.safe_load(yml)
@@ -426,7 +427,7 @@ def test_ci_does_not_embed_production_deploy_job() -> None:
     assert deploy_job["uses"] == "./.github/workflows/deploy-production.yml"
     assert deploy_job["needs"] == "quality_gate"
     assert deploy_job["if"] == (
-        "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && "
+        "${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && "
         "needs.quality_gate.result == 'success' }}"
     )
     assert deploy_job["with"] == {
