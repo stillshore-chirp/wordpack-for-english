@@ -3,7 +3,8 @@ set -euo pipefail
 
 # Build the backend once in Cloud Build and exercise the exact registry digest.
 # Image metadata and the two verification values are written to GITHUB_OUTPUT;
-# build responses and credential-bearing command output stay out of workflow logs.
+# build responses and raw credential-bearing command output stay out of workflow
+# logs; submission failures emit only a fixed, allowlisted summary.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 cd "${REPO_ROOT}"
@@ -142,6 +143,8 @@ IMAGE_TAG_URI="${IMAGE_NAME}:${TARGET_SHA}"
 SUBSTITUTIONS="_IMAGE_URI=${IMAGE_TAG_URI},_SOURCE_REPOSITORY=https://github.com/${REPOSITORY},_TARGET_SHA=${TARGET_SHA},_BUILDER_WORKFLOW=${BUILDER_WORKFLOW}"
 BUILD_ID=""
 SUBMIT_OUTPUT=""
+SUBMIT_ERROR=""
+SUBMIT_FAILURE_MESSAGE="Cloud Build submission failed"
 NATIVE_PROVENANCE_OUTPUT=""
 BUILD_CONTEXT_ROOT=""
 BUILD_CONTEXT=""
@@ -156,6 +159,9 @@ cleanup() {
   if [[ -n "${SUBMIT_OUTPUT:-}" && -f "$SUBMIT_OUTPUT" ]]; then
     rm -f "$SUBMIT_OUTPUT" || true
   fi
+  if [[ -n "${SUBMIT_ERROR:-}" && -f "$SUBMIT_ERROR" ]]; then
+    rm -f "$SUBMIT_ERROR" || true
+  fi
   if [[ -n "${NATIVE_PROVENANCE_OUTPUT:-}" && -f "$NATIVE_PROVENANCE_OUTPUT" ]]; then
     rm -f "$NATIVE_PROVENANCE_OUTPUT" || true
   fi
@@ -165,6 +171,73 @@ cleanup() {
   return "$previous_status"
 }
 trap cleanup EXIT
+
+bounded_submit_stderr_count() {
+  local value="$1"
+  local maximum="$2"
+  [[ "$value" =~ ^[0-9]+$ ]] || value=0
+  (( value > maximum )) && value="$maximum"
+  printf '%s' "$value"
+}
+
+classify_cloud_build_submit_error() {
+  local category=unknown
+  if LC_ALL=C grep -Eqi -- 'PERMISSION_DENIED|permission[[:space:]]+denied|forbidden|access[[:space:]]+denied|(^|[^0-9])403([^0-9]|$)' "$SUBMIT_ERROR" 2>/dev/null; then
+    category=permission_denied
+  elif LC_ALL=C grep -Eqi -- 'UNAUTHENTICATED|authentication|invalid[[:space:]]+(credential|token)|oauth|(^|[^0-9])401([^0-9]|$)' "$SUBMIT_ERROR" 2>/dev/null; then
+    category=authentication_failed
+  elif LC_ALL=C grep -Eqi -- 'INVALID_ARGUMENT|invalid[[:space:]]+argument|bad[[:space:]]+request|(^|[^0-9])400([^0-9]|$)' "$SUBMIT_ERROR" 2>/dev/null; then
+    category=invalid_argument
+  elif LC_ALL=C grep -Eqi -- 'NOT_FOUND|not[[:space:]]+found|(^|[^0-9])404([^0-9]|$)' "$SUBMIT_ERROR" 2>/dev/null; then
+    category=not_found
+  elif LC_ALL=C grep -Eqi -- 'RESOURCE_EXHAUSTED|quota|rate[[:space:]]+limit|(^|[^0-9])429([^0-9]|$)' "$SUBMIT_ERROR" 2>/dev/null; then
+    category=quota_exhausted
+  elif LC_ALL=C grep -Eqi -- 'DEADLINE_EXCEEDED|deadline|timed[[:space:]]+out|timeout|(^|[^0-9])504([^0-9]|$)' "$SUBMIT_ERROR" 2>/dev/null; then
+    category=deadline_exceeded
+  elif LC_ALL=C grep -Eqi -- 'UNAVAILABLE|service[[:space:]]+unavailable|temporar(y|ily)|(^|[^0-9])502([^0-9]|$)|(^|[^0-9])503([^0-9]|$)' "$SUBMIT_ERROR" 2>/dev/null; then
+    category=service_unavailable
+  elif LC_ALL=C grep -Eqi -- 'source[[:space:]_-]*(staging|upload)|staging|upload[[:space:]]+(source|archive)' "$SUBMIT_ERROR" 2>/dev/null; then
+    category=source_staging
+  elif LC_ALL=C grep -Eqi -- 'service[[:space:]_-]*account|serviceaccounts|iam\.service' "$SUBMIT_ERROR" 2>/dev/null; then
+    category=service_account
+  elif LC_ALL=C grep -Eqi -- 'storage|bucket|gs://|artifact[[:space:]]+registry' "$SUBMIT_ERROR" 2>/dev/null; then
+    category=storage
+  elif LC_ALL=C grep -Eqi -- 'cloud[[:space:]]+build|cloudbuild|builds[[:space:]]+submit' "$SUBMIT_ERROR" 2>/dev/null; then
+    category=cloud_build
+  fi
+  printf '%s' "$category"
+}
+
+detect_cloud_build_submit_http_status() {
+  local status
+  for status in 400 401 403 404 409 429 500 502 503 504; do
+    if LC_ALL=C grep -Eqi -- "(HTTP|status|code|error)[^0-9]{0,8}$status([^0-9]|$)" "$SUBMIT_ERROR" 2>/dev/null; then
+      printf '%s' "$status"
+      return 0
+    fi
+  done
+  printf 'none'
+}
+
+print_cloud_build_submit_summary() {
+  local exit_status="$1"
+  local stderr_lines=""
+  local stderr_bytes=""
+  local category=""
+  local http_status=""
+
+  stderr_lines="$(wc -l <"$SUBMIT_ERROR" | tr -d '[:space:]')"
+  stderr_bytes="$(wc -c <"$SUBMIT_ERROR" | tr -d '[:space:]')"
+  stderr_lines="$(bounded_submit_stderr_count "$stderr_lines" 999999)"
+  stderr_bytes="$(bounded_submit_stderr_count "$stderr_bytes" 999999)"
+  category="$(classify_cloud_build_submit_error)"
+  http_status="$(detect_cloud_build_submit_http_status)"
+
+  printf 'Cloud Build submit failure (sanitized):\n' >&2
+  printf '  exit_status=%s\n' "$exit_status" >&2
+  printf '  stderr_lines=%s stderr_bytes=%s\n' "$stderr_lines" "$stderr_bytes" >&2
+  printf '  category=%s http_status=%s\n' "$category" "$http_status" >&2
+}
 
 # Build only the requested commit. The archive is intentionally made from the
 # Git object database instead of the checkout, so staged, dirty, ignored, and
@@ -264,7 +337,9 @@ GCLOUDIGNORE
 chmod 600 "${BUILD_IGNORE_FILE}"
 
 SUBMIT_OUTPUT="$(mktemp)"
-if ! gcloud builds submit "${BUILD_CONTEXT}" \
+SUBMIT_ERROR="$(mktemp "${BUILD_CONTEXT_ROOT}/cloud-build-submit.XXXXXX")"
+chmod 600 "$SUBMIT_ERROR"
+if gcloud builds submit "${BUILD_CONTEXT}" \
   --project="${PROJECT_ID}" \
   --service-account="projects/${PROJECT_ID}/serviceAccounts/${BUILD_SERVICE_ACCOUNT}" \
   --config="${BUILD_CONFIG}" \
@@ -274,8 +349,12 @@ if ! gcloud builds submit "${BUILD_CONTEXT}" \
   --timeout="${BUILD_TIMEOUT}" \
   --async \
   --quiet \
-  --format='value(id)' >"${SUBMIT_OUTPUT}" 2>/dev/null; then
-  fail "Cloud Build submission failed"
+  --format='value(id)' >"${SUBMIT_OUTPUT}" 2>"${SUBMIT_ERROR}"; then
+  :
+else
+  submit_exit_status=$?
+  print_cloud_build_submit_summary "$submit_exit_status"
+  fail "$SUBMIT_FAILURE_MESSAGE"
 fi
 
 BUILD_ID="$(tr -d '\r\n' <"${SUBMIT_OUTPUT}")"

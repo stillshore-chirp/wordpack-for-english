@@ -195,6 +195,8 @@ def _run_backend_artifact_helper(
     dirty_tree: bool = False,
     dirty_tree_kind: str = "tracked",
     inject_archive_hazards: bool = False,
+    submit_failure: bool = False,
+    submit_failure_stderr: str | None = None,
 ) -> tuple[subprocess.CompletedProcess[str], Path]:
     tmp_path.mkdir(parents=True, exist_ok=True)
     fake_bin = tmp_path / "bin"
@@ -210,6 +212,10 @@ def _run_backend_artifact_helper(
         "if [[ \"${1:-}\" == builds && \"${2:-}\" == submit ]]; then\n"
         "  context=\"${3:-}\"\n"
         "  [[ -d \"${context}\" ]] || { echo 'missing build context' >&2; exit 2; }\n"
+        "  if [[ \"${FAKE_GCLOUD_SUBMIT_FAILURE:-false}\" == true ]]; then\n"
+        "    printf '%s\\n' \"${FAKE_SUBMIT_DIAGNOSTIC}\" >&2\n"
+        "    exit 17\n"
+        "  fi\n"
         "  rm -rf -- \"${CAPTURED_CONTEXT}\"\n"
         "  cp -a -- \"${context}\" \"${CAPTURED_CONTEXT}\"\n"
         "  printf 'build-contract-1\\n'\n"
@@ -432,6 +438,31 @@ def _run_backend_artifact_helper(
             ),
             encoding="utf-8",
         )
+    default_submit_diagnostic = "\n".join(
+        (
+            "\x1b[31mPERMISSION_DENIED\x1b[0m: HTTP 403 project=ci-placeholder-project "
+            "build=build-sa@ci-placeholder-project.iam.gserviceaccount.com "
+            "deploy=deploy-sa@ci-placeholder-project.iam.gserviceaccount.com",
+            "json={\"access_token\": \"short-access\", \"token\": \"short-token\", "
+            "\"client_secret\": \"short-client\"}",
+            "ids={\"buildId\": \"build-short\", \"trace_id\": "
+            "\"550e8400-e29b-41d4-a716-446655440000\"} "
+            "paths=/opt/actions/workspace /github/workspace",
+            "source=gs://wordpack-build-source/private/context.tar "
+            "url=https://cloudbuild.googleapis.com/builds?access_token=secret#fragment "
+            "utf8=日本語",
+        )
+    )
+    submit_diagnostic = (
+        default_submit_diagnostic
+        if submit_failure_stderr is None
+        else submit_failure_stderr
+    )
+    if submit_failure:
+        submit_diagnostic += "\n" + "\n".join(
+            f"diagnostic-line-{index}: status=PERMISSION_DENIED token=secret-{index:02d}"
+            for index in range(45)
+        )
     proc = subprocess.run(
         [
             "bash",
@@ -467,6 +498,10 @@ def _run_backend_artifact_helper(
             "INJECT_ARCHIVE_HAZARDS": "true" if inject_archive_hazards else "false",
             "HAZARD_REPO": str(hazard_repo),
             "ARCHIVE_MEMBERS": str(archive_members_path),
+            "FAKE_GCLOUD_SUBMIT_FAILURE": (
+                "true" if submit_failure or submit_failure_stderr is not None else "false"
+            ),
+            "FAKE_SUBMIT_DIAGNOSTIC": submit_diagnostic,
         },
     )
     return proc, docker_log
@@ -479,6 +514,83 @@ def test_backend_artifact_helper_rejects_build_registry_digest_mismatch(tmp_path
     assert "digest mismatch" in (proc.stdout + proc.stderr).lower()
     assert "pull" not in docker_log.read_text(encoding="utf-8")
     assert "run" not in docker_log.read_text(encoding="utf-8")
+
+
+def test_backend_artifact_helper_reports_only_allowlisted_submit_summary(
+    tmp_path: Path,
+) -> None:
+    proc, docker_log = _run_backend_artifact_helper(
+        tmp_path,
+        "sha256:" + "a" * 64,
+        submit_failure=True,
+    )
+
+    combined_output = proc.stdout + proc.stderr
+    assert proc.returncode != 0
+    output_lines = combined_output.splitlines()
+    output_patterns = (
+        r"Cloud Build submit failure \(sanitized\):",
+        r"  exit_status=17",
+        r"  stderr_lines=49 stderr_bytes=[0-9]+",
+        r"  category=permission_denied http_status=403",
+        r"Error: Cloud Build submission failed",
+    )
+    assert len(output_lines) == len(output_patterns)
+    for line, pattern in zip(output_lines, output_patterns, strict=True):
+        assert re.fullmatch(pattern, line), line
+    for raw_value in (
+        "ci-placeholder-project",
+        "build-sa@ci-placeholder-project.iam.gserviceaccount.com",
+        "deploy-sa@ci-placeholder-project.iam.gserviceaccount.com",
+        "build-sa",
+        "deploy-sa",
+        "iam.gserviceaccount.com",
+        "gs://wordpack-build-source/private/context.tar",
+        "https://cloudbuild.googleapis.com/builds?access_token=secret#fragment",
+        "secret-00",
+        "short-access",
+        "short-token",
+        "short-client",
+        "550e8400-e29b-41d4-a716-446655440000",
+        "/opt/actions/workspace",
+        "/github/workspace",
+        "日本語",
+    ):
+        assert raw_value not in combined_output
+
+    assert len(combined_output.encode("utf-8")) <= 4096
+    assert "pull" not in docker_log.read_text(encoding="utf-8")
+
+    helper = Path("scripts/build_backend_artifact.sh").read_text(encoding="utf-8")
+    assert 'SUBMIT_ERROR="$(mktemp "${BUILD_CONTEXT_ROOT}/cloud-build-submit.XXXXXX")"' in helper
+    assert 'chmod 600 "$SUBMIT_ERROR"' in helper
+    assert 'rm -f "$SUBMIT_ERROR"' in helper
+
+
+def test_backend_artifact_helper_reports_unknown_submit_summary(tmp_path: Path) -> None:
+    raw_stderr = "unclassified failure: secret-value 日本語"
+    proc, _ = _run_backend_artifact_helper(
+        tmp_path,
+        "sha256:" + "a" * 64,
+        submit_failure_stderr=raw_stderr,
+    )
+
+    combined_output = proc.stdout + proc.stderr
+    assert proc.returncode != 0
+    output_lines = combined_output.splitlines()
+    output_patterns = (
+        r"Cloud Build submit failure \(sanitized\):",
+        r"  exit_status=17",
+        r"  stderr_lines=1 stderr_bytes=[0-9]+",
+        r"  category=unknown http_status=none",
+        r"Error: Cloud Build submission failed",
+    )
+    assert len(output_lines) == len(output_patterns)
+    for line, pattern in zip(output_lines, output_patterns, strict=True):
+        assert re.fullmatch(pattern, line), line
+    assert raw_stderr.strip() not in combined_output
+    assert "secret-value" not in combined_output
+    assert "日本語" not in combined_output
 
 
 def test_backend_artifact_helper_archives_target_commit_and_excludes_dirty_inputs(tmp_path: Path) -> None:
@@ -671,6 +783,7 @@ def test_backend_artifact_helper_smokes_the_same_digest_and_writes_only_immutabl
     proc, docker_log = _run_backend_artifact_helper(tmp_path, digest)
 
     assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "Cloud Build submit failure" not in proc.stdout + proc.stderr
     docker_calls = docker_log.read_text(encoding="utf-8")
     assert f"pull --quiet asia-northeast1-docker.pkg.dev/ci-placeholder-project/wordpack/backend@{digest}" in docker_calls
     assert f"wordpack/backend@{digest}" in docker_calls
