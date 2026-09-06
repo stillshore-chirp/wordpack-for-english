@@ -1,7 +1,60 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page } from '@playwright/test';
 import { json, mockConfig, runA11yCheck, seedAuthenticatedSession } from './helpers';
 
 const EMPTY_LIST_RESPONSE = { items: [], total: 0 };
+
+// OAuth本体へ接続せず、実際の GoogleLogin コンポーネントから AuthProvider の
+// signIn callbackまでを通すための最小 GIS fixture。資格情報はテスト専用の合成値。
+const SYNTHETIC_GSI_SCRIPT = `
+(() => {
+  const fixture = window.__wordpackGsiFixture || { callback: null };
+  fixture.issue = () => {
+    const current = window.__wordpackGsiFixture;
+    if (current && current.callback) current.callback({ credential: 'synthetic-p1-id-token', client_id: 'e2e-client', select_by: 'button' });
+  };
+  window.__wordpackGsiFixture = fixture;
+  /*
+   * StrictMode may load the GIS script twice during development. Keep the
+   * callback on the stable fixture object so a late script cannot hide it.
+   */
+  window.google = {
+    accounts: {
+      id: {
+        initialize(options) {
+          window.__wordpackGsiFixture.callback = options.callback;
+        },
+        renderButton(container) {
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.textContent = 'Googleでログイン';
+          button.setAttribute('aria-label', 'Googleでログイン');
+          button.addEventListener('click', () => window.__wordpackGsiFixture.issue());
+          container.replaceChildren(button);
+        },
+        prompt() {},
+        cancel() {},
+      },
+    },
+  };
+})();
+`;
+
+const blockLocalStorage = async (page: Page): Promise<void> => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get() {
+        throw new DOMException('localStorage blocked for this browser lane', 'SecurityError');
+      },
+    });
+  });
+};
+
+const installGsiFixture = async (page: Page): Promise<void> => {
+  await page.route('https://accounts.google.com/gsi/client*', (route) =>
+    route.fulfill({ status: 200, contentType: 'application/javascript', body: SYNTHETIC_GSI_SCRIPT }),
+  );
+};
 
 test.describe('認証導線', () => {
   test('Cookie 注入で OAuth ポップアップを使わずにログイン状態へ遷移できる', async ({ page, context }) => {
@@ -390,5 +443,154 @@ test.describe('認証導線', () => {
     await expect(failureAlert).toHaveAttribute('aria-live', 'assertive');
     await expect(failureAlert).toContainText('ログアウトに失敗しました');
     await expect(page.getByRole('status')).toHaveCount(0);
+  });
+
+  test('localStorage unavailable時も別タブへ失敗状態を伝え、再試行204で両タブを確定する', async ({ browser }) => {
+    const context = await browser.newContext();
+    const pageA = await context.newPage();
+    const pageB = await context.newPage();
+    const events: string[] = [];
+    let authRequestCount = 0;
+    let logoutRequestCount = 0;
+    let pageBLogoutRequestCount = 0;
+
+    for (const [label, page] of [['A', pageA] as const, ['B', pageB] as const]) {
+      await blockLocalStorage(page);
+      await installGsiFixture(page);
+      await mockConfig(page, { googleClientId: 'e2e-client' });
+      page.on('request', (request) => {
+        const url = new URL(request.url());
+        if (url.pathname.startsWith('/api/auth/')) {
+          events.push(`${label}:request:${request.method()}:${url.pathname}`);
+        }
+      });
+      page.on('response', (response) => {
+        const url = new URL(response.url());
+        if (url.pathname.startsWith('/api/auth/')) {
+          events.push(`${label}:response:${response.status()}:${url.pathname}`);
+        }
+      });
+      await page.route('**/api/auth/google', async (route) => {
+        authRequestCount += 1;
+        events.push(`${label}:google-request`);
+        await route.fulfill({
+          status: 200,
+          contentType: 'application/json',
+          headers: {
+            'Set-Cookie': `wp_session=synthetic-p1-session-${label.toLowerCase()}; HttpOnly; Path=/; SameSite=Lax`,
+          },
+          body: JSON.stringify({
+            user: {
+              google_sub: 'synthetic-p1-user',
+              email: 'p1-user@example.test',
+              display_name: 'P1 Synthetic User',
+            },
+          }),
+        });
+        events.push(`${label}:google-response`);
+      });
+      // AppShellの初期データ取得を固定し、認証状態の伝播だけを観測する。
+      await page.route(
+        (url) => url.pathname.startsWith('/api/') && !url.pathname.startsWith('/api/auth/') && url.pathname !== '/api/config',
+        (route) => route.fulfill(json(EMPTY_LIST_RESPONSE)),
+      );
+    }
+
+    await pageA.route('**/api/auth/logout', async (route) => {
+      logoutRequestCount += 1;
+      events.push(`A:logout-request-${logoutRequestCount}`);
+      await route.fulfill(
+        logoutRequestCount === 1
+          ? {
+              ...json({ detail: 'temporary failure' }, 503),
+              headers: {},
+            }
+          : {
+              status: 204,
+              headers: {
+                'Set-Cookie': 'wp_session=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax',
+              },
+            },
+      );
+      events.push(`A:logout-response-${logoutRequestCount}`);
+    });
+    await pageB.route('**/api/auth/logout', async (route) => {
+      pageBLogoutRequestCount += 1;
+      events.push(`B:logout-request-${pageBLogoutRequestCount}`);
+      await route.fulfill({ status: 204 });
+    });
+
+    await pageA.goto('/');
+    await pageB.goto('/');
+    for (const page of [pageA, pageB]) {
+      await expect(page.getByRole('button', { name: 'Googleでログイン' })).toBeVisible();
+      await expect
+        .poll(() => page.evaluate(() => {
+          try {
+            void window.localStorage;
+            return 'readable';
+          } catch {
+            return 'blocked';
+          }
+        }))
+        .toBe('blocked');
+    }
+
+    // GIS callback → AuthProvider.signIn → synthetic /api/auth/google の実UI経路。
+    await pageA.getByRole('button', { name: 'Googleでログイン' }).click();
+    await expect(pageA.getByRole('button', { name: 'ログアウト' }).first()).toBeVisible();
+    await pageB.getByRole('button', { name: 'Googleでログイン' }).click();
+    await expect(pageB.getByRole('button', { name: 'ログアウト' }).first()).toBeVisible();
+    await expect.poll(() => authRequestCount).toBe(2);
+    await expect.poll(async () => (await context.cookies()).filter(({ name }) => name === 'wp_session').length).toBe(1);
+
+    await pageA.getByRole('button', { name: 'ログアウト' }).first().click();
+    await expect.poll(() => logoutRequestCount).toBe(1);
+    await expect(pageA.getByRole('alert')).toContainText('ログアウトに失敗しました');
+    await expect(pageB.getByRole('button', { name: 'ログアウトを再試行' })).toBeVisible();
+    await expect(pageB.getByRole('alert')).toContainText('ログアウトに失敗しました');
+    expect(pageBLogoutRequestCount).toBe(0);
+
+    for (const page of [pageA, pageB]) {
+      await expect(page.locator('body')).not.toContainText('p1-user@example.test');
+      await expect(page.locator('body')).not.toContainText('P1 Synthetic User');
+      await expect.poll(() => page.evaluate(() => ({
+        auth: window.sessionStorage.getItem('wordpack.auth.v1'),
+        recovery: JSON.parse(window.sessionStorage.getItem('wordpack.logout.v1') || 'null')?.outcome ?? null,
+      }))).toEqual({ auth: null, recovery: 'failed' });
+    }
+
+    await pageA.getByRole('button', { name: 'ログアウトを再試行' }).click();
+    await expect.poll(() => logoutRequestCount).toBe(2);
+    await expect.poll(() => events).toContain('A:logout-response-2');
+    await expect(pageA.getByRole('heading', { name: 'WordPack にサインイン' })).toBeVisible();
+    await expect(pageB.getByRole('heading', { name: 'WordPack にサインイン' })).toBeVisible();
+    await expect(pageA.getByRole('button', { name: 'ログアウトを再試行' })).toHaveCount(0);
+    await expect(pageB.getByRole('button', { name: 'ログアウトを再試行' })).toHaveCount(0);
+    // Aのconfirmed通知後は、Bが自身の発行履歴を持つ場合にだけ再失効を
+    // 送る実装を許容する。失敗状態の受信中に自動retryしないことは上で固定する。
+    expect(pageBLogoutRequestCount).toBeLessThanOrEqual(1);
+    if (pageBLogoutRequestCount === 1) {
+      expect(events.indexOf('B:logout-request-1')).toBeGreaterThan(events.indexOf('A:logout-response-2'));
+    }
+
+    for (const page of [pageA, pageB]) {
+      await expect.poll(() => page.evaluate(() => ({
+        auth: window.sessionStorage.getItem('wordpack.auth.v1'),
+        recovery: JSON.parse(window.sessionStorage.getItem('wordpack.logout.v1') || 'null')?.outcome ?? null,
+      }))).toEqual({ auth: null, recovery: null });
+    }
+    await expect.poll(async () => (await context.cookies()).filter(({ name }) => name === 'wp_session')).toEqual([]);
+    await test.info().attach('cross-tab-session-storage-blocked.json', {
+      body: JSON.stringify({
+        events,
+        authRequestCount,
+        logoutRequestCount,
+        pageBLogoutRequestCount,
+        finalCookieNames: (await context.cookies()).map(({ name }) => name).sort(),
+      }, null, 2),
+      contentType: 'application/json',
+    });
+    await context.close();
   });
 });

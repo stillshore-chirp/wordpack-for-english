@@ -38,6 +38,12 @@ interface StoredLogoutRecovery {
   outcome: Exclude<LogoutOutcome, 'confirmed'>;
 }
 
+interface LogoutBroadcastMessage {
+  type: 'logout-recovery';
+  version: 1;
+  outcome: LogoutOutcome;
+}
+
 type StorageKind = 'local' | 'session';
 
 interface AuthContextValue {
@@ -60,6 +66,9 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 const STORAGE_KEY = 'wordpack.auth.v1';
 const LOGOUT_RECOVERY_STORAGE_KEY = 'wordpack.logout.v1';
+const LOGOUT_BROADCAST_CHANNEL_NAME = 'wordpack.logout.v1';
+const LOGOUT_BROADCAST_MESSAGE_TYPE = 'logout-recovery';
+const LOGOUT_BROADCAST_VERSION = 1 as const;
 // 回復マーカー以上の容量を使い、near-quotaでprobeだけ成功する判定を避ける。
 const LOGOUT_STORAGE_PROBE_KEY = 'wordpack.logout.storage-probe.v1';
 const NOTIFICATIONS_STORAGE_KEY = 'wpfe.notifications.v1';
@@ -131,6 +140,35 @@ function isStorageWritable(storage: Storage | null): boolean {
   }
 }
 
+function isLogoutRecoveryStorageUsable(storage: Storage | null): boolean {
+  return readStorageItem(storage, LOGOUT_RECOVERY_STORAGE_KEY).available && isStorageWritable(storage);
+}
+
+function createLogoutBroadcastChannel(): BroadcastChannel | null {
+  if (typeof window === 'undefined') return null;
+  const BroadcastChannelConstructor = (window as Window & {
+    BroadcastChannel?: typeof BroadcastChannel;
+  }).BroadcastChannel;
+  if (typeof BroadcastChannelConstructor !== 'function') return null;
+  try {
+    return new BroadcastChannelConstructor(LOGOUT_BROADCAST_CHANNEL_NAME);
+  } catch {
+    return null;
+  }
+}
+
+function canUseLogoutBroadcastChannel(): boolean {
+  const channel = createLogoutBroadcastChannel();
+  if (!channel) return false;
+  try {
+    channel.close();
+  } catch {
+    // capability probeのclose失敗は、送信経路を利用不能として扱う。
+    return false;
+  }
+  return true;
+}
+
 function trackPendingRequest<T>(pending: Set<Promise<unknown>>, request: Promise<T>): Promise<T> {
   const tracked = Promise.resolve(request);
   pending.add(tracked);
@@ -199,6 +237,22 @@ function parseStoredLogoutRecovery(raw: string | null): StoredLogoutRecovery | n
   return { outcome: 'unknown' };
 }
 
+function parseLogoutBroadcastMessage(value: unknown): LogoutBroadcastMessage | null {
+  if (!value || typeof value !== 'object') return null;
+  const message = value as Partial<LogoutBroadcastMessage>;
+  if (message.type !== LOGOUT_BROADCAST_MESSAGE_TYPE || message.version !== LOGOUT_BROADCAST_VERSION) {
+    return null;
+  }
+  if (message.outcome !== 'confirmed' && message.outcome !== 'failed' && message.outcome !== 'unknown') {
+    return null;
+  }
+  return {
+    type: LOGOUT_BROADCAST_MESSAGE_TYPE,
+    version: LOGOUT_BROADCAST_VERSION,
+    outcome: message.outcome,
+  };
+}
+
 function readStoredLogoutRecovery(): StoredLogoutRecovery | null {
   if (typeof window === 'undefined') return null;
   const localStorage = getStorage('local');
@@ -209,9 +263,14 @@ function readStoredLogoutRecovery(): StoredLogoutRecovery | null {
   if (stored) return stored;
   // 片方だけが利用不能でも、もう片方で回復マーカーの保存可否を確認できるなら
   // 初期認証を不必要にunknownへ倒さない。両方ともusableでない場合だけfail-closedにする。
-  const localUsable = local.available && isStorageWritable(localStorage);
-  const sessionUsable = session.available && isStorageWritable(sessionStorage);
+  const localUsable = isLogoutRecoveryStorageUsable(localStorage);
+  const sessionUsable = isLogoutRecoveryStorageUsable(sessionStorage);
   if (!localUsable && !sessionUsable) {
+    return { outcome: 'unknown' };
+  }
+  // localStorageが使えない場合、sessionStorageだけでは兄弟tabへ状態を伝えられない。
+  // BroadcastChannelも初期化できない環境では、再読込後の認証入口をfail-closedにする。
+  if (!localUsable && !canUseLogoutBroadcastChannel()) {
     return { outcome: 'unknown' };
   }
   return null;
@@ -314,6 +373,7 @@ export const AuthProvider: React.FC<{ clientId: string; children: React.ReactNod
   const authOperationSequenceRef = useRef(0);
   const activeAuthOperationRef = useRef<{ id: number; kind: 'sign-in' | 'logout' | 'guest' } | null>(null);
   const logoutRequestRef = useRef<Promise<SignOutResult> | null>(null);
+  const logoutBroadcastChannelRef = useRef<BroadcastChannel | null>(null);
   const pendingSessionRequestsRef = useRef<Set<Promise<unknown>>>(new Set());
   // 外部logoutと重なった発行を、storage eventの配送順に依存せず再確認するための世代。
   const sessionIssueGenerationRef = useRef(0);
@@ -354,6 +414,30 @@ export const AuthProvider: React.FC<{ clientId: string; children: React.ReactNod
   const updateLogoutOutcome = useCallback((next: LogoutOutcome | null) => {
     logoutOutcomeRef.current = next;
     setLogoutOutcomeState(next);
+  }, []);
+
+  const notifyLogoutRecovery = useCallback((outcome: LogoutOutcome): boolean => {
+    const channel = logoutBroadcastChannelRef.current;
+    if (!channel) return false;
+    try {
+      channel.postMessage({
+        type: LOGOUT_BROADCAST_MESSAGE_TYPE,
+        version: LOGOUT_BROADCAST_VERSION,
+        outcome,
+      } satisfies LogoutBroadcastMessage);
+      return true;
+    } catch {
+      // BroadcastChannelの送信失敗は、localStorageも使えない場合にだけ
+      // server logoutのconfirmed表示を抑止する。エラー内容は公開しない。
+      logoutBroadcastChannelRef.current = null;
+      try {
+        channel.close();
+      } catch {
+        // close失敗は回復状態の保存を妨げない。
+      }
+      console.warn('Could not broadcast logout recovery state');
+      return false;
+    }
   }, []);
 
   const isCurrentAuthOperation = useCallback(
@@ -529,6 +613,7 @@ export const AuthProvider: React.FC<{ clientId: string; children: React.ReactNod
     // 開発用バイパスが有効でも、明示的なログアウト直後に認証UIを再注入しない。
     setAuthBypassActive(false);
     persistLogoutRecovery('unknown');
+    notifyLogoutRecovery('unknown');
     updateLogoutOutcome('unknown');
     setError(LOGOUT_RECOVERY_MESSAGES.unknown);
 
@@ -577,6 +662,16 @@ export const AuthProvider: React.FC<{ clientId: string; children: React.ReactNod
       // より新しい認証操作が開始済みなら、その操作の状態を上書きしない。
       if (!isCurrentAuthOperation(operationId)) return result;
 
+      const notified = notifyLogoutRecovery(result.outcome);
+      if (!notified && !isLogoutRecoveryStorageUsable(getStorage('local'))) {
+        // localStorageとBroadcastChannelの両方が使えない場合、別タブへ結果を
+        // 伝えられず、confirmed/failedを全体状態として断定できない。
+        if (result.outcome !== 'unknown') {
+          console.warn('Could not synchronize logout recovery state across tabs');
+        }
+        result = { outcome: 'unknown' };
+      }
+
       if (result.outcome === 'confirmed') {
         if (sessionIssueGenerationRef.current === sessionIssueGenerationAtStart) {
           sessionIssueDirtyRef.current = false;
@@ -601,7 +696,7 @@ export const AuthProvider: React.FC<{ clientId: string; children: React.ReactNod
     });
     logoutRequestRef.current = trackedRequest;
     return trackedRequest;
-  }, [finishAuthOperation, isCurrentAuthOperation, updateAuthMode, updateLogoutOutcome, waitForSessionRequests]);
+  }, [finishAuthOperation, isCurrentAuthOperation, notifyLogoutRecovery, updateAuthMode, updateLogoutOutcome, waitForSessionRequests]);
 
   const signOut = useCallback(() => requestLogout(), [requestLogout]);
 
@@ -732,6 +827,38 @@ export const AuthProvider: React.FC<{ clientId: string; children: React.ReactNod
       window.removeEventListener(APP_EVENTS.authUnauthorized, handler as EventListener);
     };
   }, [reissueGuestSession, updateAuthMode]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const channel = createLogoutBroadcastChannel();
+    if (!channel) return;
+
+    channel.onmessage = (event: MessageEvent<unknown>) => {
+      const message = parseLogoutBroadcastMessage(event.data);
+      if (!message) return;
+      // 受信したメッセージを再broadcastせず、既存のstorage handlerへ一方向に
+      // 渡すことで、storage eventとの重複があってもping-pongを起こさない。
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: LOGOUT_RECOVERY_STORAGE_KEY,
+        newValue: message.outcome === 'confirmed'
+          ? null
+          : JSON.stringify({ outcome: message.outcome } satisfies StoredLogoutRecovery),
+      }));
+    };
+    logoutBroadcastChannelRef.current = channel;
+
+    return () => {
+      channel.onmessage = null;
+      if (logoutBroadcastChannelRef.current === channel) {
+        logoutBroadcastChannelRef.current = null;
+      }
+      try {
+        channel.close();
+      } catch {
+        // close失敗はアンマウント時の認証状態へ伝播させない。
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;

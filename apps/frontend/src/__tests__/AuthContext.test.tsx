@@ -75,7 +75,7 @@ const LogoutStateProbe: React.FC = () => {
 };
 
 const AuthRecoveryProbe: React.FC = () => {
-  const { authMode, user, logoutOutcome, signIn, signOut } = useAuth();
+  const { authMode, user, logoutOutcome, signIn, signOut, enterGuestMode } = useAuth();
   return (
     <>
       <span
@@ -85,10 +85,59 @@ const AuthRecoveryProbe: React.FC = () => {
         data-outcome={logoutOutcome ?? 'none'}
       />
       <button type="button" onClick={() => void signIn('reload-token').catch(() => undefined)}>サインイン</button>
+      <button type="button" onClick={() => void enterGuestMode()}>ゲスト</button>
       <button type="button" onClick={() => void signOut()}>ログアウト</button>
     </>
   );
 };
+
+class TestBroadcastChannel {
+  static instances: TestBroadcastChannel[] = [];
+
+  readonly name: string;
+  readonly sentMessages: unknown[] = [];
+  onmessage: ((event: MessageEvent<unknown>) => void) | null = null;
+  private closed = false;
+
+  constructor(name: string) {
+    this.name = name;
+    TestBroadcastChannel.instances.push(this);
+  }
+
+  postMessage(message: unknown): void {
+    this.sentMessages.push(message);
+    for (const target of TestBroadcastChannel.instances) {
+      if (target === this || target.closed || target.name !== this.name) continue;
+      Promise.resolve().then(() => target.onmessage?.({ data: message } as MessageEvent<unknown>));
+    }
+  }
+
+  close(): void {
+    this.closed = true;
+    const index = TestBroadcastChannel.instances.indexOf(this);
+    if (index >= 0) TestBroadcastChannel.instances.splice(index, 1);
+  }
+
+  static reset(): void {
+    TestBroadcastChannel.instances = [];
+  }
+}
+
+function installBroadcastChannel(value: unknown): () => void {
+  const descriptor = Object.getOwnPropertyDescriptor(window, 'BroadcastChannel');
+  Object.defineProperty(window, 'BroadcastChannel', {
+    configurable: true,
+    writable: true,
+    value,
+  });
+  return () => {
+    if (descriptor) {
+      Object.defineProperty(window, 'BroadcastChannel', descriptor);
+    } else {
+      delete (window as Window & { BroadcastChannel?: unknown }).BroadcastChannel;
+    }
+  };
+}
 
 describe('AuthProvider logging behaviour', () => {
   // 新規参画者向けメモ: 認証バイパス有効時のログレベル切り替えを固定するための回帰テスト。
@@ -982,6 +1031,8 @@ describe('AuthProvider logout result state', () => {
   it('uses sessionStorage when localStorage access is denied and still sends logout', async () => {
     const localStorageDescriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
     if (!localStorageDescriptor) throw new Error('localStorage descriptor is unavailable');
+    const restoreBroadcastChannel = installBroadcastChannel(TestBroadcastChannel);
+    TestBroadcastChannel.reset();
     localStorage.setItem('wordpack.auth.v1', JSON.stringify({ authMode: 'authenticated', user: sampleUser }));
     Object.defineProperty(window, 'localStorage', {
       configurable: true,
@@ -1006,12 +1057,15 @@ describe('AuthProvider logout result state', () => {
       rendered.unmount();
     } finally {
       Object.defineProperty(window, 'localStorage', localStorageDescriptor);
+      restoreBroadcastChannel();
     }
   });
 
   it('allows authentication when localStorage is unavailable but sessionStorage is usable', async () => {
     const localStorageDescriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
     if (!localStorageDescriptor) throw new Error('localStorage descriptor is unavailable');
+    const restoreBroadcastChannel = installBroadcastChannel(TestBroadcastChannel);
+    TestBroadcastChannel.reset();
     Object.defineProperty(window, 'localStorage', {
       configurable: true,
       get: () => {
@@ -1066,6 +1120,7 @@ describe('AuthProvider logout result state', () => {
       reloaded.unmount();
     } finally {
       Object.defineProperty(window, 'localStorage', localStorageDescriptor);
+      restoreBroadcastChannel();
     }
   });
 
@@ -1200,6 +1255,210 @@ describe('AuthProvider logout result state', () => {
     expect(probe).toHaveAttribute('data-outcome', 'confirmed');
     expect(sessionStorage.getItem('wordpack.logout.v1')).toBeNull();
     rendered.unmount();
+  });
+
+  it('uses BroadcastChannel for session-only recovery and propagates retry confirmation', async () => {
+    const localStorageDescriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    if (!localStorageDescriptor) throw new Error('localStorage descriptor is unavailable');
+    const restoreBroadcastChannel = installBroadcastChannel(TestBroadcastChannel);
+    TestBroadcastChannel.reset();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get: () => {
+        throw new Error('localStorage access denied');
+      },
+    });
+
+    let logoutStatus = 503;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith('/api/config')) return Promise.resolve(new Response('{}', { status: 200 }));
+      if (url.endsWith('/api/auth/logout') && init?.method === 'POST') {
+        return Promise.resolve(new Response(logoutStatus === 204 ? null : '{}', { status: logoutStatus }));
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    });
+
+    const DualProbe: React.FC<{ id: string }> = ({ id }) => {
+      const { authMode, user, error, logoutOutcome, signOut } = useAuth();
+      return (
+        <div>
+          <span
+            data-testid={`broadcast-state-${id}`}
+            data-auth-mode={authMode}
+            data-user={user ? 'present' : 'null'}
+            data-outcome={logoutOutcome ?? 'none'}
+          >
+            {error ?? 'none'}
+          </span>
+          <button type="button" onClick={() => void signOut()}>ログアウト {id}</button>
+        </div>
+      );
+    };
+
+    let rendered: ReturnType<typeof render> | undefined;
+    try {
+      rendered = render(
+        <>
+          <AuthProvider clientId="test-client"><DualProbe id="A" /></AuthProvider>
+          <AuthProvider clientId="test-client"><DualProbe id="B" /></AuthProvider>
+        </>,
+      );
+      const probeA = await screen.findByTestId('broadcast-state-A');
+      const probeB = await screen.findByTestId('broadcast-state-B');
+      await waitFor(() => expect(TestBroadcastChannel.instances).toHaveLength(2));
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'ログアウト A' }));
+      await waitFor(() => {
+        expect(probeA).toHaveAttribute('data-outcome', 'failed');
+        expect(probeB).toHaveAttribute('data-outcome', 'failed');
+        expect(probeA).toHaveAttribute('data-auth-mode', 'anonymous');
+        expect(probeB).toHaveAttribute('data-user', 'null');
+      });
+
+      logoutStatus = 204;
+      await user.click(screen.getByRole('button', { name: 'ログアウト A' }));
+      await waitFor(() => {
+        expect(probeA).toHaveAttribute('data-outcome', 'confirmed');
+        expect(probeB).toHaveAttribute('data-outcome', 'confirmed');
+      });
+      expect(sessionStorage.getItem('wordpack.logout.v1')).toBeNull();
+      expect(fetchMock.mock.calls.filter(([request]) => {
+        const url = typeof request === 'string' ? request : request instanceof URL ? request.toString() : request.url;
+        return url.endsWith('/api/auth/logout');
+      })).toHaveLength(2);
+    } finally {
+      rendered?.unmount();
+      Object.defineProperty(window, 'localStorage', localStorageDescriptor);
+      restoreBroadcastChannel();
+    }
+  });
+
+  it('keeps a one-tab confirmed result when BroadcastChannel has no receiver', async () => {
+    const restoreBroadcastChannel = installBroadcastChannel(TestBroadcastChannel);
+    TestBroadcastChannel.reset();
+    let rendered: ReturnType<typeof render> | undefined;
+    try {
+      setupFetch(new Response(null, { status: 204 }));
+      rendered = render(
+        <AuthProvider clientId="test-client">
+          <LogoutStateProbe />
+        </AuthProvider>,
+      );
+      const probe = await screen.findByTestId('logout-state');
+      await waitFor(() => expect(TestBroadcastChannel.instances).toHaveLength(1));
+
+      await act(async () => {
+        TestBroadcastChannel.instances[0]?.onmessage?.({
+          data: { type: 'other-message', version: 1, outcome: 'failed' },
+        } as MessageEvent<unknown>);
+      });
+      expect(probe).toHaveAttribute('data-outcome', 'none');
+
+      await userEvent.setup().click(screen.getByRole('button', { name: 'ログアウト' }));
+      await waitFor(() => expect(probe).toHaveAttribute('data-outcome', 'confirmed'));
+      expect(TestBroadcastChannel.instances[0]?.sentMessages).toEqual([
+        { type: 'logout-recovery', version: 1, outcome: 'unknown' },
+        { type: 'logout-recovery', version: 1, outcome: 'confirmed' },
+      ]);
+    } finally {
+      rendered?.unmount();
+      restoreBroadcastChannel();
+    }
+  });
+
+  it('keeps logout unresolved when localStorage and BroadcastChannel are both unavailable', async () => {
+    const localStorageDescriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    if (!localStorageDescriptor) throw new Error('localStorage descriptor is unavailable');
+    const throwingBroadcastChannel = class {
+      constructor(_name: string) {
+        throw new Error('BroadcastChannel unavailable');
+      }
+    };
+    const restoreBroadcastChannel = installBroadcastChannel(throwingBroadcastChannel);
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get: () => {
+        throw new Error('localStorage access denied');
+      },
+    });
+    let rendered: ReturnType<typeof render> | undefined;
+    try {
+      setupFetch(new Response(null, { status: 204 }));
+      rendered = render(
+        <AuthProvider clientId="test-client">
+          <LogoutStateProbe />
+        </AuthProvider>,
+      );
+      const probe = await screen.findByTestId('logout-state');
+      await userEvent.setup().click(screen.getByRole('button', { name: 'ログアウト' }));
+      await waitFor(() => expect(probe).toHaveAttribute('data-outcome', 'unknown'));
+      expect(sessionStorage.getItem('wordpack.logout.v1')).toBe(JSON.stringify({ outcome: 'unknown' }));
+    } finally {
+      rendered?.unmount();
+      Object.defineProperty(window, 'localStorage', localStorageDescriptor);
+      restoreBroadcastChannel();
+    }
+  });
+
+  it('fails closed at startup and blocks sign-in and guest entry without a sync transport', async () => {
+    const localStorageDescriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    if (!localStorageDescriptor) throw new Error('localStorage descriptor is unavailable');
+    const throwingBroadcastChannel = class {
+      constructor(_name: string) {
+        throw new Error('BroadcastChannel unavailable');
+      }
+    };
+    const restoreBroadcastChannel = installBroadcastChannel(throwingBroadcastChannel);
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get: () => {
+        throw new Error('localStorage access denied');
+      },
+    });
+    let rendered: ReturnType<typeof render> | undefined;
+    try {
+      const fetchMock = setupFetch(new Response(null, { status: 204 }));
+      rendered = render(
+        <AuthProvider clientId="test-client">
+          <AuthRecoveryProbe />
+        </AuthProvider>,
+      );
+      const probe = await screen.findByTestId('auth-recovery-state');
+      expect(probe).toHaveAttribute('data-auth-mode', 'anonymous');
+      expect(probe).toHaveAttribute('data-outcome', 'unknown');
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'サインイン' }));
+      await user.click(screen.getByRole('button', { name: 'ゲスト' }));
+      expect(fetchMock).not.toHaveBeenCalledWith('/api/auth/google', expect.anything());
+      expect(fetchMock).not.toHaveBeenCalledWith('/api/auth/guest', expect.anything());
+    } finally {
+      rendered?.unmount();
+      Object.defineProperty(window, 'localStorage', localStorageDescriptor);
+      restoreBroadcastChannel();
+    }
+  });
+
+  it('keeps localStorage logout confirmation when BroadcastChannel is unavailable', async () => {
+    const restoreBroadcastChannel = installBroadcastChannel(undefined);
+    let rendered: ReturnType<typeof render> | undefined;
+    try {
+      setupFetch(new Response(null, { status: 204 }));
+      rendered = render(
+        <AuthProvider clientId="test-client">
+          <LogoutStateProbe />
+        </AuthProvider>,
+      );
+      const probe = await screen.findByTestId('logout-state');
+      await userEvent.setup().click(screen.getByRole('button', { name: 'ログアウト' }));
+      await waitFor(() => expect(probe).toHaveAttribute('data-outcome', 'confirmed'));
+      expect(localStorage.getItem('wordpack.logout.v1')).toBeNull();
+    } finally {
+      rendered?.unmount();
+      restoreBroadcastChannel();
+    }
   });
 
   it('drains a pending Google session before confirming a cross-tab logout', async () => {
