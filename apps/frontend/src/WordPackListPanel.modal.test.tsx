@@ -208,6 +208,7 @@ describe('WordPackListPanel modal preview', () => {
 
     // 統合された一覧のヘッダーが表示される
     await waitFor(() => expect(screen.getByRole('heading', { name: /保存済みWordPack/ })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByTestId('wp-card')).toHaveLength(3));
 
     const senseButtons = await screen.findAllByRole('button', { name: '語義' });
     expect(senseButtons).toHaveLength(3);
