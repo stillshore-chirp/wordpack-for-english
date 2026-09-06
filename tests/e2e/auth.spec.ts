@@ -242,6 +242,107 @@ test.describe('認証導線', () => {
     expect((await context.cookies()).filter(({ name }) => name === 'wp_guest')).toEqual([]);
   });
 
+  test('別タブの保留中ゲスト発行はログアウト完了後に追従失効する', async ({ browser }) => {
+    const context = await browser.newContext();
+    const pageA = await context.newPage();
+    const pageB = await context.newPage();
+    const events: string[] = [];
+    let releaseIssuance!: () => void;
+    let issuanceDelivered = false;
+    let followupCookieHeader = '';
+    const issuanceRelease = new Promise<void>((resolve) => {
+      releaseIssuance = resolve;
+    });
+
+    await pageA.addInitScript(() => {
+      window.localStorage.setItem('wordpack.auth.v1', JSON.stringify({ authMode: 'guest' }));
+    });
+    await mockConfig(pageA);
+    await mockConfig(pageB);
+    // Tab A is a stable guest consumer. Tab B reaches the real backend with no cookie,
+    // receives 401, and starts the actual AuthProvider guest reissue flow below.
+    await pageA.route('**/api/word/packs*', (route) => route.fulfill(json(EMPTY_LIST_RESPONSE)));
+    await pageB.route('**/api/auth/guest', async (route) => {
+      events.push('B:guest-request');
+      await issuanceRelease;
+      await route.continue();
+      issuanceDelivered = true;
+      events.push('B:guest-response');
+    });
+    await pageA.route('**/api/auth/logout', async (route) => {
+      events.push('A:logout-request');
+      await route.continue();
+    });
+    await pageB.route('**/api/auth/logout', async (route) => {
+      if (!issuanceDelivered) {
+        throw new Error('Tab B sent follow-up logout before the delayed guest response arrived');
+      }
+      followupCookieHeader = route.request().headers().cookie ?? '';
+      events.push('B:logout-request');
+      await route.continue();
+    });
+    for (const [tab, page] of [['A', pageA] as const, ['B', pageB] as const]) {
+      page.on('response', (response) => {
+        const url = new URL(response.url());
+        if (!url.pathname.startsWith('/api/auth/')) return;
+        events.push(`${tab}:${response.request().method()}:${url.pathname}:${response.status()}`);
+      });
+    }
+
+    await pageA.goto('/');
+    const logoutA = pageA.getByRole('button', { name: 'ログアウト' }).first();
+    await expect(logoutA).toBeVisible();
+
+    await pageB.goto('/');
+    await expect.poll(() => events).toContain('B:guest-request');
+    await expect(pageB.getByRole('button', { name: 'ログアウト' }).first()).toBeVisible();
+
+    // The shared storage event confirms Tab A's server logout while Tab B's issuance
+    // request is still pending. No completion UI or follow-up logout may happen yet.
+    await logoutA.click();
+    await expect.poll(() => events).toContain('A:logout-request');
+    await expect.poll(() => events).toContain('A:POST:/api/auth/logout:204');
+    await pageB.waitForTimeout(100);
+    expect(events).not.toContain('B:logout-request');
+    await expect(pageB.getByRole('heading', { name: 'WordPack にサインイン' })).toHaveCount(0);
+
+    releaseIssuance();
+    await expect.poll(() => events).toContain('B:guest-response');
+    await expect.poll(() => events).toContain('B:logout-request');
+    expect(events.indexOf('B:guest-response')).toBeLessThan(events.indexOf('B:logout-request'));
+    expect(followupCookieHeader).toContain('wp_guest=');
+    expect(followupCookieHeader).toContain('__session=');
+
+    await expect.poll(async () => {
+      const cookies = await context.cookies();
+      return cookies.filter(({ name }) => ['wp_guest', '__session', 'wp_session'].includes(name));
+    }).toEqual([]);
+    await expect.poll(async () => pageB.evaluate(() => localStorage.getItem('wordpack.logout.v1'))).toBe(null);
+
+    const protectedResponse = await pageB.evaluate(async () => {
+      const response = await fetch('/api/word/packs?limit=1&offset=0', { credentials: 'include' });
+      return { status: response.status };
+    });
+    expect(protectedResponse).toEqual({ status: 401 });
+    await expect(pageB.getByRole('heading', { name: 'WordPack にサインイン' })).toBeVisible();
+    const followupCookieNames = followupCookieHeader
+      .split(';')
+      .map((part) => part.trim().split('=', 1)[0])
+      .filter(Boolean)
+      .sort();
+    await test.info().attach('cross-tab-logout-order.json', {
+      body: JSON.stringify({
+        events,
+        followupCookieNames,
+        protectedResponse,
+        finalBrowserCookieNames: (await context.cookies()).map(({ name }) => name).sort(),
+        finalLogoutMarker: await pageB.evaluate(() => localStorage.getItem('wordpack.logout.v1')),
+      }, null, 2),
+      contentType: 'application/json',
+    });
+    await context.close();
+  });
+
   test('ログアウト確認中はpolite statusを示し、失敗応答後にassertive alertへ遷移する', async ({ page }) => {
     let releaseLogout!: () => void;
     let logoutRequestStarted = false;

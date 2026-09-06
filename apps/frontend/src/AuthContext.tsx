@@ -313,6 +313,9 @@ export const AuthProvider: React.FC<{ clientId: string; children: React.ReactNod
   const activeAuthOperationRef = useRef<{ id: number; kind: 'sign-in' | 'logout' | 'guest' } | null>(null);
   const logoutRequestRef = useRef<Promise<SignOutResult> | null>(null);
   const pendingSessionRequestsRef = useRef<Set<Promise<unknown>>>(new Set());
+  // 外部logoutと重なった発行を、storage eventの配送順に依存せず再確認するための世代。
+  const sessionIssueGenerationRef = useRef(0);
+  const sessionIssueDirtyRef = useRef(false);
   /**
    * ゲストセッション再発行の並行実行を防ぐフラグ。
    * 新参メンバー向けに補足すると、複数の 401 が同時発生しても最初のリクエストのみが
@@ -372,6 +375,8 @@ export const AuthProvider: React.FC<{ clientId: string; children: React.ReactNod
   }, []);
 
   const trackSessionRequest = useCallback(<T,>(request: Promise<T>): Promise<T> => {
+    sessionIssueGenerationRef.current += 1;
+    sessionIssueDirtyRef.current = true;
     return trackPendingRequest(pendingSessionRequestsRef.current, request);
   }, []);
 
@@ -506,6 +511,7 @@ export const AuthProvider: React.FC<{ clientId: string; children: React.ReactNod
 
     const operationId = authOperationSequenceRef.current + 1;
     authOperationSequenceRef.current = operationId;
+    const sessionIssueGenerationAtStart = sessionIssueGenerationRef.current;
     // ログアウトは進行中のログイン・ゲスト処理を無効化し、遅れて返る結果で認証状態を戻させない。
     activeAuthOperationRef.current = { id: operationId, kind: 'logout' };
     setIsAuthenticating(true);
@@ -567,6 +573,9 @@ export const AuthProvider: React.FC<{ clientId: string; children: React.ReactNod
       if (!isCurrentAuthOperation(operationId)) return result;
 
       if (result.outcome === 'confirmed') {
+        if (sessionIssueGenerationRef.current === sessionIssueGenerationAtStart) {
+          sessionIssueDirtyRef.current = false;
+        }
         persistLogoutRecovery(null);
         updateLogoutOutcome('confirmed');
         setError(null);
@@ -724,6 +733,21 @@ export const AuthProvider: React.FC<{ clientId: string; children: React.ReactNod
     const handleStorage = (event: StorageEvent) => {
       if (event.key !== LOGOUT_RECOVERY_STORAGE_KEY) return;
 
+      // 別タブのconfirmed通知は、このタブの発行リクエストが残っているときだけでは
+      // server-side logoutの完了を保証しない。発行応答が後着してCookieを再発行する
+      // 可能性があるため、ローカル状態を先に消去してから、このタブ自身のlogoutで
+      // 発行リクエストのsettle後にもう一度失効を確認する。
+      const hasPendingSessionRequest =
+        event.newValue === null && pendingSessionRequestsRef.current.size > 0;
+      const hasSessionIssueOverlap =
+        event.newValue === null && (hasPendingSessionRequest || sessionIssueDirtyRef.current);
+      const hasLogoutInFlight = logoutRequestRef.current !== null;
+
+      // 既にこのタブのlogoutがdrainまたはserver応答待ちなら、storage通知の種類を問わず
+      // その世代を無効化しない。進行中のlogoutをstale扱いにすると、自処理の結果を受けても
+      // confirmed/failed/unknownを反映できず、かえって回復操作を隠すことになる。
+      if (hasLogoutInFlight) return;
+
       const stored = parseStoredLogoutRecovery(event.newValue);
       const nextOutcome: LogoutOutcome = event.newValue === null
         ? 'confirmed'
@@ -735,6 +759,15 @@ export const AuthProvider: React.FC<{ clientId: string; children: React.ReactNod
       setUser(null);
       updateAuthMode('anonymous');
       setAuthBypassActive(false);
+      if (hasSessionIssueOverlap) {
+        // 別タブのconfirmedはこのタブの発行履歴を処理しないため、再確認が終わるまで
+        // unknownをdurableに残す。requestLogoutはpending requestをdrainしてから送信する。
+        persistLogoutRecovery('unknown');
+        updateLogoutOutcome('unknown');
+        setError(LOGOUT_RECOVERY_MESSAGES.unknown);
+        void requestLogout();
+        return;
+      }
       if (nextOutcome === 'confirmed') {
         // 別タブの成功通知で、このタブのsessionStorage fallbackも掃除する。
         persistLogoutRecovery(null);
@@ -749,7 +782,7 @@ export const AuthProvider: React.FC<{ clientId: string; children: React.ReactNod
     };
     window.addEventListener('storage', handleStorage);
     return () => window.removeEventListener('storage', handleStorage);
-  }, [updateAuthMode, updateLogoutOutcome]);
+  }, [requestLogout, updateAuthMode, updateLogoutOutcome]);
 
   const value = useMemo<AuthContextValue>(
     () => ({

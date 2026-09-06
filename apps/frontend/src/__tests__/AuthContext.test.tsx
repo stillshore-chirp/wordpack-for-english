@@ -1026,6 +1026,209 @@ describe('AuthProvider logout result state', () => {
     rendered.unmount();
   });
 
+  it('drains a pending Google session before confirming a cross-tab logout', async () => {
+    localStorage.removeItem('wordpack.auth.v1');
+    let resolveGoogle!: (response: Response) => void;
+    const googleResponse = new Promise<Response>((resolve) => {
+      resolveGoogle = resolve;
+    });
+    let resolveLogout!: (response: Response) => void;
+    const logoutResponse = new Promise<Response>((resolve) => {
+      resolveLogout = resolve;
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith('/api/config')) return Promise.resolve(new Response('{}', { status: 200 }));
+      if (url.endsWith('/api/auth/google')) return googleResponse;
+      if (url.endsWith('/api/auth/logout') && init?.method === 'POST') return logoutResponse;
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    });
+    const logoutCallCount = () => fetchMock.mock.calls.filter(([request]) => {
+      const url = typeof request === 'string' ? request : request instanceof URL ? request.toString() : request.url;
+      return url.endsWith('/api/auth/logout');
+    }).length;
+    const RaceProbe: React.FC = () => {
+      const { signIn, authMode, user, logoutOutcome, isAuthenticating } = useAuth();
+      return (
+        <>
+          <span
+            data-testid="cross-tab-google-state"
+            data-auth-mode={authMode}
+            data-user={user ? 'present' : 'null'}
+            data-outcome={logoutOutcome ?? 'none'}
+            data-authenticating={isAuthenticating ? 'true' : 'false'}
+          />
+          <button type="button" onClick={() => void signIn('cross-tab-token').catch(() => undefined)}>サインイン</button>
+        </>
+      );
+    };
+
+    render(
+      <AuthProvider clientId="test-client">
+        <RaceProbe />
+      </AuthProvider>,
+    );
+    const user = userEvent.setup();
+    const probe = await screen.findByTestId('cross-tab-google-state');
+    await user.click(screen.getByRole('button', { name: 'サインイン' }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/auth/google', expect.objectContaining({ method: 'POST' })));
+
+    // 発行応答がstorageのlogout開始通知より先にsettleしても、dirty履歴を保持する。
+    await act(async () => {
+      resolveGoogle(new Response(JSON.stringify({ user: sampleUser }), { status: 200 }));
+    });
+    await waitFor(() => {
+      expect(probe).toHaveAttribute('data-auth-mode', 'authenticated');
+      expect(probe).toHaveAttribute('data-user', 'present');
+    });
+
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'wordpack.logout.v1',
+        newValue: JSON.stringify({ outcome: 'unknown' }),
+        storageArea: window.localStorage,
+      }));
+    });
+    expect(probe).toHaveAttribute('data-auth-mode', 'anonymous');
+    expect(probe).toHaveAttribute('data-user', 'null');
+    expect(probe).toHaveAttribute('data-outcome', 'unknown');
+    expect(probe).toHaveAttribute('data-authenticating', 'false');
+    expect(logoutCallCount()).toBe(0);
+
+    // settle後にconfirmed配送が遅れても、dirty履歴から再確認する。
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'wordpack.logout.v1',
+        oldValue: JSON.stringify({ outcome: 'unknown' }),
+        newValue: null,
+        storageArea: window.localStorage,
+      }));
+    });
+    await waitFor(() => expect(logoutCallCount()).toBe(1));
+    expect(fetchMock.mock.calls.map(([request]) => typeof request === 'string' ? request : request instanceof URL ? request.toString() : request.url))
+      .toEqual(['/api/config', '/api/auth/google', '/api/auth/logout']);
+
+    // 進行中の再確認を別tabのunknown通知でstale扱いにせず、自処理の結果を維持する。
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'wordpack.logout.v1',
+        newValue: JSON.stringify({ outcome: 'failed' }),
+        storageArea: window.localStorage,
+      }));
+    });
+    expect(probe).toHaveAttribute('data-outcome', 'unknown');
+    expect(probe).toHaveAttribute('data-authenticating', 'true');
+    expect(logoutCallCount()).toBe(1);
+
+    // confirmedの二重通知も同様にstale化せず、204の結果を維持する。
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'wordpack.logout.v1',
+        oldValue: JSON.stringify({ outcome: 'unknown' }),
+        newValue: null,
+        storageArea: window.localStorage,
+      }));
+    });
+    expect(probe).toHaveAttribute('data-outcome', 'unknown');
+    expect(probe).toHaveAttribute('data-authenticating', 'true');
+    expect(logoutCallCount()).toBe(1);
+
+    await act(async () => {
+      resolveLogout(new Response(null, { status: 204 }));
+    });
+    await waitFor(() => {
+      expect(probe).toHaveAttribute('data-auth-mode', 'anonymous');
+      expect(probe).toHaveAttribute('data-user', 'null');
+      expect(probe).toHaveAttribute('data-outcome', 'confirmed');
+      expect(probe).toHaveAttribute('data-authenticating', 'false');
+    });
+    expect(localStorage.getItem('wordpack.logout.v1')).toBeNull();
+
+    // 成功logoutでdirtyを消した後の外部confirmed通知は、無用な再送を発生させない。
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'wordpack.logout.v1',
+        oldValue: JSON.stringify({ outcome: 'unknown' }),
+        newValue: null,
+        storageArea: window.localStorage,
+      }));
+    });
+    expect(probe).toHaveAttribute('data-outcome', 'confirmed');
+    expect(logoutCallCount()).toBe(1);
+  });
+
+  it('drains a pending guest reissue before confirming a cross-tab logout', async () => {
+    localStorage.clear();
+    localStorage.setItem('wordpack.auth.v1', JSON.stringify({ authMode: 'guest' }));
+    let resolveGuest!: (response: Response) => void;
+    const guestResponse = new Promise<Response>((resolve) => {
+      resolveGuest = resolve;
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith('/api/config')) return Promise.resolve(new Response('{}', { status: 200 }));
+      if (url.endsWith('/api/auth/guest') && init?.method === 'POST') return guestResponse;
+      if (url.endsWith('/api/auth/logout') && init?.method === 'POST') return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    });
+    const logoutCallCount = () => fetchMock.mock.calls.filter(([request]) => {
+      const url = typeof request === 'string' ? request : request instanceof URL ? request.toString() : request.url;
+      return url.endsWith('/api/auth/logout');
+    }).length;
+    const GuestRaceProbe: React.FC = () => {
+      const { authMode, logoutOutcome } = useAuth();
+      return (
+        <span
+          data-testid="cross-tab-guest-state"
+          data-auth-mode={authMode}
+          data-outcome={logoutOutcome ?? 'none'}
+        />
+      );
+    };
+
+    render(
+      <AuthProvider clientId="test-client">
+        <GuestRaceProbe />
+      </AuthProvider>,
+    );
+    const probe = await screen.findByTestId('cross-tab-guest-state');
+    expect(probe).toHaveAttribute('data-auth-mode', 'guest');
+    window.dispatchEvent(new CustomEvent('auth:unauthorized', { detail: { status: 401 } }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/auth/guest', expect.objectContaining({ method: 'POST' })));
+
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'wordpack.logout.v1',
+        newValue: JSON.stringify({ outcome: 'unknown' }),
+        storageArea: window.localStorage,
+      }));
+    });
+    expect(probe).toHaveAttribute('data-auth-mode', 'anonymous');
+    expect(probe).toHaveAttribute('data-outcome', 'unknown');
+    expect(logoutCallCount()).toBe(0);
+
+    await act(async () => {
+      resolveGuest(new Response(JSON.stringify({ mode: 'guest' }), { status: 200 }));
+    });
+    await waitFor(() => expect(logoutCallCount()).toBe(0));
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'wordpack.logout.v1',
+        oldValue: JSON.stringify({ outcome: 'unknown' }),
+        newValue: null,
+        storageArea: window.localStorage,
+      }));
+    });
+    await waitFor(() => {
+      expect(logoutCallCount()).toBe(1);
+      expect(probe).toHaveAttribute('data-auth-mode', 'anonymous');
+      expect(probe).toHaveAttribute('data-outcome', 'confirmed');
+    });
+    expect(localStorage.getItem('wordpack.logout.v1')).toBeNull();
+    expect(fetchMock.mock.calls.map(([request]) => typeof request === 'string' ? request : request instanceof URL ? request.toString() : request.url))
+      .toEqual(['/api/config', '/api/auth/guest', '/api/auth/logout']);
+  });
+
   it('fails closed on reload when both storage writes are denied but reads are empty', async () => {
     const storagePrototype = Object.getPrototypeOf(window.localStorage) as Storage;
     let logoutStatus = 503;
