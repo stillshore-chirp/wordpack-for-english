@@ -6,6 +6,8 @@ import { vi } from 'vitest';
 import type { MockedFunction } from 'vitest';
 import { AuthProvider, LOGOUT_REQUEST_TIMEOUT_MS, useAuth } from '../AuthContext';
 
+const LOGOUT_CONFIRMATION_RECEIPT_KEY = 'wordpack.logout.confirmed.v1';
+
 const googleProviderMock = vi.fn(
   ({ children }: { clientId?: string; locale?: string; children: React.ReactNode }) => <>{children}</>,
 );
@@ -1040,6 +1042,7 @@ describe('AuthProvider logout result state', () => {
     const restoreBroadcastChannel = installBroadcastChannel(TestBroadcastChannel);
     TestBroadcastChannel.reset();
     localStorage.setItem('wordpack.auth.v1', JSON.stringify({ authMode: 'authenticated', user: sampleUser }));
+    sessionStorage.clear();
     Object.defineProperty(window, 'localStorage', {
       configurable: true,
       get: () => {
@@ -1056,10 +1059,11 @@ describe('AuthProvider logout result state', () => {
         </AuthProvider>,
       );
       const probe = await screen.findByTestId('logout-state');
-      expect(probe).toHaveAttribute('data-outcome', 'none');
+      expect(probe).toHaveAttribute('data-outcome', 'unknown');
       await user.click(screen.getByRole('button', { name: 'ログアウト' }));
       await waitFor(() => expect(probe).toHaveAttribute('data-outcome', 'confirmed'));
       expect(fetchMock).toHaveBeenCalledWith('/api/auth/logout', expect.objectContaining({ method: 'POST' }));
+      expect(sessionStorage.getItem(LOGOUT_CONFIRMATION_RECEIPT_KEY)).toBe(JSON.stringify({ outcome: 'confirmed' }));
       rendered.unmount();
     } finally {
       Object.defineProperty(window, 'localStorage', localStorageDescriptor);
@@ -1067,11 +1071,13 @@ describe('AuthProvider logout result state', () => {
     }
   });
 
-  it('allows authentication when localStorage is unavailable but sessionStorage is usable', async () => {
+  it('requires a confirmed receipt before authentication in a fresh session-only tab', async () => {
     const localStorageDescriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
     if (!localStorageDescriptor) throw new Error('localStorage descriptor is unavailable');
     const restoreBroadcastChannel = installBroadcastChannel(TestBroadcastChannel);
     TestBroadcastChannel.reset();
+    localStorage.clear();
+    sessionStorage.clear();
     Object.defineProperty(window, 'localStorage', {
       configurable: true,
       get: () => {
@@ -1097,17 +1103,26 @@ describe('AuthProvider logout result state', () => {
         </AuthProvider>,
       );
       const probe = await screen.findByTestId('auth-recovery-state');
-      expect(probe).toHaveAttribute('data-outcome', 'none');
+      expect(probe).toHaveAttribute('data-outcome', 'unknown');
 
       const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'サインイン' }));
+      await user.click(screen.getByRole('button', { name: 'ゲスト' }));
+      expect(fetchMock.mock.calls.filter(([request]) => {
+        const url = typeof request === 'string' ? request : request instanceof URL ? request.toString() : request.url;
+        return url.endsWith('/api/auth/google') || url.endsWith('/api/auth/guest');
+      })).toHaveLength(0);
+
       await user.click(screen.getByRole('button', { name: 'ログアウト' }));
       await waitFor(() => expect(probe).toHaveAttribute('data-outcome', 'failed'));
       expect(sessionStorage.getItem('wordpack.logout.v1')).toBe(JSON.stringify({ outcome: 'failed' }));
+      expect(sessionStorage.getItem(LOGOUT_CONFIRMATION_RECEIPT_KEY)).toBeNull();
 
       logoutStatus = 204;
       await user.click(screen.getByRole('button', { name: 'ログアウト' }));
       await waitFor(() => expect(probe).toHaveAttribute('data-outcome', 'confirmed'));
       expect(sessionStorage.getItem('wordpack.logout.v1')).toBeNull();
+      expect(sessionStorage.getItem(LOGOUT_CONFIRMATION_RECEIPT_KEY)).toBe(JSON.stringify({ outcome: 'confirmed' }));
       rendered.unmount();
 
       const reloaded = render(
@@ -1122,6 +1137,7 @@ describe('AuthProvider logout result state', () => {
         expect(reloadedProbe).toHaveAttribute('data-auth-mode', 'authenticated');
         expect(reloadedProbe).toHaveAttribute('data-user', 'present');
       });
+      expect(sessionStorage.getItem(LOGOUT_CONFIRMATION_RECEIPT_KEY)).toBeNull();
       expect(fetchMock).toHaveBeenCalledWith('/api/auth/google', expect.objectContaining({ method: 'POST' }));
       reloaded.unmount();
     } finally {
@@ -1370,6 +1386,103 @@ describe('AuthProvider logout result state', () => {
       ]);
     } finally {
       rendered?.unmount();
+      restoreBroadcastChannel();
+    }
+  });
+
+  it('invalidates a session-only confirmation receipt on later failed or unknown logout state', async () => {
+    const localStorageDescriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    if (!localStorageDescriptor) throw new Error('localStorage descriptor is unavailable');
+    const restoreBroadcastChannel = installBroadcastChannel(TestBroadcastChannel);
+    TestBroadcastChannel.reset();
+    localStorage.clear();
+    sessionStorage.clear();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get: () => {
+        throw new Error('localStorage access denied');
+      },
+    });
+    sessionStorage.setItem(LOGOUT_CONFIRMATION_RECEIPT_KEY, JSON.stringify({ outcome: 'confirmed' }));
+    let rendered: ReturnType<typeof render> | undefined;
+    try {
+      setupFetch(new Response('{}', { status: 200 }));
+      rendered = render(
+        <AuthProvider clientId="test-client">
+          <AuthRecoveryProbe />
+        </AuthProvider>,
+      );
+      const probe = await screen.findByTestId('auth-recovery-state');
+      expect(probe).toHaveAttribute('data-outcome', 'none');
+
+      await act(async () => {
+        window.dispatchEvent(new StorageEvent('storage', {
+          key: 'wordpack.logout.v1',
+          newValue: JSON.stringify({ outcome: 'failed' }),
+        }));
+      });
+      expect(probe).toHaveAttribute('data-outcome', 'failed');
+      expect(sessionStorage.getItem(LOGOUT_CONFIRMATION_RECEIPT_KEY)).toBeNull();
+
+      sessionStorage.setItem(LOGOUT_CONFIRMATION_RECEIPT_KEY, JSON.stringify({ outcome: 'confirmed' }));
+      await act(async () => {
+        window.dispatchEvent(new StorageEvent('storage', {
+          key: 'wordpack.logout.v1',
+          oldValue: JSON.stringify({ outcome: 'failed' }),
+          newValue: JSON.stringify({ outcome: 'unknown' }),
+        }));
+      });
+      expect(probe).toHaveAttribute('data-outcome', 'unknown');
+      expect(sessionStorage.getItem(LOGOUT_CONFIRMATION_RECEIPT_KEY)).toBeNull();
+    } finally {
+      rendered?.unmount();
+      Object.defineProperty(window, 'localStorage', localStorageDescriptor);
+      restoreBroadcastChannel();
+    }
+  });
+
+  it('invalidates a session-only confirmation receipt when a session request starts', async () => {
+    const localStorageDescriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    if (!localStorageDescriptor) throw new Error('localStorage descriptor is unavailable');
+    const restoreBroadcastChannel = installBroadcastChannel(TestBroadcastChannel);
+    TestBroadcastChannel.reset();
+    localStorage.clear();
+    sessionStorage.clear();
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get: () => {
+        throw new Error('localStorage access denied');
+      },
+    });
+    sessionStorage.setItem(LOGOUT_CONFIRMATION_RECEIPT_KEY, JSON.stringify({ outcome: 'confirmed' }));
+    let rendered: ReturnType<typeof render> | undefined;
+    try {
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.endsWith('/api/config')) return Promise.resolve(new Response('{}', { status: 200 }));
+        if (url.endsWith('/api/auth/google') && init?.method === 'POST') {
+          return Promise.resolve(new Response(JSON.stringify({ user: sampleUser }), { status: 200 }));
+        }
+        return Promise.resolve(new Response('{}', { status: 404 }));
+      });
+      rendered = render(
+        <AuthProvider clientId="test-client">
+          <AuthRecoveryProbe />
+        </AuthProvider>,
+      );
+      const probe = await screen.findByTestId('auth-recovery-state');
+      expect(probe).toHaveAttribute('data-outcome', 'none');
+
+      await userEvent.setup().click(screen.getByRole('button', { name: 'サインイン' }));
+      await waitFor(() => {
+        expect(probe).toHaveAttribute('data-auth-mode', 'authenticated');
+        expect(probe).toHaveAttribute('data-user', 'present');
+      });
+      expect(fetchMock).toHaveBeenCalledWith('/api/auth/google', expect.objectContaining({ method: 'POST' }));
+      expect(sessionStorage.getItem(LOGOUT_CONFIRMATION_RECEIPT_KEY)).toBeNull();
+    } finally {
+      rendered?.unmount();
+      Object.defineProperty(window, 'localStorage', localStorageDescriptor);
       restoreBroadcastChannel();
     }
   });

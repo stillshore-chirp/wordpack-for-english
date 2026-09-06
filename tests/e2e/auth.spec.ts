@@ -500,16 +500,16 @@ test.describe('認証導線', () => {
       logoutRequestCount += 1;
       events.push(`A:logout-request-${logoutRequestCount}`);
       await route.fulfill(
-        logoutRequestCount === 1
+        logoutRequestCount === 2
           ? {
               ...json({ detail: 'temporary failure' }, 503),
               headers: {},
             }
           : {
               status: 204,
-              headers: {
-                'Set-Cookie': 'wp_session=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax',
-              },
+              headers: logoutRequestCount >= 3
+                ? { 'Set-Cookie': 'wp_session=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax' }
+                : {},
             },
       );
       events.push(`A:logout-response-${logoutRequestCount}`);
@@ -517,13 +517,18 @@ test.describe('認証導線', () => {
     await pageB.route('**/api/auth/logout', async (route) => {
       pageBLogoutRequestCount += 1;
       events.push(`B:logout-request-${pageBLogoutRequestCount}`);
-      await route.fulfill({ status: 204 });
+      await route.fulfill({
+        status: 204,
+        headers: pageBLogoutRequestCount >= 2
+          ? { 'Set-Cookie': 'wp_session=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax' }
+          : {},
+      });
     });
 
     await pageA.goto('/');
     await pageB.goto('/');
     for (const page of [pageA, pageB]) {
-      await expect(page.getByRole('button', { name: 'Googleでログイン' })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'ログアウトを再試行' })).toBeVisible();
       await expect
         .poll(() => page.evaluate(() => {
           try {
@@ -536,6 +541,14 @@ test.describe('認証導線', () => {
         .toBe('blocked');
     }
 
+    // 新規のsession-only tabは、過去のlogout通知を受け取れないため初期unknownになる。
+    // Aで実際のretry 204を完了すると、同じcontextのBへconfirmed receiptが配送される。
+    await pageA.getByRole('button', { name: 'ログアウトを再試行' }).click();
+    await expect.poll(() => logoutRequestCount).toBe(1);
+    await expect(pageA.getByRole('heading', { name: 'WordPack にサインイン' })).toBeVisible();
+    await expect(pageB.getByRole('heading', { name: 'WordPack にサインイン' })).toBeVisible();
+    expect(pageBLogoutRequestCount).toBe(0);
+
     // GIS callback → AuthProvider.signIn → synthetic /api/auth/google の実UI経路。
     await pageA.getByRole('button', { name: 'Googleでログイン' }).click();
     await expect(pageA.getByRole('button', { name: 'ログアウト' }).first()).toBeVisible();
@@ -545,11 +558,22 @@ test.describe('認証導線', () => {
     await expect.poll(async () => (await context.cookies()).filter(({ name }) => name === 'wp_session').length).toBe(1);
 
     await pageA.getByRole('button', { name: 'ログアウト' }).first().click();
-    await expect.poll(() => logoutRequestCount).toBe(1);
+    await expect.poll(() => logoutRequestCount).toBe(2);
+    await expect.poll(() => events).toContain('A:logout-response-2');
     await expect(pageA.getByRole('alert')).toContainText('ログアウトに失敗しました');
     await expect(pageB.getByRole('button', { name: 'ログアウトを再試行' })).toBeVisible();
     await expect(pageB.getByRole('alert')).toContainText('ログアウトに失敗しました');
     expect(pageBLogoutRequestCount).toBe(0);
+
+    // 失敗通知より後に開いた新規tabも、過去のBroadcastChannel通知を受け取れないため
+    // sessionStorageの確認receiptがなくunknownで止まり、再試行を要求する。
+    const pageC = await context.newPage();
+    await blockLocalStorage(pageC);
+    await installGsiFixture(pageC);
+    await mockConfig(pageC, { googleClientId: 'e2e-client' });
+    await pageC.goto('/');
+    await expect(pageC.getByRole('alert')).toContainText('ログアウトの結果を確認できませんでした');
+    await expect(pageC.getByRole('button', { name: 'ログアウトを再試行' })).toBeVisible();
 
     for (const page of [pageA, pageB]) {
       await expect(page.locator('body')).not.toContainText('p1-user@example.test');
@@ -561,10 +585,11 @@ test.describe('認証導線', () => {
     }
 
     await pageA.getByRole('button', { name: 'ログアウトを再試行' }).click();
-    await expect.poll(() => logoutRequestCount).toBe(2);
-    await expect.poll(() => events).toContain('A:logout-response-2');
+    await expect.poll(() => logoutRequestCount).toBe(3);
+    await expect.poll(() => events).toContain('A:logout-response-3');
     await expect(pageA.getByRole('heading', { name: 'WordPack にサインイン' })).toBeVisible();
     await expect(pageB.getByRole('heading', { name: 'WordPack にサインイン' })).toBeVisible();
+    await expect(pageC.getByRole('heading', { name: 'WordPack にサインイン' })).toBeVisible();
     await expect(pageA.getByRole('button', { name: 'ログアウトを再試行' })).toHaveCount(0);
     await expect(pageB.getByRole('button', { name: 'ログアウトを再試行' })).toHaveCount(0);
     // Aのconfirmed通知後は、Bが自身の発行履歴を持つ場合にだけ再失効を

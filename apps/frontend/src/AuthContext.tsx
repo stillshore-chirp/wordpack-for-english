@@ -38,6 +38,10 @@ interface StoredLogoutRecovery {
   outcome: Exclude<LogoutOutcome, 'confirmed'>;
 }
 
+interface StoredLogoutConfirmationReceipt {
+  outcome: 'confirmed';
+}
+
 interface LogoutBroadcastMessage {
   type: 'logout-recovery';
   version: 1;
@@ -66,6 +70,7 @@ const AuthContext = createContext<AuthContextValue | undefined>(undefined);
 
 const STORAGE_KEY = 'wordpack.auth.v1';
 const LOGOUT_RECOVERY_STORAGE_KEY = 'wordpack.logout.v1';
+const LOGOUT_CONFIRMATION_RECEIPT_STORAGE_KEY = 'wordpack.logout.confirmed.v1';
 const LOGOUT_BROADCAST_CHANNEL_NAME = 'wordpack.logout.v1';
 const LOGOUT_BROADCAST_MESSAGE_TYPE = 'logout-recovery';
 const LOGOUT_BROADCAST_VERSION = 1 as const;
@@ -155,18 +160,6 @@ function createLogoutBroadcastChannel(): BroadcastChannel | null {
   } catch {
     return null;
   }
-}
-
-function canUseLogoutBroadcastChannel(): boolean {
-  const channel = createLogoutBroadcastChannel();
-  if (!channel) return false;
-  try {
-    channel.close();
-  } catch {
-    // capability probeのclose失敗は、送信経路を利用不能として扱う。
-    return false;
-  }
-  return true;
 }
 
 function trackPendingRequest<T>(pending: Set<Promise<unknown>>, request: Promise<T>): Promise<T> {
@@ -261,19 +254,43 @@ function readStoredLogoutRecovery(): StoredLogoutRecovery | null {
   const session = readStorageItem(sessionStorage, LOGOUT_RECOVERY_STORAGE_KEY);
   const stored = parseStoredLogoutRecovery(local.value) ?? parseStoredLogoutRecovery(session.value);
   if (stored) return stored;
-  // 片方だけが利用不能でも、もう片方で回復マーカーの保存可否を確認できるなら
-  // 初期認証を不必要にunknownへ倒さない。両方ともusableでない場合だけfail-closedにする。
   const localUsable = isLogoutRecoveryStorageUsable(localStorage);
   const sessionUsable = isLogoutRecoveryStorageUsable(sessionStorage);
   if (!localUsable && !sessionUsable) {
     return { outcome: 'unknown' };
   }
-  // localStorageが使えない場合、sessionStorageだけでは兄弟tabへ状態を伝えられない。
-  // BroadcastChannelも初期化できない環境では、再読込後の認証入口をfail-closedにする。
-  if (!localUsable && !canUseLogoutBroadcastChannel()) {
+  // localStorageが使えない場合、sessionStorageだけでは過去の兄弟tabのlogout結果を
+  // 読み取れない。現在のtab自身が確認済みと記録したreceiptがない新規tabは、
+  // BroadcastChannelが利用可能でも、終了確認まで認証入口を開かない。
+  if (!localUsable && sessionUsable && !hasLogoutConfirmationReceipt(sessionStorage)) {
     return { outcome: 'unknown' };
   }
   return null;
+}
+
+function hasLogoutConfirmationReceipt(storage: Storage | null): boolean {
+  const { available, value } = readStorageItem(storage, LOGOUT_CONFIRMATION_RECEIPT_STORAGE_KEY);
+  if (!available || !value) return false;
+  try {
+    const parsed = JSON.parse(value) as Partial<StoredLogoutConfirmationReceipt>;
+    return parsed.outcome === 'confirmed';
+  } catch {
+    return false;
+  }
+}
+
+function removeLogoutConfirmationReceipt(): void {
+  removeStorageItem(getStorage('session'), LOGOUT_CONFIRMATION_RECEIPT_STORAGE_KEY);
+}
+
+function persistLogoutConfirmationReceipt(): void {
+  const local = getStorage('local');
+  if (isLogoutRecoveryStorageUsable(local)) return;
+  writeStorageItem(
+    getStorage('session'),
+    LOGOUT_CONFIRMATION_RECEIPT_STORAGE_KEY,
+    JSON.stringify({ outcome: 'confirmed' } satisfies StoredLogoutConfirmationReceipt),
+  );
 }
 
 function persistLogoutRecovery(outcome: Exclude<LogoutOutcome, 'confirmed'> | null): void {
@@ -284,6 +301,7 @@ function persistLogoutRecovery(outcome: Exclude<LogoutOutcome, 'confirmed'> | nu
     removeStorageItem(session, LOGOUT_RECOVERY_STORAGE_KEY);
     return;
   }
+  removeStorageItem(session, LOGOUT_CONFIRMATION_RECEIPT_STORAGE_KEY);
   const serialized = JSON.stringify({ outcome } satisfies StoredLogoutRecovery);
   // localStorageを主経路にしつつ、private mode等での書き込み拒否に備えてsessionStorageにも保存する。
   writeStorageItem(local, LOGOUT_RECOVERY_STORAGE_KEY, serialized);
@@ -461,6 +479,8 @@ export const AuthProvider: React.FC<{ clientId: string; children: React.ReactNod
   }, []);
 
   const trackSessionRequest = useCallback(<T,>(request: Promise<T>): Promise<T> => {
+    // 新しいsession発行が始まったら、過去のlogout確認receiptを再利用しない。
+    removeLogoutConfirmationReceipt();
     sessionIssueGenerationRef.current += 1;
     sessionIssueDirtyRef.current = true;
     return trackPendingRequest(pendingSessionRequestsRef.current, request);
@@ -677,6 +697,7 @@ export const AuthProvider: React.FC<{ clientId: string; children: React.ReactNod
           sessionIssueDirtyRef.current = false;
         }
         persistLogoutRecovery(null);
+        persistLogoutConfirmationReceipt();
         updateLogoutOutcome('confirmed');
         setError(null);
       } else {
@@ -903,6 +924,7 @@ export const AuthProvider: React.FC<{ clientId: string; children: React.ReactNod
       if (nextOutcome === 'confirmed') {
         // 別タブの成功通知で、このタブのsessionStorage fallbackも掃除する。
         persistLogoutRecovery(null);
+        persistLogoutConfirmationReceipt();
         updateLogoutOutcome('confirmed');
         setError(null);
       } else {
