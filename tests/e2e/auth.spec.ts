@@ -549,6 +549,29 @@ test.describe('認証導線', () => {
     await expect(pageB.getByRole('heading', { name: 'WordPack にサインイン' })).toBeVisible();
     expect(pageBLogoutRequestCount).toBe(0);
 
+    // Aのopenerから開いたabout:blankは、同一originのsessionStorage receiptを初期コピーする。
+    // Cはアプリをまだmountせず、コピーされたreceipt自体を先に確認する。
+    const pageCPromise = context.waitForEvent('page');
+    await pageA.evaluate(() => {
+      const popup = window.open('about:blank');
+      if (!popup) throw new Error('Could not open session receipt popup');
+    });
+    const pageC = await pageCPromise;
+    await expect.poll(() => pageC.evaluate(() => window.location.href)).toBe('about:blank');
+    await expect.poll(() => pageC.evaluate(() => sessionStorage.getItem('wordpack.logout.confirmed.v1')))
+      .toBe(JSON.stringify({ outcome: 'confirmed' }));
+    await blockLocalStorage(pageC);
+    await installGsiFixture(pageC);
+    await mockConfig(pageC, { googleClientId: 'e2e-client' });
+    await pageC.route(
+      (url) => url.pathname.startsWith('/api/') && !url.pathname.startsWith('/api/auth/') && url.pathname !== '/api/config',
+      (route) => route.fulfill(json(EMPTY_LIST_RESPONSE)),
+    );
+
+    // navigation.type=reloadだけはreceiptを採用し、Aの認証入口を復元する。
+    await pageA.reload();
+    await expect(pageA.getByRole('heading', { name: 'WordPack にサインイン' })).toBeVisible();
+
     // GIS callback → AuthProvider.signIn → synthetic /api/auth/google の実UI経路。
     await pageA.getByRole('button', { name: 'Googleでログイン' }).click();
     await expect(pageA.getByRole('button', { name: 'ログアウト' }).first()).toBeVisible();
@@ -565,15 +588,16 @@ test.describe('認証導線', () => {
     await expect(pageB.getByRole('alert')).toContainText('ログアウトに失敗しました');
     expect(pageBLogoutRequestCount).toBe(0);
 
-    // 失敗通知より後に開いた新規tabも、過去のBroadcastChannel通知を受け取れないため
-    // sessionStorageの確認receiptがなくunknownで止まり、再試行を要求する。
-    const pageC = await context.newPage();
-    await blockLocalStorage(pageC);
-    await installGsiFixture(pageC);
-    await mockConfig(pageC, { googleClientId: 'e2e-client' });
+    // 失敗通知より後に初回mountするCは、過去のBroadcastChannel通知を受け取れない。
+    // openerからコピーしたreceiptはnavigate時に破棄され、unknownで止まる。
     await pageC.goto('/');
     await expect(pageC.getByRole('alert')).toContainText('ログアウトの結果を確認できませんでした');
     await expect(pageC.getByRole('button', { name: 'ログアウトを再試行' })).toBeVisible();
+    expect(await pageC.evaluate(() => sessionStorage.getItem('wordpack.logout.confirmed.v1'))).toBeNull();
+    await pageC.reload();
+    await expect(pageC.getByRole('alert')).toContainText('ログアウトの結果を確認できませんでした');
+    await expect(pageC.getByRole('button', { name: 'ログアウトを再試行' })).toBeVisible();
+    expect(await pageC.evaluate(() => sessionStorage.getItem('wordpack.logout.confirmed.v1'))).toBeNull();
 
     for (const page of [pageA, pageB]) {
       await expect(page.locator('body')).not.toContainText('p1-user@example.test');
@@ -599,7 +623,7 @@ test.describe('認証導線', () => {
       expect(events.indexOf('B:logout-request-1')).toBeGreaterThan(events.indexOf('A:logout-response-2'));
     }
 
-    for (const page of [pageA, pageB]) {
+    for (const page of [pageA, pageB, pageC]) {
       await expect.poll(() => page.evaluate(() => ({
         auth: window.sessionStorage.getItem('wordpack.auth.v1'),
         recovery: JSON.parse(window.sessionStorage.getItem('wordpack.logout.v1') || 'null')?.outcome ?? null,

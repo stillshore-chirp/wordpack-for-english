@@ -262,10 +262,26 @@ function readStoredLogoutRecovery(): StoredLogoutRecovery | null {
   // localStorageが使えない場合、sessionStorageだけでは過去の兄弟tabのlogout結果を
   // 読み取れない。現在のtab自身が確認済みと記録したreceiptがない新規tabは、
   // BroadcastChannelが利用可能でも、終了確認まで認証入口を開かない。
-  if (!localUsable && sessionUsable && !hasLogoutConfirmationReceipt(sessionStorage)) {
-    return { outcome: 'unknown' };
+  if (!localUsable && sessionUsable) {
+    const hasReceipt = hasLogoutConfirmationReceipt(sessionStorage);
+    // sessionStorageはopenerやduplicate tabへコピーされ得るため、navigation typeが
+    // 明示的にreloadの場合だけreceiptを再利用する。
+    if (!hasReceipt || !isExplicitReloadNavigation()) {
+      if (hasReceipt) removeStorageItem(sessionStorage, LOGOUT_CONFIRMATION_RECEIPT_STORAGE_KEY);
+      return { outcome: 'unknown' };
+    }
   }
   return null;
+}
+
+function isExplicitReloadNavigation(): boolean {
+  if (typeof performance === 'undefined') return false;
+  try {
+    const [entry] = performance.getEntriesByType('navigation');
+    return (entry as PerformanceNavigationTiming | undefined)?.type === 'reload';
+  } catch {
+    return false;
+  }
 }
 
 function hasLogoutConfirmationReceipt(storage: Storage | null): boolean {

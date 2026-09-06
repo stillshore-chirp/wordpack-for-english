@@ -141,6 +141,13 @@ function installBroadcastChannel(value: unknown): () => void {
   };
 }
 
+function installNavigationType(type: string | null): () => void {
+  const getEntriesByTypeSpy = vi.spyOn(performance, 'getEntriesByType').mockReturnValue(
+    type === null ? [] : [{ type } as unknown as PerformanceNavigationTiming],
+  );
+  return () => getEntriesByTypeSpy.mockRestore();
+}
+
 describe('AuthProvider logging behaviour', () => {
   // 新規参画者向けメモ: 認証バイパス有効時のログレベル切り替えを固定するための回帰テスト。
   // バイパス環境では error を抑制し warn に切り替わることをここで保証する。
@@ -1095,6 +1102,7 @@ describe('AuthProvider logout result state', () => {
       if (url.endsWith('/api/auth/google')) return Promise.resolve(new Response(JSON.stringify({ user: sampleUser }), { status: 200 }));
       return Promise.resolve(new Response('{}', { status: 404 }));
     });
+    let restoreNavigation: (() => void) | undefined;
 
     try {
       const rendered = render(
@@ -1125,6 +1133,7 @@ describe('AuthProvider logout result state', () => {
       expect(sessionStorage.getItem(LOGOUT_CONFIRMATION_RECEIPT_KEY)).toBe(JSON.stringify({ outcome: 'confirmed' }));
       rendered.unmount();
 
+      restoreNavigation = installNavigationType('reload');
       const reloaded = render(
         <AuthProvider clientId="test-client">
           <AuthRecoveryProbe />
@@ -1141,10 +1150,58 @@ describe('AuthProvider logout result state', () => {
       expect(fetchMock).toHaveBeenCalledWith('/api/auth/google', expect.objectContaining({ method: 'POST' }));
       reloaded.unmount();
     } finally {
+      restoreNavigation?.();
       Object.defineProperty(window, 'localStorage', localStorageDescriptor);
       restoreBroadcastChannel();
     }
   });
+
+  it.each(['navigate', 'back_forward', null] as const)(
+    'rejects a copied session-only confirmation receipt on %s navigation and keeps it rejected after reload',
+    async (navigationType) => {
+      const localStorageDescriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
+      if (!localStorageDescriptor) throw new Error('localStorage descriptor is unavailable');
+      const restoreBroadcastChannel = installBroadcastChannel(undefined);
+      TestBroadcastChannel.reset();
+      localStorage.clear();
+      sessionStorage.clear();
+      sessionStorage.setItem(LOGOUT_CONFIRMATION_RECEIPT_KEY, JSON.stringify({ outcome: 'confirmed' }));
+      Object.defineProperty(window, 'localStorage', {
+        configurable: true,
+        get: () => {
+          throw new Error('localStorage access denied');
+        },
+      });
+      let restoreNavigation = installNavigationType(navigationType);
+      let rendered: ReturnType<typeof render> | undefined;
+      try {
+        setupFetch(new Response('{}', { status: 200 }));
+        rendered = render(
+          <AuthProvider clientId="test-client">
+            <AuthRecoveryProbe />
+          </AuthProvider>,
+        );
+        const probe = await screen.findByTestId('auth-recovery-state');
+        expect(probe).toHaveAttribute('data-outcome', 'unknown');
+        expect(sessionStorage.getItem(LOGOUT_CONFIRMATION_RECEIPT_KEY)).toBeNull();
+        rendered.unmount();
+
+        restoreNavigation();
+        restoreNavigation = installNavigationType('reload');
+        rendered = render(
+          <AuthProvider clientId="test-client">
+            <AuthRecoveryProbe />
+          </AuthProvider>,
+        );
+        expect(await screen.findByTestId('auth-recovery-state')).toHaveAttribute('data-outcome', 'unknown');
+      } finally {
+        rendered?.unmount();
+        restoreNavigation();
+        Object.defineProperty(window, 'localStorage', localStorageDescriptor);
+        restoreBroadcastChannel();
+      }
+    },
+  );
 
   it('allows authentication when sessionStorage is unavailable but localStorage is usable', async () => {
     const sessionStorageDescriptor = Object.getOwnPropertyDescriptor(window, 'sessionStorage');
@@ -1395,6 +1452,7 @@ describe('AuthProvider logout result state', () => {
     if (!localStorageDescriptor) throw new Error('localStorage descriptor is unavailable');
     const restoreBroadcastChannel = installBroadcastChannel(TestBroadcastChannel);
     TestBroadcastChannel.reset();
+    const restoreNavigation = installNavigationType('reload');
     localStorage.clear();
     sessionStorage.clear();
     Object.defineProperty(window, 'localStorage', {
@@ -1436,6 +1494,7 @@ describe('AuthProvider logout result state', () => {
       expect(sessionStorage.getItem(LOGOUT_CONFIRMATION_RECEIPT_KEY)).toBeNull();
     } finally {
       rendered?.unmount();
+      restoreNavigation();
       Object.defineProperty(window, 'localStorage', localStorageDescriptor);
       restoreBroadcastChannel();
     }
@@ -1446,6 +1505,7 @@ describe('AuthProvider logout result state', () => {
     if (!localStorageDescriptor) throw new Error('localStorage descriptor is unavailable');
     const restoreBroadcastChannel = installBroadcastChannel(TestBroadcastChannel);
     TestBroadcastChannel.reset();
+    const restoreNavigation = installNavigationType('reload');
     localStorage.clear();
     sessionStorage.clear();
     Object.defineProperty(window, 'localStorage', {
@@ -1482,6 +1542,7 @@ describe('AuthProvider logout result state', () => {
       expect(sessionStorage.getItem(LOGOUT_CONFIRMATION_RECEIPT_KEY)).toBeNull();
     } finally {
       rendered?.unmount();
+      restoreNavigation();
       Object.defineProperty(window, 'localStorage', localStorageDescriptor);
       restoreBroadcastChannel();
     }
