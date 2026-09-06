@@ -152,6 +152,12 @@ describe('AuthProvider logging behaviour', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+    } catch {
+      // storage reset is best-effort in access-denied tests.
+    }
   });
 
   const renderProvider = () => {
