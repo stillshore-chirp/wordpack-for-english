@@ -156,6 +156,46 @@ describe('AuthProvider logging behaviour', () => {
     );
   });
 
+  it('keeps a runtime Google client ID when config resolves after logout invalidates auth state', async () => {
+    localStorage.clear();
+    sessionStorage.clear();
+    let resolveConfig!: (response: Response) => void;
+    const configResponse = new Promise<Response>((resolve) => {
+      resolveConfig = resolve;
+    });
+    fetchMock.mockImplementationOnce(() => configResponse);
+
+    render(
+      <AuthProvider clientId="">
+        <MissingFlagProbe />
+      </AuthProvider>,
+    );
+
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'wordpack.logout.v1',
+        newValue: JSON.stringify({ outcome: 'unknown' }),
+        storageArea: window.localStorage,
+      }));
+    });
+    await act(async () => {
+      resolveConfig(new Response(JSON.stringify({ google_client_id: 'late-runtime-client.apps.googleusercontent.com' }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId('client-flag')).toHaveTextContent('ok');
+      expect(googleProviderMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          clientId: 'late-runtime-client.apps.googleusercontent.com',
+          locale: 'ja',
+        }),
+      );
+    });
+  });
+
   it('prefers console.warn when bypass mode supplies a development credential', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);

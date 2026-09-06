@@ -420,11 +420,14 @@ export const AuthProvider: React.FC<{ clientId: string; children: React.ReactNod
         const json = (await res
           .json()
           .catch(() => null)) as { session_auth_disabled?: boolean; google_client_id?: string } | null;
-        if (aborted || !isCurrentAuthOperation(configOperationId)) return;
         const runtimeClientId = readRuntimeGoogleClientId(json);
-        if (runtimeClientId) {
+        // runtime client IDは認証状態とは独立した設定なので、logout等で認証世代が
+        // 更新されても、mount中に届いた有効な設定を破棄しない。
+        if (!aborted && runtimeClientId) {
           setRuntimeGoogleClientId(runtimeClientId);
         }
+        // session_auth_disabledは認証状態へ影響するため、開始時の世代を厳密に確認する。
+        if (aborted || !isCurrentAuthOperation(configOperationId)) return;
         if (json?.session_auth_disabled && !isLogoutRecoveryOutcome(logoutOutcomeRef.current) && !activeAuthOperationRef.current) {
           setAuthBypassActive(true);
           setUser((prev) => (authModeRef.current === 'guest' ? prev : prev ?? AUTH_BYPASS_USER));
