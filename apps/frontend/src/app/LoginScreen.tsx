@@ -25,6 +25,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ children }) => {
   const loginHeadingRef = useRef<HTMLHeadingElement>(null);
   const loginTitle = missingClientId ? 'Google ログインの設定が必要です' : 'WordPack にサインイン';
   const hasLogoutRecovery = logoutOutcome === 'failed' || logoutOutcome === 'unknown';
+  const isLogoutPending = hasLogoutRecovery && isAuthenticating;
   const previousRecoveryRef = useRef(hasLogoutRecovery);
 
   useEffect(() => {
@@ -38,10 +39,16 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ children }) => {
     return (
       <main className="login-shell">
         <h1 className="visually-hidden">{MAIN_HEADING_TEXT}</h1>
-        <section className="login-card login-recovery" role="alert" aria-live="assertive">
-          <h2 className="login-title">ログアウト状態の確認が必要です</h2>
+        <section
+          className="login-card login-recovery"
+          role={isLogoutPending ? 'status' : 'alert'}
+          aria-live={isLogoutPending ? 'polite' : 'assertive'}
+        >
+          <h2 className="login-title">{isLogoutPending ? 'ログアウトしています' : 'ログアウト状態の確認が必要です'}</h2>
           <p className="login-description" id="logout-recovery-description">
-            {error || LOGOUT_RECOVERY_MESSAGES[logoutOutcome]}
+            {isLogoutPending
+              ? 'サーバー側のセッション状態を確認中です。'
+              : error || LOGOUT_RECOVERY_MESSAGES[logoutOutcome]}
           </p>
           <p className="login-note">
             画面上の個人情報は削除済みです。サーバー側のセッション状態を確認するまで、ログインとゲスト閲覧を開始できません。

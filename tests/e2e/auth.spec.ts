@@ -241,4 +241,44 @@ test.describe('認証導線', () => {
     expect(protectedCookieHeader).not.toContain('__session=');
     expect((await context.cookies()).filter(({ name }) => name === 'wp_guest')).toEqual([]);
   });
+
+  test('ログアウト確認中はpolite statusを示し、失敗応答後にassertive alertへ遷移する', async ({ page }) => {
+    let releaseLogout!: () => void;
+    let logoutRequestStarted = false;
+    const logoutRelease = new Promise<void>((resolve) => {
+      releaseLogout = resolve;
+    });
+
+    await page.addInitScript(() => {
+      window.localStorage.setItem('wordpack.auth.v1', JSON.stringify({
+        authMode: 'authenticated',
+        user: { google_sub: 'pending-logout-user', email: 'pending@example.test', display_name: 'Pending Logout User' },
+      }));
+      window.localStorage.setItem('wordpack.logout.v1', JSON.stringify({ outcome: 'failed' }));
+    });
+    await mockConfig(page);
+    await page.route('**/api/auth/logout', async (route) => {
+      logoutRequestStarted = true;
+      await logoutRelease;
+      await route.fulfill(json({ detail: 'temporary failure' }, 503));
+    });
+    await page.goto('/');
+
+    const retryButton = page.getByRole('button', { name: 'ログアウトを再試行' });
+    await expect(retryButton).toBeVisible();
+    await retryButton.click();
+    await expect.poll(() => logoutRequestStarted).toBe(true);
+
+    await expect(page.getByRole('status')).toBeVisible();
+    await expect(page.getByRole('status')).toHaveAttribute('aria-live', 'polite');
+    await expect(page.getByRole('status')).toContainText('ログアウトしています');
+    await expect(page.getByRole('alert')).toHaveCount(0);
+
+    releaseLogout();
+    const failureAlert = page.getByRole('alert');
+    await expect(failureAlert).toBeVisible();
+    await expect(failureAlert).toHaveAttribute('aria-live', 'assertive');
+    await expect(failureAlert).toContainText('ログアウトに失敗しました');
+    await expect(page.getByRole('status')).toHaveCount(0);
+  });
 });
