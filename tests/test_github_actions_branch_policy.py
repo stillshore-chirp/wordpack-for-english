@@ -216,6 +216,25 @@ def test_ci_selects_runtime_gates_and_keeps_security_in_backend_suite() -> None:
     assert "  security_headers:" not in ci
 
 
+def test_backend_jobs_make_firestore_integration_gate_required() -> None:
+    """Backend CI cannot turn emulator readiness failures into optional skips."""
+
+    for job_id in ("backend", "backend_compatibility"):
+        job = _read_workflow_job(".github/workflows/ci.yml", job_id)
+        env = job.get("env")
+        assert isinstance(env, dict)
+        assert env.get("FIRESTORE_INTEGRATION_REQUIRED") == "true"
+        steps = job.get("steps")
+        assert isinstance(steps, list)
+        run_text = "\n".join(
+            step["run"]
+            for step in steps
+            if isinstance(step, dict) and isinstance(step.get("run"), str)
+        )
+        assert "firebase emulators:exec --only firestore" in run_text
+        assert "python -m pytest" in run_text
+
+
 def test_governance_job_runs_contract_tests_after_validation() -> None:
     """The governance job owns the validator and its focused contract tests."""
     job = _read_workflow_job(".github/workflows/ci.yml", "governance")
