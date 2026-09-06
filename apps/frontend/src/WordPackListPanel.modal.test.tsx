@@ -292,6 +292,7 @@ describe('WordPackListPanel modal preview', () => {
       await user.keyboard('{Alt>}{4}{/Alt}');
     });
 
+    await waitFor(() => expect(screen.getAllByTestId('wp-card')).toHaveLength(3));
     const buttonsInCardView = await screen.findAllByRole('button', { name: /の音声$/ });
     expect(buttonsInCardView).toHaveLength(3);
 
