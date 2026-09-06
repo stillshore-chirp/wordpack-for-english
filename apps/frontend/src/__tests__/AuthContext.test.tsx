@@ -1846,6 +1846,8 @@ describe('AuthProvider logout result state', () => {
 
   it('fails closed on reload when both storage writes are denied but reads are empty', async () => {
     const storagePrototype = Object.getPrototypeOf(window.localStorage) as Storage;
+    const restoreBroadcastChannel = installBroadcastChannel(TestBroadcastChannel);
+    TestBroadcastChannel.reset();
     let logoutStatus = 503;
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL) => {
       const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
@@ -1884,6 +1886,7 @@ describe('AuthProvider logout result state', () => {
       reloaded.unmount();
     } finally {
       setItemSpy.mockRestore();
+      restoreBroadcastChannel();
     }
   });
 

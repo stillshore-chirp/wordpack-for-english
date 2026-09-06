@@ -34,6 +34,21 @@ if (!(globalThis as any).window?.matchMedia) {
   (globalThis as any).window.matchMedia = mm as any;
 }
 
+// jsdomではNodeのプロセス共有BroadcastChannelが各テストwindowへ露出し、
+// 独立したブラウザ環境を表すテストwindow間でlogout通知を誤共有する。
+// BroadcastChannel専用テストは独立fakeを明示し、通常テストはstorage eventを使う。
+if (
+  typeof window !== 'undefined'
+  && typeof window.BroadcastChannel === 'function'
+  && window.BroadcastChannel === globalThis.BroadcastChannel
+) {
+  Object.defineProperty(window, 'BroadcastChannel', {
+    configurable: true,
+    writable: true,
+    value: undefined,
+  });
+}
+
 // a11y検査のために、axe の結果を直感的に読める matcher として拡張する。
 expect.extend({ toHaveNoViolations });
 
