@@ -29,18 +29,29 @@ PRは `base...head` の変更pathだけを分類し、`main` pushは `--full` �
 
 | 種別 | コマンド | 詳細 |
 |---|---|---|
-| Backend full gate | `PYTHONPATH=apps/backend pytest` | `pytest.ini` のcoverage付き全体検証。security headersもこのsuiteに含む |
+| Backend full gate | `FIRESTORE_INTEGRATION_REQUIRED=false PYTHONPATH=apps/backend pytest` | `pytest.ini` のcoverage付き全体検証。security headersもこのsuiteに含む。ローカルでEmulatorを用意しない場合は、未設定または`false`でFirestore integrationのskipを許容する |
 | Backend focused | `PYTHONPATH=apps/backend pytest -q --no-cov <test-or-node>` | coverageを目的としないfocused pytest |
 | Backend architecture | `PYTHONPATH=apps/backend pytest -q --no-cov tests/backend/test_architecture_boundaries.py` | 禁止importとruntime直呼び出しを検査 |
 | Frontend PR相当 | `cd apps/frontend && npm test -- --no-coverage --silent` | Vitestのみ。typecheckは `npx tsc -p tsconfig.json` |
 | Frontend main相当 | `cd apps/frontend && npm test -- --coverage --silent` | coverage付きVitest |
 | Workflow / classifier contract | `python -m pytest -q --no-cov tests/test_github_actions_branch_policy.py tests/test_verification_inputs.py tests/test_scheduled_maintenance_workflow.py` | workflow条件、scheduled maintenanceのsuite選択、gate入力閉包、出力interface |
+| Firestore integration gate | `python -m pytest -q --no-cov tests/test_firestore_integration_gate.py tests/integration/test_api_firestore_emulator.py` | required 時の未収集・filter・全skip・readiness failureと、optional 時のskip |
 | Workflow YAML parse | `python3 -c 'import yaml; yaml.safe_load(open(".github/workflows/scheduled-maintenance.yml", encoding="utf-8"))'` | このlaneのowned workflowだけ構文を確認 |
 | Gate-input classification（PR） | `python3 scripts/classify_verification_inputs.py --base "$BASE_SHA" --head "$HEAD_SHA"` | `base...head` の11 gate boolean、`playwright_targeted_specs` JSON配列、`classification_ok` を確認 |
 | Gate-input classification（main） | `python3 scripts/classify_verification_inputs.py --full` | full profileの選択を確認 |
 | Governance static + contract check | `python3 scripts/validate_governance.py && python -m pytest -q --no-cov tests/test_agent_harness_budget.py tests/test_governance_task_state.py tests/test_validate_governance.py tests/test_public_docs_security.py tests/test_security_scan_text.py` | 正本、Skill、adapter、frontmatter、link、budget、公開テキストとtask-stateを確認 |
 
-Firestore Emulator付きbackend CIはJava 21を使います。Playwright、Docker、全suiteの実行はCIの選択jobに委ね、このlaneのローカル検証では起動しません。
+Emulatorを使う必須相当のローカル実行では、次のように `true` を明示します。readiness failure、対象未収集、全skipは成功になりません。
+
+```bash
+FIRESTORE_INTEGRATION_REQUIRED=true \
+  FIRESTORE_PROJECT_ID=wordpack-integration-test \
+  FIRESTORE_EMULATOR_HOST=127.0.0.1:8080 \
+  firebase emulators:exec --only firestore --project wordpack-integration-test \
+  --config firebase.json "PYTHONPATH=apps/backend pytest -m firestore_integration --no-cov"
+```
+
+Firestore Emulator付きbackend CIはJava 21を使い、`FIRESTORE_INTEGRATION_REQUIRED=true` を設定します。`tests/integration/test_api_firestore_emulator.py` の `firestore_integration` marker 対象が未収集または全skipの場合、pytest processを失敗させるため、Emulator起動成功だけではgateを通過しません。ローカルでEmulatorを用意しない任意実行は、未設定または `FIRESTORE_INTEGRATION_REQUIRED=false` でskipを許容します。再現可能な指定には `false` を使います。Playwright、Docker、全suiteの実行はCIの選択jobに委ね、このlaneのローカル検証では起動しません。
 
 ## 実行判断と成果物
 
