@@ -21,6 +21,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "apps" / "backend")
 
 from fastapi.testclient import TestClient
 from itsdangerous import BadSignature, URLSafeTimedSerializer
+from itsdangerous.encoding import base64_decode
 
 from backend.config import settings
 from backend.main import create_app
@@ -56,6 +57,29 @@ def _parse_set_cookie_headers(response) -> SimpleCookie:
 def _legacy_token(payload: dict[str, str], *, guest: bool = False) -> str:
     salt = "wordpack.guest_session" if guest else "wordpack.session"
     return URLSafeTimedSerializer(settings.session_secret_key, salt=salt).dumps(payload)
+
+
+def _accepted_signature_equivalent_token(token: str, *, guest: bool = False) -> str:
+    """Create a benign alternate signature spelling accepted by itsdangerous."""
+
+    salt = "wordpack.guest_session" if guest else "wordpack.session"
+    serializer = URLSafeTimedSerializer(settings.session_secret_key, salt=salt)
+    signed_value, signature = token.rsplit(".", 1)
+    decoded_signature = base64_decode(signature)
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    for character in alphabet:
+        if character == signature[-1]:
+            continue
+        candidate_signature = signature[:-1] + character
+        try:
+            if base64_decode(candidate_signature) != decoded_signature:
+                continue
+            candidate = f"{signed_value}.{candidate_signature}"
+            serializer.loads(candidate, max_age=3600)
+        except BadSignature:
+            continue
+        return candidate
+    raise AssertionError("itsdangerous did not accept a signature equivalent")
 
 
 def _expired_legacy_token(
@@ -296,6 +320,52 @@ def test_legacy_guest_cookie_cannot_be_replayed_after_logout_attempt(test_client
     client.cookies.set(cookie_name, token)
     replay_response = client.get("/api/word/packs")
     assert replay_response.status_code == HTTPStatus.UNAUTHORIZED
+
+
+@pytest.mark.parametrize("guest", [False, True], ids=["user", "guest"])
+@pytest.mark.parametrize("logout_variant", ["original", "equivalent"])
+def test_legacy_logout_revokes_equivalent_signature_encoding(
+    test_client, guest: bool, logout_variant: str
+):
+    """同じ署名bytesのCookie表記揺れをlogout後に再利用できない。"""
+
+    client, store_instance = test_client
+    import backend.auth as auth_module
+
+    if guest:
+        payload = {"mode": "guest", "gid": "legacy-equivalent-guest"}
+    else:
+        user_id = "legacy-equivalent-user"
+        store_instance.record_user_login(
+            google_sub=user_id,
+            email="legacy-equivalent@example.com",
+            display_name="Legacy Equivalent User",
+        )
+        payload = {"sub": user_id}
+
+    original_token = _legacy_token(payload, guest=guest)
+    equivalent_token = _accepted_signature_equivalent_token(original_token, guest=guest)
+    assert auth_module._session_token_digest(original_token) == auth_module._session_token_digest(
+        equivalent_token
+    )
+    if guest:
+        assert auth_module.verify_guest_session_token(equivalent_token)["mode"] == "guest"
+        cookie_name = settings.guest_session_cookie_name or "wp_guest"
+    else:
+        assert auth_module.verify_session_token(equivalent_token)["sub"] == payload["sub"]
+        cookie_name = settings.session_cookie_name or "wp_session"
+
+    logout_token, replay_token = (
+        (original_token, equivalent_token)
+        if logout_variant == "original"
+        else (equivalent_token, original_token)
+    )
+    client.cookies.set(cookie_name, logout_token)
+    assert client.post("/api/auth/logout").status_code == HTTPStatus.NO_CONTENT
+
+    client.cookies.clear()
+    client.cookies.set(cookie_name, replay_token)
+    assert client.get("/api/word/packs").status_code == HTTPStatus.UNAUTHORIZED
 
 
 def test_legacy_user_primary_and_alias_tokens_are_both_revoked(test_client):

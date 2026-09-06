@@ -9,6 +9,7 @@ from typing import Any
 
 from fastapi import HTTPException, Request, status
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from itsdangerous.encoding import base64_decode, base64_encode, bytes_to_int, int_to_bytes
 
 from .authorization.principal import ANONYMOUS_PRINCIPAL, Principal
 from .config import settings
@@ -177,8 +178,40 @@ def _touch_session_if_needed(sid: str, record: Mapping[str, Any], *, now: dateti
         touch_session(sid, last_seen_at=now.isoformat())
 
 
+def _canonical_session_token(token: str) -> bytes:
+    """Return itsdangerous's accepted token components in canonical form."""
+
+    raw_token = token.encode("utf-8")
+    try:
+        signed_value, signature = raw_token.rsplit(b".", 1)
+        payload, timestamp = signed_value.rsplit(b".", 1)
+
+        # URLSafeSerializerMixin treats a leading dot as the compression marker
+        # and decodes the remainder with its own permissive base64 routine.
+        compression_marker = b"." if payload.startswith(b".") else b""
+        payload_segment = payload[1:] if compression_marker else payload
+        canonical_payload = compression_marker + base64_encode(
+            base64_decode(payload_segment)
+        )
+
+        # TimestampSigner converts the decoded timestamp bytes to an integer,
+        # so leading zero bytes and base64 spelling variants are equivalent.
+        timestamp_value = bytes_to_int(base64_decode(timestamp))
+        canonical_timestamp = base64_encode(int_to_bytes(timestamp_value))
+
+        # Signer.verify_signature compares decoded signature bytes, allowing
+        # alternate base64 spellings of the same MAC.
+        canonical_signature = base64_encode(base64_decode(signature))
+    except Exception as exc:
+        # Callers reach this helper only after the serializer accepted the
+        # token.  Keep an unexpected parser mismatch fail-closed.
+        raise ValueError("session token format is invalid") from exc
+
+    return b".".join((canonical_payload, canonical_timestamp, canonical_signature))
+
+
 def _session_token_digest(token: str) -> str:
-    """Return a non-reversible key for a signed token revocation tombstone."""
+    """Return a non-reversible key for a canonical signed token."""
 
     secret = settings.session_secret_key.strip()
     if not secret:
@@ -187,7 +220,7 @@ def _session_token_digest(token: str) -> str:
         raise ValueError("session token is required")
     return hmac.new(
         secret.encode("utf-8"),
-        token.encode("utf-8"),
+        _canonical_session_token(token),
         hashlib.sha256,
     ).hexdigest()
 
