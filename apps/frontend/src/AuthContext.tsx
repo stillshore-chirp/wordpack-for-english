@@ -201,15 +201,17 @@ function parseStoredLogoutRecovery(raw: string | null): StoredLogoutRecovery | n
 
 function readStoredLogoutRecovery(): StoredLogoutRecovery | null {
   if (typeof window === 'undefined') return null;
-  const local = readStorageItem(getStorage('local'), LOGOUT_RECOVERY_STORAGE_KEY);
-  const session = readStorageItem(getStorage('session'), LOGOUT_RECOVERY_STORAGE_KEY);
+  const localStorage = getStorage('local');
+  const sessionStorage = getStorage('session');
+  const local = readStorageItem(localStorage, LOGOUT_RECOVERY_STORAGE_KEY);
+  const session = readStorageItem(sessionStorage, LOGOUT_RECOVERY_STORAGE_KEY);
   const stored = parseStoredLogoutRecovery(local.value) ?? parseStoredLogoutRecovery(session.value);
   if (stored) return stored;
-  // 回復マーカーを読めない環境では、Cookie由来の認証表示を復元しない。
-  if (!local.available || !session.available) return { outcome: 'unknown' };
-  // 空の読み取り結果だけでは、setItem拒否による回復マーカー消失を判定できない。
-  // 少なくとも一方が書込み可能な場合だけ、保存済み認証情報の復元を許可する。
-  if (!isStorageWritable(getStorage('local')) && !isStorageWritable(getStorage('session'))) {
+  // 片方だけが利用不能でも、もう片方で回復マーカーの保存可否を確認できるなら
+  // 初期認証を不必要にunknownへ倒さない。両方ともusableでない場合だけfail-closedにする。
+  const localUsable = local.available && isStorageWritable(localStorage);
+  const sessionUsable = session.available && isStorageWritable(sessionStorage);
+  if (!localUsable && !sessionUsable) {
     return { outcome: 'unknown' };
   }
   return null;

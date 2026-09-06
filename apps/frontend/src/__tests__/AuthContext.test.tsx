@@ -74,6 +74,22 @@ const LogoutStateProbe: React.FC = () => {
   );
 };
 
+const AuthRecoveryProbe: React.FC = () => {
+  const { authMode, user, logoutOutcome, signIn, signOut } = useAuth();
+  return (
+    <>
+      <span
+        data-testid="auth-recovery-state"
+        data-auth-mode={authMode}
+        data-user={user ? 'present' : 'null'}
+        data-outcome={logoutOutcome ?? 'none'}
+      />
+      <button type="button" onClick={() => void signIn('reload-token').catch(() => undefined)}>サインイン</button>
+      <button type="button" onClick={() => void signOut()}>ログアウト</button>
+    </>
+  );
+};
+
 describe('AuthProvider logging behaviour', () => {
   // 新規参画者向けメモ: 認証バイパス有効時のログレベル切り替えを固定するための回帰テスト。
   // バイパス環境では error を抑制し warn に切り替わることをここで保証する。
@@ -923,7 +939,7 @@ describe('AuthProvider logout result state', () => {
     }
   });
 
-  it('fails closed when localStorage access is denied and still sends logout', async () => {
+  it('uses sessionStorage when localStorage access is denied and still sends logout', async () => {
     const localStorageDescriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
     if (!localStorageDescriptor) throw new Error('localStorage descriptor is unavailable');
     localStorage.setItem('wordpack.auth.v1', JSON.stringify({ authMode: 'authenticated', user: sampleUser }));
@@ -943,13 +959,133 @@ describe('AuthProvider logout result state', () => {
         </AuthProvider>,
       );
       const probe = await screen.findByTestId('logout-state');
-      expect(probe).toHaveAttribute('data-outcome', 'unknown');
+      expect(probe).toHaveAttribute('data-outcome', 'none');
       await user.click(screen.getByRole('button', { name: 'ログアウト' }));
       await waitFor(() => expect(probe).toHaveAttribute('data-outcome', 'confirmed'));
       expect(fetchMock).toHaveBeenCalledWith('/api/auth/logout', expect.objectContaining({ method: 'POST' }));
       rendered.unmount();
     } finally {
       Object.defineProperty(window, 'localStorage', localStorageDescriptor);
+    }
+  });
+
+  it('allows authentication when localStorage is unavailable but sessionStorage is usable', async () => {
+    const localStorageDescriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    if (!localStorageDescriptor) throw new Error('localStorage descriptor is unavailable');
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get: () => {
+        throw new Error('localStorage access denied');
+      },
+    });
+
+    let logoutStatus = 503;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith('/api/config')) return Promise.resolve(new Response('{}', { status: 200 }));
+      if (url.endsWith('/api/auth/logout')) {
+        return Promise.resolve(new Response(logoutStatus === 204 ? null : '{}', { status: logoutStatus }));
+      }
+      if (url.endsWith('/api/auth/google')) return Promise.resolve(new Response(JSON.stringify({ user: sampleUser }), { status: 200 }));
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    });
+
+    try {
+      const rendered = render(
+        <AuthProvider clientId="test-client">
+          <AuthRecoveryProbe />
+        </AuthProvider>,
+      );
+      const probe = await screen.findByTestId('auth-recovery-state');
+      expect(probe).toHaveAttribute('data-outcome', 'none');
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'ログアウト' }));
+      await waitFor(() => expect(probe).toHaveAttribute('data-outcome', 'failed'));
+      expect(sessionStorage.getItem('wordpack.logout.v1')).toBe(JSON.stringify({ outcome: 'failed' }));
+
+      logoutStatus = 204;
+      await user.click(screen.getByRole('button', { name: 'ログアウト' }));
+      await waitFor(() => expect(probe).toHaveAttribute('data-outcome', 'confirmed'));
+      expect(sessionStorage.getItem('wordpack.logout.v1')).toBeNull();
+      rendered.unmount();
+
+      const reloaded = render(
+        <AuthProvider clientId="test-client">
+          <AuthRecoveryProbe />
+        </AuthProvider>,
+      );
+      const reloadedProbe = await screen.findByTestId('auth-recovery-state');
+      expect(reloadedProbe).toHaveAttribute('data-outcome', 'none');
+      await user.click(screen.getByRole('button', { name: 'サインイン' }));
+      await waitFor(() => {
+        expect(reloadedProbe).toHaveAttribute('data-auth-mode', 'authenticated');
+        expect(reloadedProbe).toHaveAttribute('data-user', 'present');
+      });
+      expect(fetchMock).toHaveBeenCalledWith('/api/auth/google', expect.objectContaining({ method: 'POST' }));
+      reloaded.unmount();
+    } finally {
+      Object.defineProperty(window, 'localStorage', localStorageDescriptor);
+    }
+  });
+
+  it('allows authentication when sessionStorage is unavailable but localStorage is usable', async () => {
+    const sessionStorageDescriptor = Object.getOwnPropertyDescriptor(window, 'sessionStorage');
+    if (!sessionStorageDescriptor) throw new Error('sessionStorage descriptor is unavailable');
+    Object.defineProperty(window, 'sessionStorage', {
+      configurable: true,
+      get: () => {
+        throw new Error('sessionStorage access denied');
+      },
+    });
+
+    let logoutStatus = 503;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith('/api/config')) return Promise.resolve(new Response('{}', { status: 200 }));
+      if (url.endsWith('/api/auth/logout')) {
+        return Promise.resolve(new Response(logoutStatus === 204 ? null : '{}', { status: logoutStatus }));
+      }
+      if (url.endsWith('/api/auth/google')) return Promise.resolve(new Response(JSON.stringify({ user: sampleUser }), { status: 200 }));
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    });
+
+    try {
+      const rendered = render(
+        <AuthProvider clientId="test-client">
+          <AuthRecoveryProbe />
+        </AuthProvider>,
+      );
+      const probe = await screen.findByTestId('auth-recovery-state');
+      expect(probe).toHaveAttribute('data-outcome', 'none');
+
+      const user = userEvent.setup();
+      await user.click(screen.getByRole('button', { name: 'ログアウト' }));
+      await waitFor(() => expect(probe).toHaveAttribute('data-outcome', 'failed'));
+      expect(localStorage.getItem('wordpack.logout.v1')).toBe(JSON.stringify({ outcome: 'failed' }));
+
+      logoutStatus = 204;
+      await user.click(screen.getByRole('button', { name: 'ログアウト' }));
+      await waitFor(() => expect(probe).toHaveAttribute('data-outcome', 'confirmed'));
+      expect(localStorage.getItem('wordpack.logout.v1')).toBeNull();
+      rendered.unmount();
+
+      const reloaded = render(
+        <AuthProvider clientId="test-client">
+          <AuthRecoveryProbe />
+        </AuthProvider>,
+      );
+      const reloadedProbe = await screen.findByTestId('auth-recovery-state');
+      expect(reloadedProbe).toHaveAttribute('data-outcome', 'none');
+      await user.click(screen.getByRole('button', { name: 'サインイン' }));
+      await waitFor(() => {
+        expect(reloadedProbe).toHaveAttribute('data-auth-mode', 'authenticated');
+        expect(reloadedProbe).toHaveAttribute('data-user', 'present');
+      });
+      expect(fetchMock).toHaveBeenCalledWith('/api/auth/google', expect.objectContaining({ method: 'POST' }));
+      reloaded.unmount();
+    } finally {
+      Object.defineProperty(window, 'sessionStorage', sessionStorageDescriptor);
     }
   });
 
