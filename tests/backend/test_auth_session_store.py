@@ -85,6 +85,18 @@ def test_revoked_user_session_is_rejected(session_store: AppFirestoreStore) -> N
         auth_module.verify_session_token(token)
 
 
+def test_revoked_guest_session_is_rejected(session_store: AppFirestoreStore) -> None:
+    """guest sessionもrevoke後に署名が正しくても再利用できない。"""
+
+    import backend.auth as auth_module
+
+    token = auth_module.issue_guest_session_token()
+    assert auth_module.revoke_session_token(token, guest=True) is True
+
+    with pytest.raises(BadSignature):
+        auth_module.verify_guest_session_token(token)
+
+
 def test_idle_timeout_is_enforced(session_store: AppFirestoreStore) -> None:
     import backend.auth as auth_module
 

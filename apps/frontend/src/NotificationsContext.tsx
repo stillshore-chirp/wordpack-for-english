@@ -1,4 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { APP_EVENTS } from './shared/events/appEvents';
 
 export type NotificationStatus = 'progress' | 'success' | 'error';
 export type NotificationJobType =
@@ -70,6 +71,22 @@ export const NotificationsProvider: React.FC<{ children: React.ReactNode } & { p
   useEffect(() => {
     if (persist) saveToStorage(notifications);
   }, [notifications, persist]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+    const handleLocalAuthDataCleared = () => setNotifications([]);
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === STORAGE_KEY && event.newValue === null) {
+        setNotifications([]);
+      }
+    };
+    window.addEventListener(APP_EVENTS.localAuthDataCleared, handleLocalAuthDataCleared);
+    window.addEventListener('storage', handleStorage);
+    return () => {
+      window.removeEventListener(APP_EVENTS.localAuthDataCleared, handleLocalAuthDataCleared);
+      window.removeEventListener('storage', handleStorage);
+    };
+  }, []);
 
   const add: NotificationsContextValue['add'] = useCallback((input) => {
     const id = input.id || `n-${Date.now()}-${idSeq.current++}`;

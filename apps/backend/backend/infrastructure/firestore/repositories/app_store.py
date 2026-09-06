@@ -496,6 +496,22 @@ class AppFirestoreRepository:
     def revoke_session(self, sid: str, *, revoked_at: str) -> bool:
         return self.sessions.revoke_session(sid, revoked_at=revoked_at)
 
+    def get_session_revocation(self, token_digest: str) -> Mapping[str, Any] | None:
+        return self.sessions.get_session_revocation(token_digest)
+
+    def create_session_revocation(
+        self,
+        token_digest: str,
+        *,
+        kind: str,
+        revoked_at: str,
+    ) -> bool:
+        return self.sessions.create_session_revocation(
+            token_digest,
+            kind=kind,
+            revoked_at=revoked_at,
+        )
+
     def touch_session(self, sid: str, *, last_seen_at: str) -> bool:
         return self.sessions.touch_session(sid, last_seen_at=last_seen_at)
 
