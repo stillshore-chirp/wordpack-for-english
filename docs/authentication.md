@@ -6,9 +6,9 @@
 
 - frontend は Google Identity Services で ID token を取得します。
 - backend は `/api/auth/google` で ID token または GIS `credential` を検証し、HttpOnly の署名付きセッション Cookie を発行します。
-- frontend は ID token を長期保存しません。再読み込み時は Cookie と `/api/config` の応答から認証状態を再構築します。
+- frontend は ID token を長期保存せず、表示用の認証状態だけを local storage に保存します。未解決のログアウト状態がない場合、再読み込み時は保存済みの表示状態を初期表示に使い、認証を要する API は HttpOnly Cookie で backend に確認します。
 - ゲスト閲覧は `/api/auth/guest` で署名付きゲスト Cookie を発行し、読み取り専用 API だけを許可します。
-- ログアウトは `/api/auth/logout` で通常セッションとゲストセッションを失効させます。
+- ログアウトは `/api/auth/logout` で通常セッションとゲストセッションを失効させ、Cookie の削除を指示します。対応するセッションがすでにない場合も backend は HTTP 204 を返します。frontend は server-side session の失効を HTTP 200 または 204 の応答で確認できた場合だけ、ログアウト完了として扱います。
 - Cookie の署名 payload は opaque な `sid` のみで、ユーザー ID やゲスト状態は Firestore の `sessions/{sid}` で検証します。
 
 ## Google OAuth クライアント作成
@@ -61,6 +61,16 @@ VITE_GOOGLE_CLIENT_ID=12345-abcdefgh.apps.googleusercontent.com
 
 ゲスト公開フラグ API の詳細は [docs/guest_public_api.md](./guest_public_api.md) を参照してください。
 
+## ログアウトの結果と再試行
+
+`POST /api/auth/logout` は、通常ログインとゲスト閲覧のどちらでも使います。backend の正常応答は `204 No Content` で、通常セッション、ゲストセッション、`__session` の削除を指示します。対応するセッションがすでにない場合も同じ応答になるため、ログアウトは再試行に対して冪等です。失効処理を保存できない場合は `500` になり、frontend は server-side session の失効を確認済みとは表示しません。
+
+frontend は HTTP `200` または `204` のときだけ `confirmed` として扱い、それ以外の HTTP status は `failed` として扱います。通信例外、Abort、応答を受け取れない場合は `unknown` です。ログアウト開始時点で画面に保持していたユーザー情報と local auth payload を削除し、結果が `failed` または `unknown` なら未解決状態を保存します。HttpOnly Cookie は JavaScript から読み書きできないため、frontend は Cookie を JavaScript で削除せず、server-side session の失効を backend 応答で判断します。
+
+ログアウト開始後は進行中のセッション発行要求の完了を待ち、その収束や logout 応答の待機がタイムアウトした場合は `unknown` として再試行を案内します。
+
+`failed` または `unknown` の間は未解決状態を保持し、再読み込み後も認証済みの表示を復元せず、ログアウトの再試行を案内します。再試行は、前回の失効が済んでいる場合や有効なセッションが残っていない場合も `204` で確認できます。再試行が確認済みになると未解決状態を解消して匿名状態へ戻ります。未解決のログアウトを残したまま、ゲスト開始で確認済みのログアウトとして扱うことはありません。
+
 ## Cookie
 
 通常セッション:
@@ -79,7 +89,8 @@ VITE_GOOGLE_CLIENT_ID=12345-abcdefgh.apps.googleusercontent.com
 
 - Cookie は HttpOnly です。
 - `SESSION_COOKIE_SECURE` は本番 HTTPS では true を指定します。
-- ログアウト時は通常セッション、ゲストセッション、`__session` を削除し、対応する server-side session を revoke します。
+- backend がログアウトを正常処理した場合は、通常セッション、ゲストセッション、`__session` の削除を指示し、対応する server-side session を revoke します。対応するセッションがすでにない場合も `204` を返します。
+- HttpOnly Cookie は JavaScript から削除できません。frontend のローカル消去は画面上の情報を安全に片付けるためのもので、server-side session の失効確認を代替しません。
 - 絶対期限に加えて idle timeout を検証し、`last_seen_at` は設定された間隔より頻繁には更新しません。
 
 ## CSRF 防御

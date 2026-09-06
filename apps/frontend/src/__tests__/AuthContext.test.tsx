@@ -1,9 +1,10 @@
-import { render, waitFor, screen } from '@testing-library/react';
+import { act, render, waitFor, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import '@testing-library/jest-dom';
 import React from 'react';
 import { vi } from 'vitest';
 import type { MockedFunction } from 'vitest';
-import { AuthProvider, useAuth } from '../AuthContext';
+import { AuthProvider, LOGOUT_REQUEST_TIMEOUT_MS, useAuth } from '../AuthContext';
 
 const googleProviderMock = vi.fn(
   ({ children }: { clientId?: string; locale?: string; children: React.ReactNode }) => <>{children}</>,
@@ -51,6 +52,25 @@ const AuthStateProbe: React.FC = () => {
       data-user={user ? 'present' : 'null'}
       data-bypass={authBypassActive ? 'true' : 'false'}
     />
+  );
+};
+
+const LogoutStateProbe: React.FC = () => {
+  const { authMode, user, error, logoutOutcome, isAuthenticating, authBypassActive, signOut } = useAuth();
+  return (
+    <>
+      <span
+        data-testid="logout-state"
+        data-auth-mode={authMode}
+        data-user={user ? 'present' : 'null'}
+        data-outcome={logoutOutcome ?? 'none'}
+        data-authenticating={isAuthenticating ? 'true' : 'false'}
+        data-bypass={authBypassActive ? 'true' : 'false'}
+      >
+        {error ?? 'none'}
+      </span>
+      <button type="button" onClick={() => signOut()}>ログアウト</button>
+    </>
   );
 };
 
@@ -616,5 +636,522 @@ describe('AuthProvider unauthorized guest recovery', () => {
       expect(probe).toHaveAttribute('data-auth-mode', 'guest');
       expect(probe).toHaveTextContent('none');
     });
+  });
+});
+
+describe('AuthProvider logout result state', () => {
+  const sampleUser = {
+    google_sub: 'sub-logout',
+    email: 'logout@example.com',
+    display_name: 'Logout Tester',
+  };
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+    sessionStorage.clear();
+    localStorage.setItem('wordpack.auth.v1', JSON.stringify({ authMode: 'authenticated', user: sampleUser }));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+    sessionStorage.clear();
+  });
+
+  const setupFetch = (logoutResponse: Response | Promise<Response> | undefined, rejectLogout = false) => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith('/api/config')) {
+        return Promise.resolve(new Response(JSON.stringify({}), { status: 200 }));
+      }
+      if (url.endsWith('/api/auth/logout') && init?.method === 'POST') {
+        if (rejectLogout) return Promise.reject(new Error('network unavailable'));
+        return Promise.resolve(logoutResponse as Response);
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    });
+    return fetchMock;
+  };
+
+  it.each([200, 204])('treats HTTP %s as confirmed server-side logout', async (status) => {
+    const fetchMock = setupFetch(new Response(null, { status }));
+    const user = userEvent.setup();
+
+    render(
+      <AuthProvider clientId="test-client">
+        <LogoutStateProbe />
+      </AuthProvider>,
+    );
+
+    const probe = await screen.findByTestId('logout-state');
+    await user.click(screen.getByRole('button', { name: 'ログアウト' }));
+
+    await waitFor(() => {
+      expect(probe).toHaveAttribute('data-auth-mode', 'anonymous');
+      expect(probe).toHaveAttribute('data-user', 'null');
+      expect(probe).toHaveAttribute('data-outcome', 'confirmed');
+    });
+    expect(localStorage.getItem('wordpack.auth.v1')).toBeNull();
+    expect(localStorage.getItem('wordpack.logout.v1')).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/logout', expect.objectContaining({ method: 'POST' }));
+  });
+
+  it('does not re-inject a development bypass user after confirmed logout', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith('/api/config')) {
+        return Promise.resolve(new Response(JSON.stringify({ session_auth_disabled: true }), { status: 200 }));
+      }
+      if (url.endsWith('/api/auth/logout')) return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    });
+    const user = userEvent.setup();
+
+    render(
+      <AuthProvider clientId="test-client">
+        <LogoutStateProbe />
+      </AuthProvider>,
+    );
+    const probe = await screen.findByTestId('logout-state');
+    await waitFor(() => expect(probe).toHaveAttribute('data-bypass', 'true'));
+    await user.click(screen.getByRole('button', { name: 'ログアウト' }));
+
+    await waitFor(() => {
+      expect(probe).toHaveAttribute('data-auth-mode', 'anonymous');
+      expect(probe).toHaveAttribute('data-user', 'null');
+      expect(probe).toHaveAttribute('data-outcome', 'confirmed');
+      expect(probe).toHaveAttribute('data-bypass', 'false');
+    });
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/auth/google', expect.anything());
+  });
+
+  it('treats a non-success HTTP response as failed and keeps a retry marker', async () => {
+    setupFetch(new Response('{}', { status: 503 }));
+    const user = userEvent.setup();
+
+    render(
+      <AuthProvider clientId="test-client">
+        <LogoutStateProbe />
+      </AuthProvider>,
+    );
+
+    const probe = await screen.findByTestId('logout-state');
+    await user.click(screen.getByRole('button', { name: 'ログアウト' }));
+
+    await waitFor(() => {
+      expect(probe).toHaveAttribute('data-auth-mode', 'anonymous');
+      expect(probe).toHaveAttribute('data-outcome', 'failed');
+      expect(probe).toHaveTextContent('サーバー側のセッションは終了していない可能性があります');
+    });
+    expect(localStorage.getItem('wordpack.auth.v1')).toBeNull();
+    expect(localStorage.getItem('wordpack.logout.v1')).toBe(JSON.stringify({ outcome: 'failed' }));
+  });
+
+  it('clears personal state and persists an unknown marker before a logout response arrives', async () => {
+    let resolveLogout!: (response: Response) => void;
+    const logoutResponse = new Promise<Response>((resolve) => {
+      resolveLogout = resolve;
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith('/api/config')) return Promise.resolve(new Response('{}', { status: 200 }));
+      if (url.endsWith('/api/auth/logout')) return logoutResponse;
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    });
+    localStorage.setItem('wpfe.notifications.v1', JSON.stringify([{ id: 'private-job' }]));
+    sessionStorage.setItem('wp.list.ui_state.v1', JSON.stringify({ selected: 'private-pack' }));
+    const user = userEvent.setup();
+
+    const firstRender = render(
+      <AuthProvider clientId="test-client">
+        <LogoutStateProbe />
+      </AuthProvider>,
+    );
+    const probe = await screen.findByTestId('logout-state');
+    await user.click(screen.getByRole('button', { name: 'ログアウト' }));
+
+    await waitFor(() => {
+      expect(probe).toHaveAttribute('data-auth-mode', 'anonymous');
+      expect(probe).toHaveAttribute('data-user', 'null');
+      expect(probe).toHaveAttribute('data-outcome', 'unknown');
+      expect(probe).toHaveAttribute('data-authenticating', 'true');
+    });
+    expect(localStorage.getItem('wordpack.auth.v1')).toBeNull();
+    expect(localStorage.getItem('wpfe.notifications.v1')).toBeNull();
+    expect(sessionStorage.getItem('wp.list.ui_state.v1')).toBeNull();
+    expect(localStorage.getItem('wordpack.logout.v1')).toBe(JSON.stringify({ outcome: 'unknown' }));
+
+    firstRender.unmount();
+    const secondRender = render(
+      <AuthProvider clientId="test-client">
+        <LogoutStateProbe />
+      </AuthProvider>,
+    );
+    const reloadedProbe = screen.getByTestId('logout-state');
+    expect(reloadedProbe).toHaveAttribute('data-auth-mode', 'anonymous');
+    expect(reloadedProbe).toHaveAttribute('data-user', 'null');
+    expect(reloadedProbe).toHaveAttribute('data-outcome', 'unknown');
+
+    secondRender.unmount();
+    await act(async () => {
+      resolveLogout(new Response(null, { status: 204 }));
+    });
+    expect(localStorage.getItem('wordpack.logout.v1')).toBeNull();
+    expect(fetchMock).toHaveBeenCalledWith('/api/auth/logout', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+  });
+
+  it.each([
+    ['network failure', true, undefined],
+    ['lost response', false, undefined],
+  ])('treats %s as unknown server-side outcome', async (_label, rejectLogout, response) => {
+    setupFetch(response, rejectLogout);
+    const user = userEvent.setup();
+
+    render(
+      <AuthProvider clientId="test-client">
+        <LogoutStateProbe />
+      </AuthProvider>,
+    );
+
+    const probe = await screen.findByTestId('logout-state');
+    await user.click(screen.getByRole('button', { name: 'ログアウト' }));
+
+    await waitFor(() => {
+      expect(probe).toHaveAttribute('data-auth-mode', 'anonymous');
+      expect(probe).toHaveAttribute('data-outcome', 'unknown');
+      expect(probe).toHaveTextContent('サーバー側のセッション状態は未確認です');
+    });
+    expect(localStorage.getItem('wordpack.auth.v1')).toBeNull();
+    expect(localStorage.getItem('wordpack.logout.v1')).toBe(JSON.stringify({ outcome: 'unknown' }));
+  });
+
+  it('restores unresolved logout state after reload and blocks auth restoration', async () => {
+    setupFetch(new Response('{}', { status: 500 }));
+    const user = userEvent.setup();
+    const firstRender = render(
+      <AuthProvider clientId="test-client">
+        <LogoutStateProbe />
+      </AuthProvider>,
+    );
+    await user.click(screen.getByRole('button', { name: 'ログアウト' }));
+    await waitFor(() => expect(screen.getByTestId('logout-state')).toHaveAttribute('data-outcome', 'failed'));
+    firstRender.unmount();
+
+    const fetchMock = setupFetch(new Response('{}', { status: 200 }));
+    render(
+      <AuthProvider clientId="test-client">
+        <LogoutStateProbe />
+      </AuthProvider>,
+    );
+    const probe = await screen.findByTestId('logout-state');
+    expect(probe).toHaveAttribute('data-auth-mode', 'anonymous');
+    expect(probe).toHaveAttribute('data-user', 'null');
+    expect(probe).toHaveAttribute('data-outcome', 'failed');
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/auth/google', expect.anything());
+  });
+
+  it('allows the recovery UI state to be retried after a lost response', async () => {
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith('/api/config')) return Promise.resolve(new Response('{}', { status: 200 }));
+      if (url.endsWith('/api/auth/logout')) {
+        const logoutCalls = fetchMock.mock.calls.filter(([request]) => {
+          const requestUrl = typeof request === 'string' ? request : request instanceof URL ? request.toString() : request.url;
+          return requestUrl.endsWith('/api/auth/logout');
+        }).length;
+        return logoutCalls === 1
+          ? Promise.resolve(undefined as unknown as Response)
+          : Promise.resolve(new Response(null, { status: 204 }));
+      }
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    });
+    const user = userEvent.setup();
+
+    render(
+      <AuthProvider clientId="test-client">
+        <LogoutStateProbe />
+      </AuthProvider>,
+    );
+    const probe = await screen.findByTestId('logout-state');
+    await user.click(screen.getByRole('button', { name: 'ログアウト' }));
+    await waitFor(() => expect(probe).toHaveAttribute('data-outcome', 'unknown'));
+
+    await user.click(screen.getByRole('button', { name: 'ログアウト' }));
+    await waitFor(() => {
+      expect(probe).toHaveAttribute('data-outcome', 'confirmed');
+      expect(probe).toHaveAttribute('data-auth-mode', 'anonymous');
+    });
+    expect(localStorage.getItem('wordpack.logout.v1')).toBeNull();
+    expect(fetchMock.mock.calls.filter(([request]) => {
+      const requestUrl = typeof request === 'string' ? request : request instanceof URL ? request.toString() : request.url;
+      return requestUrl.endsWith('/api/auth/logout');
+    })).toHaveLength(2);
+  });
+
+  it('marks a hung logout as unknown after a bounded timeout and enables retry', async () => {
+    vi.useFakeTimers();
+    try {
+      const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+        if (url.endsWith('/api/config')) return Promise.resolve(new Response('{}', { status: 200 }));
+        if (url.endsWith('/api/auth/logout')) return new Promise<Response>(() => undefined);
+        return Promise.resolve(new Response('{}', { status: 404 }));
+      });
+      render(
+        <AuthProvider clientId="test-client">
+          <LogoutStateProbe />
+        </AuthProvider>,
+      );
+      const probe = screen.getByTestId('logout-state');
+      await act(async () => {
+        screen.getByRole('button', { name: 'ログアウト' }).click();
+      });
+      expect(probe).toHaveAttribute('data-outcome', 'unknown');
+      expect(probe).toHaveAttribute('data-authenticating', 'true');
+      expect(localStorage.getItem('wordpack.auth.v1')).toBeNull();
+
+      await act(async () => {
+        vi.advanceTimersByTime(LOGOUT_REQUEST_TIMEOUT_MS);
+      });
+      expect(probe).toHaveAttribute('data-outcome', 'unknown');
+      expect(probe).toHaveAttribute('data-authenticating', 'false');
+      expect(localStorage.getItem('wordpack.logout.v1')).toBe(JSON.stringify({ outcome: 'unknown' }));
+      expect(fetchMock).toHaveBeenCalledWith('/api/auth/logout', expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('fails closed when localStorage access is denied and still sends logout', async () => {
+    const localStorageDescriptor = Object.getOwnPropertyDescriptor(window, 'localStorage');
+    if (!localStorageDescriptor) throw new Error('localStorage descriptor is unavailable');
+    localStorage.setItem('wordpack.auth.v1', JSON.stringify({ authMode: 'authenticated', user: sampleUser }));
+    Object.defineProperty(window, 'localStorage', {
+      configurable: true,
+      get: () => {
+        throw new Error('storage access denied');
+      },
+    });
+
+    try {
+      const fetchMock = setupFetch(new Response(null, { status: 204 }));
+      const user = userEvent.setup();
+      const rendered = render(
+        <AuthProvider clientId="test-client">
+          <LogoutStateProbe />
+        </AuthProvider>,
+      );
+      const probe = await screen.findByTestId('logout-state');
+      expect(probe).toHaveAttribute('data-outcome', 'unknown');
+      await user.click(screen.getByRole('button', { name: 'ログアウト' }));
+      await waitFor(() => expect(probe).toHaveAttribute('data-outcome', 'confirmed'));
+      expect(fetchMock).toHaveBeenCalledWith('/api/auth/logout', expect.objectContaining({ method: 'POST' }));
+      rendered.unmount();
+    } finally {
+      Object.defineProperty(window, 'localStorage', localStorageDescriptor);
+    }
+  });
+
+  it('keeps a recovery marker in sessionStorage when localStorage writes fail', async () => {
+    const localStorageObject = window.localStorage;
+    const storagePrototype = Object.getPrototypeOf(localStorageObject) as Storage;
+    const originalSetItem = storagePrototype.setItem;
+    const setItemSpy = vi.spyOn(storagePrototype, 'setItem').mockImplementation(function (this: Storage, key, value) {
+      if (this === localStorageObject && key === 'wordpack.logout.v1') {
+        throw new Error('localStorage quota exceeded');
+      }
+      return originalSetItem.call(this, key, value);
+    });
+
+    try {
+      setupFetch(new Response('{}', { status: 503 }));
+      const user = userEvent.setup();
+      const rendered = render(
+        <AuthProvider clientId="test-client">
+          <LogoutStateProbe />
+        </AuthProvider>,
+      );
+      const probe = await screen.findByTestId('logout-state');
+      await user.click(screen.getByRole('button', { name: 'ログアウト' }));
+      await waitFor(() => expect(probe).toHaveAttribute('data-outcome', 'failed'));
+      expect(localStorageObject.getItem('wordpack.logout.v1')).toBeNull();
+      expect(sessionStorage.getItem('wordpack.logout.v1')).toBe(JSON.stringify({ outcome: 'failed' }));
+      rendered.unmount();
+    } finally {
+      setItemSpy.mockRestore();
+    }
+
+    setupFetch(new Response('{}', { status: 200 }));
+    const reloaded = render(
+      <AuthProvider clientId="test-client">
+        <LogoutStateProbe />
+      </AuthProvider>,
+    );
+    expect(await screen.findByTestId('logout-state')).toHaveAttribute('data-outcome', 'failed');
+    reloaded.unmount();
+  });
+
+  it('applies logout recovery changes received from another tab', async () => {
+    setupFetch(new Response('{}', { status: 200 }));
+    const rendered = render(
+      <AuthProvider clientId="test-client">
+        <LogoutStateProbe />
+      </AuthProvider>,
+    );
+    const probe = await screen.findByTestId('logout-state');
+
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'wordpack.logout.v1',
+        newValue: JSON.stringify({ outcome: 'unknown' }),
+        storageArea: window.localStorage,
+      }));
+    });
+    expect(probe).toHaveAttribute('data-auth-mode', 'anonymous');
+    expect(probe).toHaveAttribute('data-outcome', 'unknown');
+    expect(sessionStorage.getItem('wordpack.logout.v1')).toBe(JSON.stringify({ outcome: 'unknown' }));
+
+    await act(async () => {
+      window.dispatchEvent(new StorageEvent('storage', {
+        key: 'wordpack.logout.v1',
+        oldValue: JSON.stringify({ outcome: 'unknown' }),
+        newValue: null,
+        storageArea: window.localStorage,
+      }));
+    });
+    expect(probe).toHaveAttribute('data-auth-mode', 'anonymous');
+    expect(probe).toHaveAttribute('data-outcome', 'confirmed');
+    expect(sessionStorage.getItem('wordpack.logout.v1')).toBeNull();
+    rendered.unmount();
+  });
+
+  it('fails closed on reload when both storage writes are denied but reads are empty', async () => {
+    const storagePrototype = Object.getPrototypeOf(window.localStorage) as Storage;
+    let logoutStatus = 503;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith('/api/config')) return Promise.resolve(new Response('{}', { status: 200 }));
+      if (url.endsWith('/api/auth/logout')) return Promise.resolve(new Response('{}', { status: logoutStatus }));
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    });
+    const firstRender = render(
+      <AuthProvider clientId="test-client">
+        <LogoutStateProbe />
+      </AuthProvider>,
+    );
+    const firstProbe = await screen.findByTestId('logout-state');
+    const setItemSpy = vi.spyOn(storagePrototype, 'setItem').mockImplementation(() => {
+      throw new Error('storage writes denied');
+    });
+
+    try {
+      await userEvent.setup().click(screen.getByRole('button', { name: 'ログアウト' }));
+      await waitFor(() => expect(firstProbe).toHaveAttribute('data-outcome', 'failed'));
+      expect(localStorage.getItem('wordpack.logout.v1')).toBeNull();
+      expect(sessionStorage.getItem('wordpack.logout.v1')).toBeNull();
+      firstRender.unmount();
+
+      logoutStatus = 200;
+      const reloaded = render(
+        <AuthProvider clientId="test-client">
+          <LogoutStateProbe />
+        </AuthProvider>,
+      );
+      const reloadedProbe = await screen.findByTestId('logout-state');
+      expect(reloadedProbe).toHaveAttribute('data-auth-mode', 'anonymous');
+      expect(reloadedProbe).toHaveAttribute('data-user', 'null');
+      expect(reloadedProbe).toHaveAttribute('data-outcome', 'unknown');
+      expect(fetchMock).not.toHaveBeenCalledWith('/api/auth/google', expect.anything());
+      reloaded.unmount();
+    } finally {
+      setItemSpy.mockRestore();
+    }
+  });
+
+  it('does not let a late sign-in response restore state after logout starts', async () => {
+    let resolveSignIn!: (response: Response) => void;
+    const signInResponse = new Promise<Response>((resolve) => {
+      resolveSignIn = resolve;
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith('/api/config')) return Promise.resolve(new Response('{}', { status: 200 }));
+      if (url.endsWith('/api/auth/google')) return signInResponse;
+      if (url.endsWith('/api/auth/logout')) return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    });
+
+    localStorage.removeItem('wordpack.auth.v1');
+    const RaceProbe: React.FC = () => {
+      const { signIn, signOut, authMode, user } = useAuth();
+      return (
+        <>
+          <span data-testid="race-state" data-auth-mode={authMode} data-user={user ? 'present' : 'null'} />
+          <button type="button" onClick={() => void signIn('late-token').catch(() => undefined)}>サインイン</button>
+          <button type="button" onClick={() => signOut()}>ログアウト</button>
+        </>
+      );
+    };
+
+    const user = userEvent.setup();
+    render(
+      <AuthProvider clientId="test-client">
+        <RaceProbe />
+      </AuthProvider>,
+    );
+    await user.click(screen.getByRole('button', { name: 'サインイン' }));
+    await user.click(screen.getByRole('button', { name: 'ログアウト' }));
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/auth/logout', expect.anything());
+    await act(async () => {
+      resolveSignIn(new Response(JSON.stringify({ user: sampleUser }), { status: 200 }));
+    });
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/auth/logout', expect.anything()));
+
+    await waitFor(() => {
+      expect(screen.getByTestId('race-state')).toHaveAttribute('data-auth-mode', 'anonymous');
+      expect(screen.getByTestId('race-state')).toHaveAttribute('data-user', 'null');
+    });
+  });
+
+  it('does not let a late guest reissue restore guest mode after logout starts', async () => {
+    localStorage.clear();
+    localStorage.setItem('wordpack.auth.v1', JSON.stringify({ authMode: 'guest' }));
+    let resolveReissue!: (response: Response) => void;
+    const reissueResponse = new Promise<Response>((resolve) => {
+      resolveReissue = resolve;
+    });
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      if (url.endsWith('/api/config')) return Promise.resolve(new Response('{}', { status: 200 }));
+      if (url.endsWith('/api/auth/guest')) return reissueResponse;
+      if (url.endsWith('/api/auth/logout')) return Promise.resolve(new Response(null, { status: 204 }));
+      return Promise.resolve(new Response('{}', { status: 404 }));
+    });
+    const RaceProbe: React.FC = () => {
+      const { signOut, authMode, logoutOutcome } = useAuth();
+      return (
+        <>
+          <span data-testid="guest-race-state" data-auth-mode={authMode} data-outcome={logoutOutcome ?? 'none'} />
+          <button type="button" onClick={() => void signOut()}>ログアウト</button>
+        </>
+      );
+    };
+
+    render(
+      <AuthProvider clientId="test-client">
+        <RaceProbe />
+      </AuthProvider>,
+    );
+    await screen.findByTestId('guest-race-state');
+    window.dispatchEvent(new CustomEvent('auth:unauthorized', { detail: { status: 401 } }));
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledWith('/api/auth/guest', expect.objectContaining({ method: 'POST' })));
+    await userEvent.setup().click(screen.getByRole('button', { name: 'ログアウト' }));
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/auth/logout', expect.anything());
+    await act(async () => {
+      resolveReissue(new Response(JSON.stringify({ mode: 'guest' }), { status: 200 }));
+    });
+    await waitFor(() => expect(screen.getByTestId('guest-race-state')).toHaveAttribute('data-outcome', 'confirmed'));
+    await waitFor(() => expect(screen.getByTestId('guest-race-state')).toHaveAttribute('data-auth-mode', 'anonymous'));
   });
 });
