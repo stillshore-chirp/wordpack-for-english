@@ -23,7 +23,7 @@ Langfuse を使わない場合は `LANGFUSE_ENABLED=false` とします。初期
 4. `validation` と input / output hash で parse、schema、application のどこで失敗したかを絞ります。
 5. 本番ログや実データを未確認なら、コード上の仮説として扱い、原因を断定しません。
 
-WordPack 生成では、型検証後に文字列の前後空白を除き、空白だけの配列要素と不完全な比較要素を保存前に除去します。意味上必須の本文が空白だけの場合は application validation 失敗を維持します。正規化・拒否ログは件数、reason code、フィールド種別だけを記録し、raw output は記録しません。Live Evaluation も同じ正規化境界を使います。
+WordPack 生成では、型検証後に文字列の前後空白を除き、空白だけの配列要素と不完全な比較要素を保存前に除去します。意味上必須の本文が空白だけの場合は application validation 失敗を維持します。正規化・拒否ログは件数、reason code、フィールド種別だけを記録し、raw output は記録しません。
 
 ## 本番問題を fixture へ還流する
 

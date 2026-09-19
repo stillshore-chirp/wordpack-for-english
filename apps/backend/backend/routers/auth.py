@@ -12,12 +12,13 @@ from itsdangerous import BadSignature, SignatureExpired
 from pydantic import BaseModel, Field
 
 from ..auth import (
+    _revoke_verified_session_payload,
+    _verify_session_token_internal,
     guest_session_cookie_max_age,
     guest_session_cookie_names,
     issue_guest_session_token,
     issue_session_token,
     read_session_cookie,
-    revoke_session_token,
     resolve_guest_session_cookie,
     resolve_session_cookie,
     session_cookie_names,
@@ -295,18 +296,64 @@ async def logout(request: Request, response: Response) -> Response:
     return response
 
 
+def _revoke_verified_token_or_raise(token: str, *, guest: bool = False) -> None:
+    """Revoke one token after verification, tolerating a concurrent revoke."""
+
+    try:
+        payload, legacy = _verify_session_token_internal(token, guest=guest)
+    except (SignatureExpired, BadSignature):
+        return
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail="Session revocation is unavailable",
+        ) from exc
+
+    try:
+        revoked = _revoke_verified_session_payload(
+            token,
+            payload,
+            legacy=legacy,
+            guest=guest,
+        )
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail="Session revocation is unavailable",
+        ) from exc
+    if revoked:
+        return
+
+    # A concurrent logout may have revoked the token after the initial verify.
+    # Re-read the signed state before treating a false repository result as an
+    # operational failure; a still-valid token must never be reported as done.
+    try:
+        _verify_session_token_internal(token, guest=guest)
+    except (SignatureExpired, BadSignature):
+        return
+    except RuntimeError as exc:
+        raise HTTPException(
+            status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+            detail="Session revocation is unavailable",
+        ) from exc
+    raise HTTPException(
+        status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+        detail="Session revocation failed",
+    )
+
+
 def _revoke_all_present_sessions(request: Request) -> None:
     seen: set[tuple[str, str]] = set()
     for cookie_name in session_cookie_names():
         token = read_session_cookie(request, cookie_name)
         if token and ("user", token) not in seen:
             seen.add(("user", token))
-            revoke_session_token(token)
+            _revoke_verified_token_or_raise(token)
     for cookie_name in guest_session_cookie_names():
         token = read_session_cookie(request, cookie_name)
         if token and ("guest", token) not in seen:
             seen.add(("guest", token))
-            revoke_session_token(token, guest=True)
+            _revoke_verified_token_or_raise(token, guest=True)
 
 
 def _resolve_logout_context(request: Request) -> tuple[str | None, str]:
@@ -317,10 +364,14 @@ def _resolve_logout_context(request: Request) -> tuple[str | None, str]:
     if session_token:
         try:
             payload = verify_session_token(session_token)
-        except (SignatureExpired, BadSignature, RuntimeError):
+        except (SignatureExpired, BadSignature):
             session_invalid = True
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                detail="Session revocation is unavailable",
+            ) from exc
         else:
-            revoke_session_token(session_token)
             sub = payload.get("sub") if isinstance(payload, dict) else None
             if not sub:
                 session_invalid = True
@@ -331,21 +382,23 @@ def _resolve_logout_context(request: Request) -> tuple[str | None, str]:
     if guest_token:
         try:
             payload = verify_guest_session_token(guest_token)
-        except (SignatureExpired, BadSignature, RuntimeError):
+        except (SignatureExpired, BadSignature):
             return None, "guest_logout_invalid"
+        except RuntimeError as exc:
+            raise HTTPException(
+                status_code=HTTPStatus.INTERNAL_SERVER_ERROR,
+                detail="Session revocation is unavailable",
+            ) from exc
         if not isinstance(payload, dict) or payload.get("mode") != "guest":
             return None, "guest_logout_invalid"
-        revoke_session_token(guest_token, guest=True)
         request.state.guest = True
         return None, "guest_logout"
 
     if session_invalid:
         return None, "logout_invalid_session"
 
-    raise HTTPException(
-        status_code=HTTPStatus.UNAUTHORIZED,
-        detail="Session or guest cookie is missing",
-    )
+    # Logout is idempotent after the browser already cleared its cookies.
+    return None, "logout_no_session"
 
 
 def _session_cookie_max_age() -> int:

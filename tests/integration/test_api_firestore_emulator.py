@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
+import urllib.error
 import urllib.request
 
 import pytest
@@ -18,18 +20,25 @@ _TEST_PROJECT_ID = "wordpack-integration-test"
 def _ensure_firestore_emulator_ready(emulator_host: str) -> None:
     """Firestore エミュレータが起動済みであることを確認する。
 
-    なぜ: 実クライアントでエミュレータ接続を検証するため、起動していない場合は
-    テストを失敗ではなくスキップとして扱い、起動漏れを明示する。
+    なぜ: 実クライアントでエミュレータ接続を検証するため、ローカルの任意実行では
+    未起動をskipできる一方、CIの必須gateでは接続不能をfailureとして残す。
     """
 
     url = f"http://{emulator_host}/"
     try:
         with urllib.request.urlopen(url, timeout=2) as response:
             response.read(1)
-    except Exception as exc:
-        pytest.skip(
-            f"Firestore エミュレータが起動していないためスキップします: {exc}"
-        )
+    except Exception:
+        if os.environ.get("FIRESTORE_INTEGRATION_REQUIRED", "").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+        }:
+            pytest.fail(
+                "Firestore emulator readiness failed; required integration gate cannot continue",
+                pytrace=False,
+            )
+        pytest.skip("Firestore emulator readiness failed; optional integration skipped")
 
 
 def _reload_backend_app(monkeypatch: pytest.MonkeyPatch) -> Any:
@@ -88,6 +97,7 @@ def api_client(monkeypatch: pytest.MonkeyPatch, firestore_emulator_env: dict[str
     return TestClient(app_module.app)
 
 
+@pytest.mark.firestore_integration
 def test_word_pack_create_persists_to_firestore_emulator(
     api_client: TestClient,
     firestore_emulator_env: dict[str, str],
@@ -126,3 +136,80 @@ def test_word_pack_create_persists_to_firestore_emulator(
     read_payload = read_back.json()
     assert read_payload.get("lemma") == "integration"
     assert read_payload.get("sense_title")
+
+
+def _raise_connection_refused(*_args: object, **_kwargs: object) -> Any:
+    raise urllib.error.URLError(ConnectionRefusedError("connection refused"))
+
+
+def _raise_timeout(*_args: object, **_kwargs: object) -> Any:
+    raise TimeoutError("timed out")
+
+
+def _raise_http_error(*_args: object, **_kwargs: object) -> Any:
+    raise urllib.error.HTTPError(
+        _TEST_EMULATOR_HOST,
+        503,
+        "synthetic emulator unavailable",
+        {},
+        None,
+    )
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        pytest.param(_raise_connection_refused, id="connection-refused"),
+        pytest.param(_raise_timeout, id="timeout"),
+        pytest.param(_raise_http_error, id="http-error"),
+    ],
+)
+@pytest.mark.parametrize("required", [True, False], ids=["required", "optional"])
+def test_readiness_transport_failure_respects_gate_mode(
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Callable[..., Any],
+    required: bool,
+) -> None:
+    """Transport failures are failures only when the integration gate is required."""
+
+    monkeypatch.setenv(
+        "FIRESTORE_INTEGRATION_REQUIRED", "true" if required else "false"
+    )
+    monkeypatch.setattr(urllib.request, "urlopen", failure)
+    expected = pytest.fail.Exception if required else pytest.skip.Exception
+    expected_message = "required integration gate" if required else "optional integration"
+
+    with pytest.raises(expected, match=expected_message):
+        _ensure_firestore_emulator_ready(_TEST_EMULATOR_HOST)
+
+
+def _closed_loopback_host() -> str:
+    """Return an immediately closed loopback port for endpoint failure tests."""
+
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
+        listener.bind(("127.0.0.1", 0))
+        port = listener.getsockname()[1]
+    return f"127.0.0.1:{port}"
+
+
+@pytest.mark.parametrize(
+    "failure_source",
+    ["wrong-host-or-port", "emulator-process-exited"],
+)
+@pytest.mark.parametrize("required", [True, False], ids=["required", "optional"])
+def test_closed_emulator_endpoint_respects_gate_mode(
+    failure_source: str,
+    monkeypatch: pytest.MonkeyPatch,
+    required: bool,
+) -> None:
+    """Wrong targets and an exited process share the closed-port failure contract."""
+
+    del failure_source
+    monkeypatch.setenv(
+        "FIRESTORE_INTEGRATION_REQUIRED", "true" if required else "false"
+    )
+    expected = pytest.fail.Exception if required else pytest.skip.Exception
+    expected_message = "required integration gate" if required else "optional integration"
+
+    with pytest.raises(expected, match=expected_message):
+        _ensure_firestore_emulator_ready(_closed_loopback_host())

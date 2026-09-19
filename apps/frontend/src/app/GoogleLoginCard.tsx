@@ -6,6 +6,7 @@ import { sendMissingIdTokenTelemetry } from '../features/auth/googleTelemetry';
 
 interface GoogleLoginCardProps {
   title: string;
+  titleRef?: React.Ref<HTMLHeadingElement>;
   isAuthenticating: boolean;
   clearError: () => void;
   error: string | null;
@@ -17,6 +18,7 @@ interface GoogleLoginCardProps {
 
 export const GoogleLoginCard: React.FC<GoogleLoginCardProps> = ({
   title,
+  titleRef,
   isAuthenticating,
   clearError,
   error,
@@ -59,7 +61,7 @@ export const GoogleLoginCard: React.FC<GoogleLoginCardProps> = ({
 
   return (
     <section className="login-card" role="dialog" aria-labelledby="login-title" aria-live="polite">
-      <h2 id="login-title" className="login-title">{title}</h2>
+      <h2 ref={titleRef} id="login-title" className="login-title" tabIndex={-1}>{title}</h2>
       <p className="login-description">Google アカウントでログインして辞書データと設定を同期します。</p>
       {combinedError ? (
         <div role="alert" className="login-error">
@@ -92,6 +94,7 @@ export const GoogleLoginCard: React.FC<GoogleLoginCardProps> = ({
         onClick={() => {
           void enterGuestMode();
         }}
+        disabled={isAuthenticating}
       >
         ゲスト閲覧モード
       </button>

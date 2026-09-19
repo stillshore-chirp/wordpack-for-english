@@ -20,6 +20,12 @@
 
 Cloud Firestore を使う場合は、プロジェクト ID と認証情報を明示してください。本番で `FIRESTORE_EMULATOR_HOST` を設定すると本番データを読めないため、deploy 前に必ず確認します。
 
+## 認証セッションの失効記録
+
+- `sessions/{sid}` は通常ログインとゲスト閲覧の server-side session を保持します。ログアウトで失効した session は、後続の保護 API で再利用できません。
+- `session_revocations/{digest}` は、対応する session 文書がない署名済み session Cookie をログアウト後に再利用させないための失効記録です。document ID には一方向のダイジェストを使い、raw token 自体は保存しません。
+- `session_revocations` には現時点で TTL または自動 cleanup を設定していません。削除運用を追加・変更する場合は、失効済み Cookie の再利用防止を維持できる期間と手順を先に定義します。
+
 ## インデックス
 
 複合インデックスと single-field override は `firestore.indexes.json` で管理します。Web Console で手作業登録するのではなく、ファイルを同期します。

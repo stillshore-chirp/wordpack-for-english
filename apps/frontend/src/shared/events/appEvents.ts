@@ -1,5 +1,6 @@
 export const APP_EVENTS = {
   authUnauthorized: 'auth:unauthorized',
+  localAuthDataCleared: 'auth:local-data-cleared',
   wordPackUpdated: 'wordpack:updated',
   wordPackStudyProgress: 'wordpack:study-progress',
   articleUpdated: 'article:updated',
@@ -20,6 +21,7 @@ export interface WordPackStudyProgressDetail {
 
 export type AppEventDetailMap = {
   [APP_EVENTS.authUnauthorized]: AuthUnauthorizedDetail;
+  [APP_EVENTS.localAuthDataCleared]: undefined;
   [APP_EVENTS.wordPackUpdated]: undefined;
   [APP_EVENTS.wordPackStudyProgress]: WordPackStudyProgressDetail;
   [APP_EVENTS.articleUpdated]: undefined;
