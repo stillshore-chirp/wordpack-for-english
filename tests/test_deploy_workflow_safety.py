@@ -296,7 +296,15 @@ def test_backend_artifact_is_built_once_checked_and_promoted_by_digest() -> None
     assert "@${REGISTRY_DIGEST}" in build_helper
     assert "Install frontend dependencies" in "\n".join(rendered_prepare)
     assert "Build frontend artifact" in "\n".join(rendered_prepare)
-    assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in "\n".join(rendered_prepare)
+    upload_artifact_actions = [
+        step["uses"]
+        for step in prepare_steps
+        if isinstance(step, dict)
+        and isinstance(step.get("uses"), str)
+        and step["uses"].startswith("actions/upload-artifact@")
+    ]
+    assert len(upload_artifact_actions) == 1
+    assert re.fullmatch(r"actions/upload-artifact@[0-9a-f]{40}", upload_artifact_actions[0])
     assert "scripts/build_backend_artifact.sh" in "\n".join(rendered_build)
     assert "npm " not in "\n".join(rendered_build)
     assert "pip " not in "\n".join(rendered_build)
