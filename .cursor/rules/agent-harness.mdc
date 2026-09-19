@@ -1,6 +1,6 @@
 ---
 description: "エージェントハーネス変更時に3製品互換性ルールへ接続するrouter"
-globs: "AGENTS.md,CLAUDE.md,.agents/**,.claude/**,.cursor/**,docs/agent-harness.md,docs/agent-principles.md,docs/ai-governance/**,scripts/validate_governance.py"
+globs: "AGENTS.md,.agents/**,.claude/**,.cursor/**,docs/agent-harness.md,docs/agent-principles.md,docs/ai-governance/**,scripts/validate_governance.py"
 alwaysApply: false
 ---
 

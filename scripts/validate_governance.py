@@ -88,7 +88,6 @@ TASK_STATE_OPTIONAL_SHAPE: dict[str, object] = {
 }
 REQUIRED_FILES = (
     "AGENTS.md",
-    "CLAUDE.md",
     "docs/agent-principles.md",
     "docs/agent-harness.md",
     "docs/ai-governance/00-index.md",
@@ -574,8 +573,6 @@ def validate_repository(root: Path) -> tuple[int, int, int]:
     for rule in rules:
         budget(rule, root, "adapter")
         validate_frontmatter(rule, root)
-    if text(root / "CLAUDE.md").strip() != "@AGENTS.md":
-        fail("CLAUDE.md must contain only @AGENTS.md")
     validate_task_state(root / TASK_STATE_TEMPLATE, root)
     counts = validate_skills(root, routers)
     canonical = sorted((root / ".agents/skills").glob("*/SKILL.md"))

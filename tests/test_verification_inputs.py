@@ -36,6 +36,15 @@ def test_docs_only_is_known_and_does_not_select_runtime_or_ui() -> None:
     assert plan.retained_evidence == (WORKFLOW_YAML_EVIDENCE,)
 
 
+def test_unregistered_root_markdown_is_non_runtime_documentation() -> None:
+    plan = classify_paths(["CONTRIBUTING.md"])
+
+    assert plan.classification_ok is True
+    assert plan.categories == ("docs",)
+    assert not any(getattr(plan, field) for field in OUTPUT_FIELDS[:-1])
+    assert plan.retained_evidence == (WORKFLOW_YAML_EVIDENCE,)
+
+
 def test_governance_only_is_governance_without_runtime_gates() -> None:
     plan = classify_paths(
         [".agents/skills/example/SKILL.md", "docs/ai-governance/policy.md"]

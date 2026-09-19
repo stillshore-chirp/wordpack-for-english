@@ -177,7 +177,6 @@ LEGACY_NON_RUNTIME_FILES = {
 HARNESS_PREFIXES = (".agents/", ".claude/", ".cursor/")
 HARNESS_FILES = {
     "AGENTS.md",
-    "CLAUDE.md",
     "docs/agent-harness.md",
     "docs/agent-principles.md",
     "docs/testing/index.md",
@@ -398,7 +397,6 @@ PATH_RULES: tuple[PathRule, ...] = (
         gates={"governance"},
         exact={
             "AGENTS.md",
-            "CLAUDE.md",
             "OPERATIONS.md",
             "docs/agent-harness.md",
             "docs/agent-principles.md",
@@ -911,6 +909,15 @@ def classify_path(path: str) -> PathClassification | None:
     backend_classification = _classify_backend_path(path)
     if backend_classification is not None:
         return backend_classification
+
+    if "/" not in path and path.endswith(".md"):
+        return PathClassification(
+            path,
+            "root_markdown_document",
+            "docs",
+            "non_runtime",
+            frozenset(),
+        )
 
     return None
 

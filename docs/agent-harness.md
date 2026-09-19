@@ -7,13 +7,13 @@
 | 正本 | 主な読者 | 責務 |
 |---|---|---|
 | `AGENTS.md`、最寄りの`AGENTS.md` | 3製品 | hard gate、権限境界、path契約、最小実行 |
-| `CLAUDE.md`、`.claude/rules/`、`.claude/skills/`、`.cursor/rules/` | Claude Code / Cursor | 正本へ到達する製品固有router |
+| `.claude/rules/`、`.claude/skills/`、`.cursor/rules/` | Claude Code / Cursor | path・task固有の正本へ到達する製品固有router |
 | `.agents/skills/<name>/SKILL.md` | 3製品 | task固有の発動条件、手順、handoff |
 | `docs/ai-governance/` | agent、reviewer | UI/UX、Issue、evidenceの判定基準 |
 | この文書 | agent、reviewer、保守者 | source/readers、委任、evidence、task-state、runtime境界 |
 | `scripts/validate_governance.py` | CI、保守者 | 形式、存在、参照、budgetのstatic検査 |
 
-Codexはrootと最寄りの`AGENTS.md`、該当Skillを読みます。Claude Codeは`CLAUDE.md`からrootへimportし、path ruleとSkill adapterで同じ正本へ接続します。Cursorはrootと`alwaysApply: false`のMDC routerから接続します。adapterは本文を複製せず、失敗しても共通hard gateを弱めません。
+CodexとClaude Codeはrootと最寄りの`AGENTS.md`、該当Skillを読みます。Claude Codeはpath ruleとSkill adapter、Cursorはrootと`alwaysApply: false`のMDC routerから同じ正本へ接続します。adapterは本文を複製せず、失敗しても共通hard gateを弱めません。
 
 ## 読み分けと変更影響
 

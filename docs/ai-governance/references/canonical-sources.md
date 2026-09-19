@@ -79,14 +79,14 @@ AIエージェントは、参照先の名前を並べるだけでレビューを
 - OpenAI Codex: Agent Skills
   https://developers.openai.com/codex/skills
 
-- Claude Code: Memory / CLAUDE.md
+- Claude Code: Memory
   https://code.claude.com/docs/en/memory
 
 用途:
 
 - `AGENTS.md` を起点にしたルール設計
 - Skillによる重い作業手順の分離
-- `CLAUDE.md` から `AGENTS.md` を参照する設計
+- 製品固有adapterから共有正本へ接続する設計
 
 ## 6. 最新研究の扱い
 

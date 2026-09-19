@@ -1,7 +1,6 @@
 ---
 paths:
   - "AGENTS.md"
-  - "CLAUDE.md"
   - ".agents/**/*"
   - ".claude/**/*"
   - ".cursor/**/*"
