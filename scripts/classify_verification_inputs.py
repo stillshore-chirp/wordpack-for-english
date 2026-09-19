@@ -177,7 +177,6 @@ LEGACY_NON_RUNTIME_FILES = {
 HARNESS_PREFIXES = (".agents/", ".claude/", ".cursor/")
 HARNESS_FILES = {
     "AGENTS.md",
-    "CLAUDE.md",
     "docs/agent-harness.md",
     "docs/agent-principles.md",
     "docs/testing/index.md",
@@ -398,7 +397,6 @@ PATH_RULES: tuple[PathRule, ...] = (
         gates={"governance"},
         exact={
             "AGENTS.md",
-            "CLAUDE.md",
             "OPERATIONS.md",
             "docs/agent-harness.md",
             "docs/agent-principles.md",
@@ -781,6 +779,14 @@ class PathClassification:
     gates: frozenset[str]
 
 
+@dataclass(frozen=True)
+class ChangedPaths:
+    """Changed paths plus deletion status from one base/head diff."""
+
+    paths: tuple[str, ...]
+    deleted: frozenset[str]
+
+
 def _normalize(path: str) -> str:
     return path.removeprefix("./")
 
@@ -1027,6 +1033,7 @@ def _full_plan(changed_path_count: int = 0) -> GatePlan:
 def classify_paths(
     paths: Iterable[str],
     *,
+    deleted_paths: Iterable[str] = (),
     fallback_reason: str | None = None,
     profile: str = "pr",
 ) -> GatePlan:
@@ -1038,10 +1045,24 @@ def classify_paths(
         raise ValueError(f"unsupported classifier profile: {profile}")
 
     changed = tuple(dict.fromkeys(_normalize(path) for path in paths if path))
+    deleted = frozenset(_normalize(path) for path in deleted_paths if path)
     classified: list[PathClassification] = []
     unknown: list[str] = []
     for path in changed:
         classification = classify_path(path)
+        if (
+            classification is None
+            and path in deleted
+            and "/" not in path
+            and path.endswith(".md")
+        ):
+            classification = PathClassification(
+                path,
+                "deleted_root_markdown",
+                "governance",
+                "governance",
+                frozenset({"governance"}),
+            )
         if classification is None:
             unknown.append(path)
             classified.append(
@@ -1126,14 +1147,14 @@ def classify_paths(
     )
 
 
-def changed_paths(base: str, head: str) -> list[str]:
-    """Return both sides of renames and deleted paths from a base/head diff."""
+def changed_paths(base: str, head: str) -> ChangedPaths:
+    """Return changed paths and deleted tombstones from a base/head diff."""
 
     result = subprocess.run(
         [
             "git",
             "diff",
-            "--name-only",
+            "--name-status",
             "--no-renames",
             "-z",
             f"{base}...{head}",
@@ -1143,11 +1164,24 @@ def changed_paths(base: str, head: str) -> list[str]:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
     )
-    return [
-        value.decode("utf-8", errors="surrogateescape")
-        for value in result.stdout.split(b"\0")
-        if value
+    fields = [value for value in result.stdout.split(b"\0") if value]
+    if len(fields) % 2:
+        raise subprocess.CalledProcessError(
+            returncode=2,
+            cmd="git diff --name-status",
+            stderr=b"unexpected name-status output",
+        )
+    entries = [
+        (
+            fields[index].decode("ascii", errors="replace"),
+            fields[index + 1].decode("utf-8", errors="surrogateescape"),
+        )
+        for index in range(0, len(fields), 2)
     ]
+    return ChangedPaths(
+        paths=tuple(path for _, path in entries),
+        deleted=frozenset(path for status, path in entries if status == "D"),
+    )
 
 
 def _write_github_outputs(output_path: Path, plan: GatePlan) -> None:
@@ -1197,7 +1231,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not args.base or not args.head:
             raise SystemExit("--base and --head are required for the PR profile")
         try:
-            plan = classify_paths(changed_paths(args.base, args.head))
+            changes = changed_paths(args.base, args.head)
+            plan = classify_paths(changes.paths, deleted_paths=changes.deleted)
         except subprocess.CalledProcessError as error:
             plan = classify_paths(
                 (), fallback_reason=f"git diff failed with status {error.returncode}"

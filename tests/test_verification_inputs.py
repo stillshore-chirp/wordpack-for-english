@@ -36,6 +36,26 @@ def test_docs_only_is_known_and_does_not_select_runtime_or_ui() -> None:
     assert plan.retained_evidence == (WORKFLOW_YAML_EVIDENCE,)
 
 
+def test_new_root_markdown_remains_unknown_and_fail_closed() -> None:
+    plan = classify_paths(["CONTRIBUTING.md"])
+
+    assert plan.classification_ok is False
+    assert plan.categories == ("unknown",)
+    assert not any(getattr(plan, field) for field in OUTPUT_FIELDS[:-1])
+
+
+def test_deleted_root_markdown_is_a_governance_tombstone() -> None:
+    plan = classify_paths(
+        ["CONTRIBUTING.md"],
+        deleted_paths={"CONTRIBUTING.md"},
+    )
+
+    assert plan.classification_ok is True
+    assert plan.governance is True
+    assert plan.categories == ("governance",)
+    assert plan.unknown_paths == ()
+
+
 def test_governance_only_is_governance_without_runtime_gates() -> None:
     plan = classify_paths(
         [".agents/skills/example/SKILL.md", "docs/ai-governance/policy.md"]
@@ -381,13 +401,21 @@ def test_rename_delete_diff_keeps_both_names_with_no_renames(monkeypatch) -> Non
 
     def fake_run(command: list[str], **_: object) -> object:
         recorded.extend(command)
-        return type("Completed", (), {"stdout": b"old/path.py\0new/path.py\0"})()
+        return type(
+            "Completed",
+            (),
+            {"stdout": b"D\0old/path.py\0A\0new/path.py\0"},
+        )()
 
     monkeypatch.setattr("scripts.classify_verification_inputs.subprocess.run", fake_run)
 
-    assert changed_paths("base", "head") == ["old/path.py", "new/path.py"]
+    changes = changed_paths("base", "head")
+
+    assert changes.paths == ("old/path.py", "new/path.py")
+    assert changes.deleted == frozenset({"old/path.py"})
     assert recorded[:2] == ["git", "diff"]
     assert "base...head" in recorded
+    assert "--name-status" in recorded
     assert "--no-renames" in recorded
 
 
