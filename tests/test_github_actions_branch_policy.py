@@ -6,8 +6,27 @@ import re
 import yaml
 
 
+_FULL_SHA_RE = re.compile(r"^[0-9a-f]{40}$")
+_EXTERNAL_ACTION_RE = re.compile(
+    r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+(?:/[^@\s]+)?@(?P<ref>[^@\s]+)$"
+)
+_VERSION_COMMENT_RE = re.compile(
+    r"(?:^|\s)#\s*v\d+(?:\.\d+){0,2}(?:[-+][0-9A-Za-z.-]+)?(?:\s|$)"
+)
+
+
 def _read_text(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
+
+
+def _read_workflow_job(path: str, job_id: str) -> dict[str, object]:
+    workflow = yaml.safe_load(_read_text(path))
+    assert isinstance(workflow, dict)
+    jobs = workflow.get("jobs")
+    assert isinstance(jobs, dict)
+    job = jobs.get(job_id)
+    assert isinstance(job, dict)
+    return job
 
 
 def _assert_contains_all(text: str, needles: list[str]) -> None:
@@ -18,6 +37,92 @@ def _assert_contains_all(text: str, needles: list[str]) -> None:
 def _assert_contains_none(text: str, needles: list[str]) -> None:
     present = [n for n in needles if n in text]
     assert not present, f"Found forbidden snippets: {present}"
+
+
+def _iter_step_uses_lines(yml: str) -> list[tuple[object, str]]:
+    """Return step-level YAML ``uses`` keys, not reusable workflows or run text."""
+    root = yaml.compose(yml, Loader=yaml.SafeLoader)
+    assert root is not None
+    lines = yml.splitlines()
+    references: list[tuple[object, str]] = []
+    active_nodes: set[int] = set()
+
+    def visit(node: yaml.Node, context: str = "root") -> None:
+        node_id = id(node)
+        if node_id in active_nodes:
+            return
+        active_nodes.add(node_id)
+        if isinstance(node, yaml.MappingNode):
+            for key, value in node.value:
+                key_name = key.value if isinstance(key, yaml.ScalarNode) else None
+                if (
+                    context == "step"
+                    and isinstance(key, yaml.ScalarNode)
+                    and key.value == "uses"
+                ):
+                    references.append(
+                        (
+                            value.value
+                            if isinstance(value, yaml.ScalarNode)
+                            else None,
+                            lines[key.start_mark.line],
+                        )
+                    )
+                child_context = "other"
+                if context == "root" and key_name == "jobs":
+                    child_context = "jobs"
+                elif context == "jobs" and isinstance(value, yaml.MappingNode):
+                    child_context = "job"
+                elif (
+                    context == "job"
+                    and key_name == "steps"
+                    and isinstance(value, yaml.SequenceNode)
+                ):
+                    child_context = "steps"
+                visit(value, child_context)
+        elif isinstance(node, yaml.SequenceNode):
+            for item in node.value:
+                visit(item, "step" if context == "steps" else "other")
+        active_nodes.remove(node_id)
+
+    visit(root)
+    return references
+
+
+def _classify_step_uses_reference(value: object) -> str:
+    if not isinstance(value, str):
+        return "unknown"
+    if value.startswith(("./", "../")):
+        return "local"
+    if value.startswith("docker://"):
+        return "docker"
+    target = value.rsplit("@", 1)[0]
+    if "/.github/workflows/" in target:
+        return "unknown"
+    if _EXTERNAL_ACTION_RE.fullmatch(value) is not None:
+        return "external"
+    return "unknown"
+
+
+def _external_action_pin_violations(yml: str) -> list[str]:
+    violations: list[str] = []
+    for value, source_line in _iter_step_uses_lines(yml):
+        reference_kind = _classify_step_uses_reference(value)
+        if reference_kind in {"local", "docker"}:
+            continue
+        if reference_kind == "unknown":
+            display_value = value if isinstance(value, str) else "<non-scalar>"
+            violations.append(
+                f"{display_value}: unsupported step-level uses reference"
+            )
+            continue
+        assert isinstance(value, str)
+        ref = value.rsplit("@", 1)[1]
+        if _FULL_SHA_RE.fullmatch(ref) is None:
+            violations.append(f"{value}: full lowercase SHA required")
+        if _VERSION_COMMENT_RE.search(source_line) is None:
+            violations.append(f"{value}: inline version comment required")
+    return violations
 
 
 def _extract_on_block(yml: str) -> str:
@@ -36,101 +141,264 @@ def _extract_trigger_block(on_block: str, trigger: str) -> str:
     return m.group(1)
 
 
-def test_ci_runs_on_develop_and_prs_to_develop() -> None:
-    """
-    Contract: develop remains a day-to-day CI target even though main is the default branch.
-    CI must run for pushes to develop and PRs targeting develop.
-    """
+def test_ci_triggers_only_main_and_develop() -> None:
+    """CI is limited to the two maintained branches and their pull requests."""
     yml = _read_text(".github/workflows/ci.yml")
     on_block = _extract_on_block(yml)
     _assert_contains_all(on_block, ["push:", "pull_request:"])
-    assert "develop" in on_block, "CI must include develop in its triggers"
+    _assert_contains_all(on_block, ["main", "develop"])
+    assert "feature/**" not in on_block, "feature branches must not duplicate CI runs"
 
 
-def test_playwright_pr_jobs_use_changed_path_classification() -> None:
-    """Contract: heavy UI tests use job-level scope gates instead of broad PR triggers."""
+def test_ci_classifier_exposes_the_stable_gate_interface() -> None:
+    """The classifier is the single change-scoped input for CI job selection."""
     ci = _read_text(".github/workflows/ci.yml")
-    visual = _read_text(".github/workflows/playwright-visual.yml")
-    visual_on_block = _extract_on_block(visual)
 
     _assert_contains_all(
         ci,
         [
-            "ui_test_scope:",
-            "scripts/classify_ui_test_changes.py",
-            "needs.ui_test_scope.outputs.playwright_smoke == 'true'",
-            "always() &&",
-            "needs.backend.result == 'success'",
-            "needs.frontend.result == 'success'",
-            'GIT_REF: ${{ github.ref }}',
-            'elif [ "${GIT_REF}" = "refs/heads/main" ]; then',
-            'echo "playwright_smoke=false" >> "${GITHUB_OUTPUT}"',
-            "ui_test_gate:",
-            "name: UI test selection gate",
-            'test "${SMOKE_RESULT}" = "success"',
-            'test "${SMOKE_RESULT}" = "skipped"',
+            "verification_scope:",
+            "scripts/classify_verification_inputs.py",
+            "--base \"${PR_BASE_SHA}\"",
+            "--full",
+            "classification_ok != 'true'",
+        ],
+    )
+    for field in (
+        "backend",
+        "frontend",
+        "backend_container",
+        "deploy_preflight",
+        "governance",
+        "workflow_contract",
+        "dependency_review",
+        "playwright_smoke",
+        "playwright_visual",
+        "playwright_targeted",
+        "classification_ok",
+    ):
+        assert f"      {field}: ${{{{ steps.scope.outputs.{field} }}}}" in ci
+    assert "elif [ \"${GIT_REF}\" = \"refs/heads/main\" ]; then" in ci
+
+
+def test_ci_selects_runtime_gates_and_keeps_security_in_backend_suite() -> None:
+    ci = _read_text(".github/workflows/ci.yml")
+    _assert_contains_all(
+        ci,
+        [
+            "security_text_scan:",
+            "name: Backend tests (Python 3.14 + coverage)",
+            "python-version: '3.14'",
+            "Run backend pytest with coverage",
+            "tests/test_security_headers.py",
+            "backend_compatibility:",
+            "name: Backend compatibility (Python 3.13, no coverage)",
+            "github.ref == 'refs/heads/main'",
+            "python -m pytest --no-cov",
+            "npm test -- --coverage --silent",
+            "npm test -- --no-coverage --silent",
+            "backend_container:",
+            "deploy_preflight:",
+            "governance:",
+            "python scripts/validate_governance.py",
+            "workflow_contract:",
+            "dependency_review:",
+            "uses: actions/dependency-review-action@",
+            "Dependency graph is unavailable",
+            "DEPENDENCY_SELECTED:",
+            "DEPENDENCY_SELECTED: ${{ github.event_name == 'pull_request' && needs.verification_scope.outputs.dependency_review == 'true' }}",
+            "      - dependency_review",
+            'check_selected "${DEPENDENCY_SELECTED}" "${DEPENDENCY_RESULT}" dependency_review',
+            "tests/test_scheduled_maintenance_workflow.py",
+            "quality_gate:",
+        ],
+    )
+    assert "  security_headers:" not in ci
+
+
+def test_backend_jobs_make_firestore_integration_gate_required() -> None:
+    """Backend CI cannot turn emulator readiness failures into optional skips."""
+
+    for job_id in ("backend", "backend_compatibility"):
+        job = _read_workflow_job(".github/workflows/ci.yml", job_id)
+        env = job.get("env")
+        assert isinstance(env, dict)
+        assert env.get("FIRESTORE_INTEGRATION_REQUIRED") == "true"
+        steps = job.get("steps")
+        assert isinstance(steps, list)
+        run_text = "\n".join(
+            step["run"]
+            for step in steps
+            if isinstance(step, dict) and isinstance(step.get("run"), str)
+        )
+        assert "firebase emulators:exec --only firestore" in run_text
+        assert "python -m pytest" in run_text
+
+
+def test_governance_job_runs_contract_tests_after_validation() -> None:
+    """The governance job owns the validator and its focused contract tests."""
+    job = _read_workflow_job(".github/workflows/ci.yml", "governance")
+    steps = job.get("steps")
+    assert isinstance(steps, list)
+    runs = [
+        step["run"]
+        for step in steps
+        if isinstance(step, dict) and isinstance(step.get("run"), str)
+    ]
+
+    validator_index = next(
+        index for index, run in enumerate(runs) if "python scripts/validate_governance.py" in run
+    )
+    pytest_index = next(
+        index for index, run in enumerate(runs) if "python -m pytest -q --no-cov" in run
+    )
+    assert validator_index < pytest_index
+
+    pytest_run = runs[pytest_index]
+    for test_path in (
+        "tests/test_agent_harness_budget.py",
+        "tests/test_governance_task_state.py",
+        "tests/test_validate_governance.py",
+        "tests/test_public_docs_security.py",
+        "tests/test_security_scan_text.py",
+    ):
+        assert test_path in pytest_run
+
+
+def test_playwright_jobs_are_classifier_scoped_and_parallel() -> None:
+    ci = _read_text(".github/workflows/ci.yml")
+    assert not Path(".github/workflows/playwright-visual.yml").exists()
+    for name, artifact in (("playwright_smoke", "playwright-smoke-artifacts"), ("playwright_visual", "playwright-visual-artifacts")):
+        start = ci.index(f"\n  {name}:") + 1
+        next_job = re.search(r"\n  [A-Za-z0-9_]+:\n", ci[start + 1 :])
+        end = start + 1 + next_job.start() if next_job else len(ci)
+        block = ci[start:end]
+        assert "      - verification_scope" in block
+        assert "      - backend" not in block and "      - frontend" not in block
+        assert "failure()" in block
+        assert "retention-days: 14" in block
+        assert artifact in block
+
+
+def test_targeted_full_specs_reuse_smoke_job_and_quality_gate() -> None:
+    ci = _read_text(".github/workflows/ci.yml")
+    smoke_start = ci.index("\n  playwright_smoke:") + 1
+    visual_start = ci.index("\n  playwright_visual:") + 1
+    smoke = ci[smoke_start:visual_start]
+    quality_start = ci.index("\n  quality_gate:") + 1
+    quality = ci[quality_start:]
+
+    _assert_contains_all(
+        ci,
+        [
+            "playwright_targeted: ${{ steps.scope.outputs.playwright_targeted }}",
+            "playwright_targeted_specs: ${{ steps.scope.outputs.playwright_targeted_specs }}",
         ],
     )
     _assert_contains_all(
-        visual,
+        smoke,
         [
-            "ui_test_scope:",
-            "scripts/classify_ui_test_changes.py",
-            "needs.ui_test_scope.outputs.playwright_visual == 'true'",
-            "needs.ui_test_scope.result == 'success'",
-            "visual_test_gate:",
-            "name: Visual test selection gate",
-            'test "${VISUAL_RESULT}" = "success"',
-            'test "${VISUAL_RESULT}" = "skipped"',
+            "needs.verification_scope.outputs.playwright_targeted == 'true'",
+            "TARGETED_FULL_SPECS: ${{ needs.verification_scope.outputs.playwright_targeted_specs }}",
+            "REGISTERED_FULL_E2E_SPECS",
+            "json.loads(os.environ.get(\"TARGETED_FULL_SPECS\") or \"[]\")",
+            "len(requested_specs) != len(set(requested_specs))",
+            "spec not in REGISTERED_FULL_E2E_SPECS",
+            "selected_specs = list(dict.fromkeys(selected_specs))",
+            "subprocess.run(",
+            "*selected_specs",
         ],
     )
-    _assert_contains_none(visual_on_block, ["paths:", "paths-ignore:"])
+    assert "${{ needs.verification_scope.outputs.playwright_targeted_specs }}" not in (
+        smoke.rsplit("run: |", 1)[1]
+    )
+    _assert_contains_all(
+        quality,
+        [
+            "SMOKE_SELECTED: ${{ needs.verification_scope.outputs.playwright_smoke == 'true' || needs.verification_scope.outputs.playwright_targeted == 'true' }}",
+            'check_selected "${SMOKE_SELECTED}" "${SMOKE_RESULT}" playwright_smoke',
+        ],
+    )
 
 
-def test_deploy_dry_run_is_main_only() -> None:
-    """
-    Contract: main is the production deployment branch.
-    Anything that authenticates to GCP must not run on develop.
-    """
-    yml = _read_text(".github/workflows/deploy-dry-run.yml")
+def test_codeql_is_scheduled_and_manual_only() -> None:
+    yml = _read_text(".github/workflows/scheduled-maintenance.yml")
     on_block = _extract_on_block(yml)
-    _assert_contains_all(
-        on_block,
-        [
-            "workflow_run:",
-            "workflows:",
-            "CI",
-            "types:",
-            "completed",
-        ],
-    )
+    _assert_contains_all(on_block, ["schedule:", "workflow_dispatch:", "suite:"])
+    _assert_contains_none(on_block, ["push:", "pull_request:", "workflow_run:"])
     _assert_contains_all(
         yml,
         [
-            "github.event.workflow_run.head_branch == 'main'",
-            "github.event.workflow_run.event == 'push'",
+            "  codeql:",
+            "uses: github/codeql-action/init@",
+            "uses: github/codeql-action/analyze@",
         ],
     )
-    assert "develop" not in yml, "deploy-dry-run must not run on develop"
-    # Sanity: ensure this workflow is actually the one touching GCP.
-    _assert_contains_all(yml, ["google-github-actions/auth@v2", "setup-gcloud@v3"])
 
 
-def test_backend_ci_runs_real_pytest_on_supported_python_versions() -> None:
-    """Contract: backend CI must run pytest with Java 21 and propagate failures."""
+def test_full_playwright_is_weekly_manual_with_failure_artifacts() -> None:
+    yml = _read_text(".github/workflows/scheduled-maintenance.yml")
+    on_block = _extract_on_block(yml)
+    _assert_contains_all(on_block, ["schedule:", "workflow_dispatch:"])
+    assert "pull_request:" not in on_block
+    _assert_contains_all(yml, ["  playwright:", "if: ${{ failure() }}", "retention-days: 14"])
+
+
+def test_dependency_review_is_ci_only_and_fails_closed_when_graph_is_unavailable() -> None:
+    ci = _read_text(".github/workflows/ci.yml")
+    assert not Path(".github/workflows/dependency-review.yml").exists()
+    _assert_contains_all(
+        ci,
+        [
+            "dependency_review: ${{ steps.scope.outputs.dependency_review }}",
+            "github.event_name == 'pull_request'",
+            "needs.verification_scope.outputs.dependency_review == 'true'",
+            "permissions:\n      contents: read\n      pull-requests: read",
+            "gh api \"repos/${GITHUB_REPOSITORY}/dependency-graph/compare/${BASE_SHA}...${HEAD_SHA}\"",
+            "Dependency graph is unavailable",
+            "exit 1",
+            "uses: actions/dependency-review-action@",
+        ],
+    )
+    assert ci.count(
+        "uses: actions/dependency-review-action@"
+    ) == 1
+
+
+def test_only_ci_is_an_automatic_pull_request_workflow_and_allowlist_is_bounded() -> None:
+    workflows = sorted(Path(".github/workflows").glob("*.y*ml"))
+    assert len(workflows) <= 5
+    automatic_pr_workflows = [
+        path.name
+        for path in workflows
+        if re.search(r"(?m)^  pull_request(?:_target)?:", _extract_on_block(_read_text(str(path))))
+    ]
+    assert len(automatic_pr_workflows) <= 5
+    assert automatic_pr_workflows == ["ci.yml"]
+
+
+def test_backend_ci_runs_production_314_coverage_and_main_313_compatibility() -> None:
+    """The production lane is 3.14 with coverage; 3.13 is main-only without coverage."""
     yml = _read_text(".github/workflows/ci.yml")
 
     _assert_contains_all(
         yml,
         [
-            "python-version: ['3.13', '3.14']",
-            "actions/setup-java@v5",
+            "name: Backend tests (Python 3.14 + coverage)",
+            "python-version: '3.14'",
+            "uses: actions/setup-java@",
             "distribution: temurin",
             "java-version: '21'",
-            'firebase emulators:exec --only firestore --project "${FIRESTORE_PROJECT_ID}" --config firebase.json "python -m pytest"',
+            "firebase emulators:exec",
+            "python -m pytest",
+            "backend_compatibility:",
+            "name: Backend compatibility (Python 3.13, no coverage)",
+            "python-version: '3.13'",
+            "python -m pytest --no-cov",
         ],
     )
     _assert_contains_none(yml, ["pytest | cat", '"pytest" | cat'])
+    assert "Prepare production-like env file" not in yml
 
 
 def test_backend_ci_builds_and_health_checks_python_314_container() -> None:
@@ -156,11 +424,8 @@ def test_production_runtime_and_single_version_jobs_default_to_python_314() -> N
 
     single_version_workflows = [
         ".github/workflows/deploy-production.yml",
-        ".github/workflows/deploy-dry-run.yml",
         ".github/workflows/production-deploy-preflight.yml",
-        ".github/workflows/perf-backend.yml",
-        ".github/workflows/playwright-visual.yml",
-        ".github/workflows/playwright-nightly.yml",
+        ".github/workflows/scheduled-maintenance.yml",
     ]
     for path in single_version_workflows:
         yml = _read_text(path)
@@ -170,39 +435,197 @@ def test_production_runtime_and_single_version_jobs_default_to_python_314() -> N
 
 def test_ci_does_not_embed_production_deploy_job() -> None:
     """
-    Contract: production deployment is owned by deploy-production.yml.
-    CI may run guards and dry-runs, but it must not contain the production deploy job.
+    Contract: production deployment implementation is owned by deploy-production.yml.
+    CI owns only the cancellation-safe main-only caller job; called jobs stay in the
+    deploy workflow.
     """
     yml = _read_text(".github/workflows/ci.yml")
-    _assert_contains_none(
-        yml,
-        [
-            "deploy_production:",
-            "environment: production",
-        ],
+    ci_workflow = yaml.safe_load(yml)
+    assert isinstance(ci_workflow, dict)
+    deploy_job = ci_workflow["jobs"]["deploy_production"]
+    assert deploy_job["uses"] == "./.github/workflows/deploy-production.yml"
+    assert deploy_job["needs"] == "quality_gate"
+    assert deploy_job["if"] == (
+        "${{ !cancelled() && github.event_name == 'push' && github.ref == 'refs/heads/main' && "
+        "needs.quality_gate.result == 'success' }}"
     )
+    assert deploy_job["with"] == {
+        "target_sha": "${{ github.sha }}",
+        "ci_run_id": "${{ github.run_id }}",
+    }
+    assert deploy_job["secrets"] == {
+        "CLOUD_RUN_ENV_FILE_BASE64": "${{ secrets.CLOUD_RUN_ENV_FILE_BASE64 }}",
+    }
+    assert deploy_job["permissions"] == {
+        "contents": "read",
+        "actions": "read",
+        "id-token": "write",
+        "attestations": "write",
+    }
+    _assert_contains_none(yml, ["environment: production"])
     _assert_contains_all(
         yml,
         [
-            "cloud_run_guard:",
+            "deploy_preflight:",
             "deploy_cloud_run.sh --dry-run",
-            "shellcheck scripts/deploy_cloud_run.sh scripts/promote_cloud_run_revision.sh",
+            "shellcheck",
+            "scripts/build_backend_artifact.sh",
+            "scripts/verify_backend_artifact_attestations.sh",
+            "scripts/deploy_cloud_run.sh",
+            "scripts/promote_cloud_run_revision.sh",
             "--no-traffic --traffic-tag candidate",
         ],
     )
 
 
-def test_deploy_production_workflow_runs_on_main_push_or_manual_only() -> None:
-    """
-    Contract: automatic production deploy runs from the standalone workflow on main push.
-    workflow_dispatch remains as the manual fallback, and workflow_run is not used.
-    """
+def test_ci_concurrency_does_not_cancel_main_push_deploys() -> None:
+    """Main CI runs must remain alive while the reusable production deploy is active."""
+    workflow = yaml.safe_load(_read_text(".github/workflows/ci.yml"))
+    assert isinstance(workflow, dict)
+    assert workflow["concurrency"] == {
+        "group": "${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && format('ci-main-{0}', github.run_id) || format('ci-{0}-{1}', github.workflow, github.ref) }}",
+        "cancel-in-progress": True,
+    }
+
+
+def test_deploy_preflight_runs_focused_behavioral_contracts() -> None:
+    """Deploy-only changes run deploy behavior contracts without backend full pytest."""
+    yml = _read_text(".github/workflows/ci.yml")
+    start = yml.index("\n  deploy_preflight:")
+    end = yml.index("\n  governance:", start)
+    block = yml[start:end]
+
+    _assert_contains_all(
+        block,
+        [
+            "Run focused deploy behavior tests",
+            "needs.verification_scope.outputs.deploy_preflight == 'true'",
+            "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+            "python -m pytest -q --no-cov",
+            "tests/config/test_firebase_config.py",
+            "tests/test_cloud_build_config.py",
+            "tests/test_deploy_script_env_guard.py",
+            "tests/test_firebase_hosting_deploy.py",
+            "tests/test_promote_cloud_run_revision.py",
+            "tests/test_deploy_workflow_safety.py",
+        ],
+    )
+    assert "python -m pytest\n" not in block
+
+
+def test_deploy_production_workflow_requires_successful_ci_or_manual_main() -> None:
+    """Production deployment is gated by a successful main CI run or manual main dispatch."""
     yml = _read_text(".github/workflows/deploy-production.yml")
     on_block = _extract_on_block(yml)
-    _assert_contains_all(on_block, ["push:", "branches:", "main", "workflow_dispatch:"])
-    _assert_contains_none(on_block, ["workflow_run:", "pull_request:"])
-    _assert_contains_none(yml, ["github.event.workflow_run."])
+    _assert_contains_all(
+        on_block,
+        [
+            "workflow_call:",
+            "target_sha:",
+            "ci_run_id:",
+            "workflow_dispatch:",
+            "identity_exchange_only:",
+            "required: false",
+            "default: false",
+            "type: boolean",
+        ],
+    )
+    _assert_contains_none(on_block, ["workflow_run:", "push:", "pull_request:"])
+    _assert_contains_all(yml, ["CALLER_REF", "CALLER_SHA", "CALLER_RUN_ID", "CALLER_WORKFLOW_NAME", "CALLER_WORKFLOW_REF", "EXPECTED_CI_WORKFLOW_REF", "conclusion == \"success\"", "TARGET_SHA", ".status == \"in_progress\""])
     assert "cancel-in-progress: false" in yml
+    assert "group: deploy-production-Deploy to production" in yml
+
+
+def test_deploy_cutover_guard_and_identity_exchange_are_scoped() -> None:
+    """Identity exchange is a manual main-only probe; normal deploys are fail-closed."""
+    path = ".github/workflows/deploy-production.yml"
+    yml = _read_text(path)
+    identity = _read_workflow_job(path, "verify-deploy-identity")
+    guard = _read_workflow_job(path, "authorize-deploy-cutover")
+    deploy = _read_workflow_job(path, "deploy")
+
+    assert identity["needs"] == "verify-target"
+    assert identity["if"] == (
+        "github.event_name == 'workflow_dispatch' && "
+        "github.ref == 'refs/heads/main' && inputs.identity_exchange_only == true"
+    )
+    assert identity["environment"] == "production"
+    assert guard["needs"] == "verify-target"
+    assert guard["if"] == (
+        "needs.verify-target.result == 'success' && "
+        "(github.event_name != 'workflow_dispatch' || inputs.identity_exchange_only != true)"
+    )
+    assert guard["env"] == {
+        "PRODUCTION_DEPLOY_ENABLED": "${{ vars.PRODUCTION_DEPLOY_ENABLED }}"
+    }
+    assert deploy["needs"] == [
+        "verify-target",
+        "authorize-deploy-cutover",
+        "prepare-release-artifacts",
+        "build-backend-artifact",
+        "attest-backend-artifact",
+    ]
+    assert deploy["if"] == (
+        "needs.verify-target.result == 'success' && "
+        "needs.authorize-deploy-cutover.result == 'success' && "
+        "needs.prepare-release-artifacts.result == 'success' && "
+        "needs.build-backend-artifact.result == 'success' && "
+        "needs.attest-backend-artifact.result == 'success' && "
+        "(github.event_name != 'workflow_dispatch' || inputs.identity_exchange_only != true)"
+    )
+
+    identity_start = yml.index("  verify-deploy-identity:")
+    identity_end = yml.index("  authorize-deploy-cutover:", identity_start)
+    identity_block = yml[identity_start:identity_end]
+    _assert_contains_all(
+        identity_block,
+        [
+            "permissions:\n      id-token: write",
+            "GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}",
+            "GCP_DEPLOY_WIF_PROVIDER: ${{ vars.GCP_DEPLOY_WIF_PROVIDER }}",
+            "GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}",
+            "uses: google-github-actions/auth@",
+            "token_format: access_token",
+            "access_token_lifetime: 300s",
+            "create_credentials_file: false",
+            "export_environment_variables: false",
+            "WIF_ACCESS_TOKEN: ${{ steps.gcp-auth.outputs.access_token }}",
+            '[[ -n "${WIF_ACCESS_TOKEN}" ]] ||',
+            "Confirm WIF token exchange",
+        ],
+    )
+    _assert_contains_none(
+        identity_block,
+        [
+            "actions/checkout@",
+            "setup-gcloud",
+            "gcloud auth print-access-token",
+            'echo "${WIF_ACCESS_TOKEN}"',
+            "GITHUB_STEP_SUMMARY",
+            "GITHUB_OUTPUT",
+            "secrets.",
+            "CLOUD_RUN_ENV_FILE_BASE64",
+            "npm ",
+            "pip install",
+            "make release-cloud-run",
+            "promote_cloud_run_revision",
+            "deploy_firebase_hosting.py",
+            "firebase deploy",
+            "traffic",
+        ],
+    )
+
+    guard_start = yml.index("  authorize-deploy-cutover:")
+    deploy_start = yml.index("  deploy:", guard_start)
+    guard_block = yml[guard_start:deploy_start]
+    _assert_contains_all(
+        guard_block,
+        [
+            "if [[ \"${PRODUCTION_DEPLOY_ENABLED:-}\" != \"true\" ]]; then",
+            "::error::",
+            "exit 1",
+        ],
+    )
 
 
 def test_deploy_production_promotes_a_health_checked_no_traffic_candidate() -> None:
@@ -237,74 +660,76 @@ def test_deploy_production_uses_api_based_hosting_deploy() -> None:
     gcloud-authenticated API requests, avoiding Firebase CLI auth in CI.
     """
     yml = _read_text(".github/workflows/deploy-production.yml")
+    deploy = yml[yml.index("  deploy:"):]
 
     _assert_contains_all(
         yml,
         [
-            "google-github-actions/auth@v2",
-            "credentials_json: ${{ secrets.GCP_SA_KEY }}",
+            "uses: google-github-actions/auth@",
+            "GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}",
+            "GCP_DEPLOY_WIF_PROVIDER: ${{ vars.GCP_DEPLOY_WIF_PROVIDER }}",
+            "GCP_DEPLOY_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}",
+            "project_id: ${{ vars.GCP_PROJECT_ID }}",
+            "workload_identity_provider: ${{ vars.GCP_DEPLOY_WIF_PROVIDER }}",
+            "service_account: ${{ vars.GCP_DEPLOY_SERVICE_ACCOUNT }}",
             "create_credentials_file: true",
             "export_environment_variables: true",
+            "cleanup_credentials: true",
             "python scripts/deploy_firebase_hosting.py",
             "--site \"${FIREBASE_PROJECT_ID}\"",
-            "npm --prefix ./apps/frontend run build",
             "TOOL=gcloud",
         ],
     )
     _assert_contains_none(
-        yml,
+        deploy,
         [
             "FIREBASE_TOKEN",
+            "GCP_SA_KEY",
+            "credentials_json",
             "firebase deploy --only hosting",
             "npm install -g firebase-tools",
             "Prepare Firebase CLI credentials file",
             "gcloud auth print-access-token",
             "Prepare Firebase CLI auth token",
             "TOOL=firebase",
+            "npm --prefix ./apps/frontend run build",
+            "pip install",
+            "scripts/build_backend_artifact.sh",
         ],
     )
 
 
-def test_production_deploy_preflight_checks_prs_without_deploying() -> None:
-    """
-    Contract: PRs get a non-deploying production preflight. Static checks run on
-    the PR code without secrets, while the authenticated probe uses
-    pull_request_target and trusted base code for read-only API checks.
-    """
+def test_production_deploy_preflight_is_scheduled_or_manual_read_only() -> None:
+    """Production preflight is a read-only scheduled/manual probe."""
     yml = _read_text(".github/workflows/production-deploy-preflight.yml")
     on_block = _extract_on_block(yml)
-
-    _assert_contains_all(
-        on_block,
-        [
-            "pull_request:",
-            "pull_request_target:",
-            "workflow_dispatch:",
-            "branches:",
-            "main",
-        ],
-    )
+    _assert_contains_all(on_block, ["schedule:", "workflow_dispatch:"])
+    _assert_contains_none(on_block, ["pull_request:", "pull_request_target:"])
     _assert_contains_all(
         yml,
         [
-            "Static deploy preflight",
             "Authenticated deploy read-only probe",
-            "production-deploy-preflight-${{ github.workflow }}-${{ github.event_name }}-",
-            "github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'",
-            "github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch'",
-            "ref: ${{ github.event.pull_request.base.sha }}",
-            "--plan-only",
             "--probe-only",
-            "deploy_cloud_run.sh \\",
             "gcloud auth print-access-token --quiet >/dev/null",
             "pageSize=0",
-            "google-github-actions/auth@v2",
+            "uses: google-github-actions/auth@",
+            "GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}",
+            "GCP_PREFLIGHT_WIF_PROVIDER: ${{ vars.GCP_PREFLIGHT_WIF_PROVIDER }}",
+            "GCP_PREFLIGHT_SERVICE_ACCOUNT: ${{ vars.GCP_PREFLIGHT_SERVICE_ACCOUNT }}",
+            "project_id: ${{ env.GCP_PROJECT_ID }}",
+            "workload_identity_provider: ${{ env.GCP_PREFLIGHT_WIF_PROVIDER }}",
+            "service_account: ${{ env.GCP_PREFLIGHT_SERVICE_ACCOUNT }}",
+            "create_credentials_file: true",
+            "export_environment_variables: true",
+            "cleanup_credentials: true",
             "scripts/deploy_firebase_hosting.py",
         ],
     )
     _assert_contains_none(
         yml,
         [
+            "GCP_SA_KEY",
+            "credentials_json",
             "environment: production",
             "firebase deploy --only hosting",
             "pageSize=1",
@@ -312,41 +737,292 @@ def test_production_deploy_preflight_checks_prs_without_deploying() -> None:
     )
 
 
-def test_agent_harness_workflow_runs_compact_contract_gates() -> None:
-    yml = _read_text(".github/workflows/agent-harness.yml")
+def test_wif_permissions_are_scoped_and_normal_ci_has_no_oidc_token() -> None:
+    """Only authenticated production jobs receive OIDC token minting permission."""
+    deploy_workflow = yaml.safe_load(_read_text(".github/workflows/deploy-production.yml"))
+    preflight_workflow = yaml.safe_load(_read_text(".github/workflows/production-deploy-preflight.yml"))
+    ci_workflow = yaml.safe_load(_read_text(".github/workflows/ci.yml"))
 
-    _assert_contains_all(
-        yml,
-        [
-            "fetch-depth: 0",
-            "Parse workflow YAML",
-            "python -m pytest -q --no-cov",
-            "tests/test_verification_inputs.py",
-            "tests/test_github_actions_branch_policy.py",
-            "tests/test_ui_test_change_classifier.py",
-            "if: github.event_name == 'pull_request'",
-            "BASE_SHA: ${{ github.event.pull_request.base.sha }}",
-            "HEAD_SHA: ${{ github.event.pull_request.head.sha }}",
-            "scripts/classify_verification_inputs.py",
-            "scripts/classify_ui_test_changes.py",
-            '--base "${BASE_SHA}" --head "${HEAD_SHA}"',
-            "docs/testing/index.md",
-            "pytest.ini",
-        ],
+    assert deploy_workflow["permissions"] == {"contents": "read"}
+    assert _read_workflow_job(".github/workflows/deploy-production.yml", "verify-target")["permissions"] == {
+        "contents": "read",
+        "actions": "read",
+    }
+    assert _read_workflow_job(".github/workflows/deploy-production.yml", "deploy")["permissions"] == {
+        "contents": "read",
+        "actions": "read",
+        "attestations": "read",
+        "id-token": "write",
+    }
+    assert _read_workflow_job(".github/workflows/deploy-production.yml", "prepare-release-artifacts")["permissions"] == {
+        "contents": "read",
+    }
+    assert _read_workflow_job(".github/workflows/deploy-production.yml", "build-backend-artifact")["permissions"] == {
+        "contents": "read",
+        "id-token": "write",
+    }
+    assert _read_workflow_job(".github/workflows/deploy-production.yml", "attest-backend-artifact")["permissions"] == {
+        "contents": "read",
+        "actions": "read",
+        "id-token": "write",
+        "attestations": "write",
+    }
+    assert preflight_workflow["permissions"] == {"contents": "read"}
+    assert _read_workflow_job(
+        ".github/workflows/production-deploy-preflight.yml",
+        "authenticated_read_only_probe",
+    )["permissions"] == {"contents": "read", "id-token": "write"}
+    assert _read_workflow_job(
+        ".github/workflows/deploy-production.yml",
+        "verify-deploy-identity",
+    )["permissions"] == {"id-token": "write"}
+    assert _read_workflow_job(
+        ".github/workflows/deploy-production.yml",
+        "authorize-deploy-cutover",
+    )["permissions"] == {"contents": "read"}
+
+    ci_jobs = ci_workflow["jobs"]
+    assert ci_jobs["deploy_production"]["permissions"] == {
+        "contents": "read",
+        "actions": "read",
+        "id-token": "write",
+        "attestations": "write",
+    }
+    assert all(
+        "id-token" not in job.get("permissions", {})
+        for job_id, job in ci_jobs.items()
+        if job_id != "deploy_production"
     )
-    _assert_contains_none(yml, ["pytest -q tests/test_verification_inputs.py"])
 
 
-def test_agent_harness_triggers_include_graph_policy_inputs() -> None:
-    on_block = _extract_on_block(_read_text(".github/workflows/agent-harness.yml"))
-    required_paths = [
-        "scripts/validate_code_review_graph_policy.py",
-        "tests/fixtures/agent-harness/code-review-graph-policy.json",
-        "tests/test_code_review_graph_policy.py",
-        ".github/dependabot.yml",
-    ]
-    for trigger in ("push", "pull_request"):
-        _assert_contains_all(_extract_trigger_block(on_block, trigger), required_paths)
+def test_production_workflows_are_key_free() -> None:
+    """Both production workflows must use WIF inputs with no legacy key fallback."""
+    for path in (
+        ".github/workflows/deploy-production.yml",
+        ".github/workflows/production-deploy-preflight.yml",
+    ):
+        workflow = _read_text(path)
+        _assert_contains_none(workflow, ["GCP_SA_KEY", "GCP_SA_PROJECT_ID", "credentials_json"])
+        _assert_contains_all(
+            workflow,
+            [
+                "project_id:",
+                "workload_identity_provider:",
+                "service_account:",
+                "create_credentials_file: true",
+                "export_environment_variables: true",
+                "cleanup_credentials: true",
+            ],
+        )
+
+
+def test_deploy_auth_starts_after_dependency_install_and_before_gcloud_setup() -> None:
+    """Keep dependency/artifact handoff steps ahead of production authentication."""
+    workflow = _read_text(".github/workflows/deploy-production.yml")
+    prepare = workflow[workflow.index("  prepare-release-artifacts:"): workflow.index("  build-backend-artifact:")]
+    build = workflow[workflow.index("  build-backend-artifact:"): workflow.index("  attest-backend-artifact:")]
+    attest = workflow[workflow.index("  attest-backend-artifact:"): workflow.index("  deploy:")]
+    deploy = workflow[workflow.index("  deploy:"):]
+    assert prepare.index("Install frontend dependencies") < prepare.index("Build frontend artifact")
+    assert prepare.index("Build frontend artifact") < prepare.index("Upload frontend release artifact")
+    assert build.index("Validate authenticated build inputs") < build.index("Authenticate to Google Cloud")
+    assert build.index("Authenticate to Google Cloud") < build.index("scripts/build_backend_artifact.sh")
+    assert build.index("scripts/build_backend_artifact.sh") < build.index("Cleanup Google credentials before artifact upload")
+    assert build.index("Cleanup Google credentials before artifact upload") < build.index("Upload backend image archive")
+    assert "npm " not in build and "pip install" not in build
+    assert "npm " not in attest and "pip install" not in attest
+    assert "environment: production" not in attest
+    assert deploy.index("Download frontend release artifact before auth") < deploy.index("Authenticate to Google Cloud")
+    assert deploy.index("Download backend attestation metadata before auth") < deploy.index("Authenticate to Google Cloud")
+    assert deploy.index("Authenticate to Google Cloud") < deploy.index("Verify backend artifact attestations after auth")
+    assert deploy.index("Verify backend artifact attestations after auth") < deploy.index("Materialize production env file")
+    assert deploy.index("Materialize production env file") < deploy.index("Deploy Firebase Hosting")
+    assert "npm --prefix ./apps/frontend run build" not in deploy
+    assert "pip install" not in deploy
+    assert "VALIDATE_IN_IMAGE=true" in deploy
+
+
+def test_backend_build_provenance_is_main_deploy_only_and_has_no_pr_publish_path() -> None:
+    """Build and attest jobs stay on the main-only production workflow."""
+    path = ".github/workflows/deploy-production.yml"
+    workflow = _read_text(path)
+    parsed = yaml.safe_load(workflow)
+    assert isinstance(parsed, dict)
+    jobs = parsed["jobs"]
+    assert set(jobs) == {
+        "verify-target",
+        "verify-deploy-identity",
+        "authorize-deploy-cutover",
+        "prepare-release-artifacts",
+        "build-backend-artifact",
+        "attest-backend-artifact",
+        "deploy",
+    }
+    build = _read_workflow_job(path, "build-backend-artifact")
+    attest = _read_workflow_job(path, "attest-backend-artifact")
+    deploy = _read_workflow_job(path, "deploy")
+    build_text = "\n".join(str(step.get("run", "")) for step in build["steps"] if isinstance(step, dict))
+    attest_text = "\n".join(str(step.get("run", "")) for step in attest["steps"] if isinstance(step, dict))
+    deploy_text = "\n".join(str(step.get("run", "")) for step in deploy["steps"] if isinstance(step, dict))
+    assert build_text.count("scripts/build_backend_artifact.sh") == 1
+    helper = _read_text("scripts/build_backend_artifact.sh")
+    assert helper.count('gcloud builds submit "${BUILD_CONTEXT}"') == 1
+    assert "actions/attest" in workflow
+    assert "anchore/sbom-action@" not in workflow
+    assert "gh attestation verify" in _read_text("scripts/verify_backend_artifact_attestations.sh")
+    assert "steps.backend-artifact.outputs.image_uri" in workflow
+    assert "native_provenance_snapshot_sha256" in workflow
+    assert "docker save" in build_text
+    assert "syft" in attest_text
+    assert "npm " not in build_text and "pip install" not in build_text
+    assert "npm " not in deploy_text and "pip install" not in deploy_text
+    assert "@sha256:" in _read_text("scripts/deploy_cloud_run.sh")
+    assert "gcloud builds submit" not in _read_text("scripts/deploy_cloud_run.sh")
+    assert "pull_request:" not in workflow
+    assert "pull_request_target:" not in workflow
+    assert "push:" not in workflow
+    assert "GCP_BUILD_SERVICE_ACCOUNT" not in deploy.get("env", {})
+    assert "GCP_BUILD_SERVICE_ACCOUNT" in build_text or "GCP_BUILD_SERVICE_ACCOUNT" in str(build.get("steps"))
+    for job_id, job in jobs.items():
+        if job_id != "build-backend-artifact":
+            assert "GCP_BUILD_SERVICE_ACCOUNT" not in job.get("env", {})
+
+
+def test_cloud_build_service_account_is_explicit_and_deploy_scoped() -> None:
+    """Only the authenticated backend-build job may consume the dedicated build SA variable."""
+    deploy_path = ".github/workflows/deploy-production.yml"
+    deploy_workflow = yaml.safe_load(_read_text(deploy_path))
+    deploy_job = _read_workflow_job(deploy_path, "deploy")
+    build_job = _read_workflow_job(deploy_path, "build-backend-artifact")
+    identity_job = _read_workflow_job(deploy_path, "verify-deploy-identity")
+    preflight_workflow = yaml.safe_load(_read_text(".github/workflows/production-deploy-preflight.yml"))
+    ci_workflow = yaml.safe_load(_read_text(".github/workflows/ci.yml"))
+
+    assert "GCP_BUILD_SERVICE_ACCOUNT" not in deploy_job.get("env", {})
+    build_env = "\n".join(str(step.get("env", {})) for step in build_job["steps"] if isinstance(step, dict))
+    assert "GCP_BUILD_SERVICE_ACCOUNT" in build_env
+    assert "GCP_BUILD_SERVICE_ACCOUNT" not in identity_job.get("env", {})
+    assert all("GCP_BUILD_SERVICE_ACCOUNT" not in job.get("env", {}) for job in preflight_workflow["jobs"].values())
+    assert all("GCP_BUILD_SERVICE_ACCOUNT" not in job.get("env", {}) for job in ci_workflow["jobs"].values())
+
+    deploy_text = _read_text(deploy_path)
+    build_start = deploy_text.index("  build-backend-artifact:")
+    build_end = deploy_text.index("  attest-backend-artifact:", build_start)
+    deploy_block = deploy_text[build_start:build_end]
+    assert "GCP_BUILD_SERVICE_ACCOUNT must be a service-account email in GCP_PROJECT_ID's project." in deploy_block
+    assert r"^[a-z][a-z0-9-]{4,28}[a-z0-9]@${GCP_PROJECT_ID}\.iam\.gserviceaccount\.com" in deploy_block
+    assert "--build-service-account" not in _read_text(".github/workflows/production-deploy-preflight.yml")
+
+
+def test_external_step_actions_are_full_sha_pinned_and_version_documented() -> None:
+    violations: list[str] = []
+    for path in sorted(Path(".github/workflows").glob("*.y*ml")):
+        violations.extend(
+            f"{path}: {violation}"
+            for violation in _external_action_pin_violations(
+                path.read_text(encoding="utf-8")
+            )
+        )
+    assert not violations, "\n".join(violations)
+
+
+def test_action_pin_contract_ignores_local_docker_container_reusable_and_run_text() -> None:
+    workflow = """
+name: synthetic
+'on': workflow_dispatch
+jobs:
+  reusable:
+    uses: acme/workflows/.github/workflows/reusable.yml@main
+  local-reusable:
+    uses: ./.github/workflows/reusable.yml
+  build:
+    container: ubuntu:24.04
+    services:
+      database:
+        image: postgres:16
+    steps:
+      - uses: ./local-action
+      - uses: ../local-action
+      - uses: docker://alpine:3.20
+      - run: |
+          uses: example/fake-action@main
+      - uses: example/action@main
+      - uses: example/pinned-action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v4
+        with:
+          uses: example/input-value@main
+"""
+
+    violations = _external_action_pin_violations(workflow)
+    assert len(violations) == 2
+    assert all("example/action@main" in violation for violation in violations)
+
+
+def test_action_pin_contract_accepts_lowercase_sha_and_short_or_full_version_comment() -> None:
+    workflow = """
+name: synthetic
+'on': workflow_dispatch
+jobs:
+  build:
+    steps:
+      - uses: example/action@aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa # v4
+      - uses: example/other@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb # v5.0.0
+"""
+
+    assert _external_action_pin_violations(workflow) == []
+
+
+def test_action_pin_contract_rejects_tags_short_long_uppercase_and_missing_comments() -> None:
+    short_sha = "a" * 39
+    long_sha = "b" * 41
+    uppercase_sha = "A" * 40
+    valid_sha = "c" * 40
+    workflow = f"""
+name: synthetic
+'on': workflow_dispatch
+jobs:
+  build:
+    steps:
+      - uses: example/tag@v4 # v4
+      - uses: example/short@{short_sha} # v4
+      - uses: example/long@{long_sha} # v4
+      - uses: example/uppercase@{uppercase_sha} # v4
+      - uses: example/no-comment@{valid_sha}
+"""
+
+    violations = _external_action_pin_violations(workflow)
+    assert len(violations) == 5
+    assert sum("full lowercase SHA required" in violation for violation in violations) == 4
+    assert sum("inline version comment required" in violation for violation in violations) == 1
+    for reference in (
+        "example/tag@v4",
+        f"example/short@{short_sha}",
+        f"example/long@{long_sha}",
+        f"example/uppercase@{uppercase_sha}",
+        f"example/no-comment@{valid_sha}",
+    ):
+        assert any(reference in violation for violation in violations)
+
+
+def test_action_pin_contract_fails_closed_for_unknown_step_references() -> None:
+    workflow = """
+name: synthetic
+'on': workflow_dispatch
+jobs:
+  build:
+    steps:
+      - uses: example/action
+      - uses: https://example.test/action@main
+      - uses: example/reusable/.github/workflows/reuse.yml@main
+      - uses: ${{ inputs.action }}
+      - uses: [example, action]
+"""
+
+    violations = _external_action_pin_violations(workflow)
+    assert len(violations) == 5
+    assert all(
+        "unsupported step-level uses reference" in violation
+        for violation in violations
+    )
 
 
 def test_all_workflow_yaml_files_parse() -> None:

@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { useAuth } from '../AuthContext';
+import React, { useEffect, useRef, useState } from 'react';
+import { LOGOUT_RECOVERY_MESSAGES, useAuth } from '../AuthContext';
 import { MAIN_HEADING_TEXT } from './navigation';
 import { GoogleLoginCard } from './GoogleLoginCard';
 import './styles/login.css';
@@ -11,8 +11,10 @@ interface LoginScreenProps {
 export const LoginScreen: React.FC<LoginScreenProps> = ({ children }) => {
   const {
     signIn,
+    signOut,
     isAuthenticating,
     error,
+    logoutOutcome,
     clearError,
     missingClientId,
     authBypassActive,
@@ -20,14 +22,60 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ children }) => {
     enterGuestMode,
   } = useAuth();
   const [localError, setLocalError] = useState<string | null>(null);
+  const loginHeadingRef = useRef<HTMLHeadingElement>(null);
   const loginTitle = missingClientId ? 'Google ログインの設定が必要です' : 'WordPack にサインイン';
+  const hasLogoutRecovery = logoutOutcome === 'failed' || logoutOutcome === 'unknown';
+  const isLogoutPending = hasLogoutRecovery && isAuthenticating;
+  const previousRecoveryRef = useRef(hasLogoutRecovery);
+
+  useEffect(() => {
+    if (previousRecoveryRef.current && !hasLogoutRecovery) {
+      loginHeadingRef.current?.focus();
+    }
+    previousRecoveryRef.current = hasLogoutRecovery;
+  }, [hasLogoutRecovery]);
+
+  if (hasLogoutRecovery) {
+    return (
+      <main className="login-shell">
+        <h1 className="visually-hidden">{MAIN_HEADING_TEXT}</h1>
+        <section
+          className="login-card login-recovery"
+          role={isLogoutPending ? 'status' : 'alert'}
+          aria-live={isLogoutPending ? 'polite' : 'assertive'}
+        >
+          <h2 className="login-title">{isLogoutPending ? 'ログアウトしています' : 'ログアウト状態の確認が必要です'}</h2>
+          <p className="login-description" id="logout-recovery-description">
+            {isLogoutPending
+              ? 'サーバー側のセッション状態を確認中です。'
+              : error || LOGOUT_RECOVERY_MESSAGES[logoutOutcome]}
+          </p>
+          <p className="login-note">
+            画面上の個人情報は削除済みです。サーバー側のセッション状態を確認するまで、ログインとゲスト閲覧を開始できません。
+          </p>
+          <button
+            type="button"
+            className="login-retry-button"
+            onClick={() => {
+              void signOut();
+            }}
+            disabled={isAuthenticating}
+            aria-describedby="logout-recovery-description"
+          >
+            {isAuthenticating ? 'ログアウトを確認中…' : 'ログアウトを再試行'}
+          </button>
+        </section>
+        {children}
+      </main>
+    );
+  }
 
   return (
     <main className="login-shell">
       <h1 className="visually-hidden">{MAIN_HEADING_TEXT}</h1>
       {missingClientId ? (
         <section className="login-card" role="alert" aria-live="polite">
-          <h2 className="login-title">Google ログインの設定が必要です</h2>
+          <h2 ref={loginHeadingRef} id="login-title" className="login-title" tabIndex={-1}>Google ログインの設定が必要です</h2>
           <p className="login-description">
             VITE_GOOGLE_CLIENT_ID が未設定のため Google のサインインを開始できません。README.md の「Google OAuth クライアントの準備」節を参照し、以下の手順で環境を整えてください。
           </p>
@@ -48,6 +96,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ children }) => {
             onClick={() => {
               void enterGuestMode();
             }}
+            disabled={isAuthenticating}
           >
             ゲスト閲覧モード
           </button>
@@ -55,6 +104,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({ children }) => {
       ) : (
         <GoogleLoginCard
           title={loginTitle}
+          titleRef={loginHeadingRef}
           isAuthenticating={isAuthenticating}
           clearError={clearError}
           error={error}

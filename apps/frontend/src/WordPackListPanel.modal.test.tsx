@@ -208,6 +208,7 @@ describe('WordPackListPanel modal preview', () => {
 
     // 統合された一覧のヘッダーが表示される
     await waitFor(() => expect(screen.getByRole('heading', { name: /保存済みWordPack/ })).toBeInTheDocument());
+    await waitFor(() => expect(screen.getAllByTestId('wp-card')).toHaveLength(3));
 
     const senseButtons = await screen.findAllByRole('button', { name: '語義' });
     expect(senseButtons).toHaveLength(3);
@@ -291,6 +292,7 @@ describe('WordPackListPanel modal preview', () => {
       await user.keyboard('{Alt>}{4}{/Alt}');
     });
 
+    await waitFor(() => expect(screen.getAllByTestId('wp-card')).toHaveLength(3));
     const buttonsInCardView = await screen.findAllByRole('button', { name: /の音声$/ });
     expect(buttonsInCardView).toHaveLength(3);
 

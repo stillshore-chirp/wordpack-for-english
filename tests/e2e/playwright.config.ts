@@ -63,6 +63,8 @@ export default defineConfig({
       env: {
         // E2EではGoogleログインの条件分岐を固定し、文言揺れを防ぐためのダミー値を設定する。
         VITE_GOOGLE_CLIENT_ID: 'e2e-dummy-client-id',
+        // Viteプロセスにもローカルbackendを明示し、環境依存のDockerホスト名へフォールバックさせない。
+        BACKEND_PROXY_TARGET: process.env.BACKEND_PROXY_TARGET || 'http://127.0.0.1:8000',
       },
     },
   ],

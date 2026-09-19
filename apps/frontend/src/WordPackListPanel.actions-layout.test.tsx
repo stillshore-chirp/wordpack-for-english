@@ -114,7 +114,7 @@ describe('WordPackListPanel card actions layout', () => {
     await act(async () => {
       await user.click(within(target).getByRole('button', { name: 'delta のその他の操作' }));
     });
-    const menu = screen.getByRole('menu', { name: 'delta の操作メニュー' });
+    const menu = await screen.findByRole('menu', { name: 'delta の操作メニュー' });
     expect(within(menu).getByRole('menuitem', { name: '削除' })).toBeInTheDocument();
 
     // 動作確認（語義をクリックしてもカードが開かない＝イベント停止）

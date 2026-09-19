@@ -15,7 +15,7 @@
 | `docs/authentication.md` | Google OAuth、通常session、guest session、Cookie、認証失敗時の確認を書く。 |
 | `docs/firestore.md` | Firestore index、emulator、seed、接続先、削除運用を書く。 |
 | `docs/testing/` | test種別ごとの実行手順、前提、成果物、基準を書く。入口は`docs/testing/index.md`。 |
-| `docs/llmops/` | Prompt Identity、生成来歴、無料のoffline評価、手動Live Evaluation、privacy方針を書く。 |
+| `docs/llmops/` | Prompt Identity、生成来歴、無料のoffline評価、privacy方針を書く。 |
 | `docs/api-reference.md` | REST APIの一覧、権限、request / response例、入力制約を書く。 |
 | `docs/guest_public_api.md` | guest公開flag APIの詳細を書く。 |
 | `OPERATIONS.md` | 本番監視、SLO、障害切り分け、復旧手順を書く。 |
@@ -76,7 +76,7 @@ READMEには短い要約とlinkだけを置き、詳細は該当文書を正本�
 - `AGENTS.md`、Skill、詳細docs、tool adapterで同じ長文を正本化しない。
 - rootは常時必要な共通核、nested ruleはpath固有差分、Skillはtaskの実行順序、詳細docsは判定基準を持つ。
 - `.claude/`と`.cursor/`は正本への接続だけを行い、新しい品質基準を持たない。
-- 機械判定できる形式・上限・参照は`verify-agent-harness.sh`へ置く。
+- 機械判定できる形式・上限・参照は`scripts/validate_governance.py`へ置く。
 - 配置判断の詳細は`docs/agent-harness.md`に従う。
 
 ## 一般的な重複管理

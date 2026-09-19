@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import secrets
 from collections.abc import Mapping
 from datetime import UTC, datetime, timedelta
@@ -8,6 +9,7 @@ from typing import Any
 
 from fastapi import HTTPException, Request, status
 from itsdangerous import BadSignature, SignatureExpired, URLSafeTimedSerializer
+from itsdangerous.encoding import base64_decode, base64_encode, bytes_to_int, int_to_bytes
 
 from .authorization.principal import ANONYMOUS_PRINCIPAL, Principal
 from .config import settings
@@ -176,6 +178,112 @@ def _touch_session_if_needed(sid: str, record: Mapping[str, Any], *, now: dateti
         touch_session(sid, last_seen_at=now.isoformat())
 
 
+def _canonical_session_token(token: str) -> bytes:
+    """Return itsdangerous's accepted token components in canonical form."""
+
+    raw_token = token.encode("utf-8")
+    try:
+        signed_value, signature = raw_token.rsplit(b".", 1)
+        payload, timestamp = signed_value.rsplit(b".", 1)
+
+        # URLSafeSerializerMixin treats a leading dot as the compression marker
+        # and decodes the remainder with its own permissive base64 routine.
+        compression_marker = b"." if payload.startswith(b".") else b""
+        payload_segment = payload[1:] if compression_marker else payload
+        canonical_payload = compression_marker + base64_encode(
+            base64_decode(payload_segment)
+        )
+
+        # TimestampSigner converts the decoded timestamp bytes to an integer,
+        # so leading zero bytes and base64 spelling variants are equivalent.
+        timestamp_value = bytes_to_int(base64_decode(timestamp))
+        canonical_timestamp = base64_encode(int_to_bytes(timestamp_value))
+
+        # Signer.verify_signature compares decoded signature bytes, allowing
+        # alternate base64 spellings of the same MAC.
+        canonical_signature = base64_encode(base64_decode(signature))
+    except Exception as exc:
+        # Callers reach this helper only after the serializer accepted the
+        # token.  Keep an unexpected parser mismatch fail-closed.
+        raise ValueError("session token format is invalid") from exc
+
+    return b".".join((canonical_payload, canonical_timestamp, canonical_signature))
+
+
+def _session_token_digest(token: str) -> str:
+    """Return a non-reversible key for a canonical signed token."""
+
+    secret = settings.session_secret_key.strip()
+    if not secret:
+        raise RuntimeError("SESSION_SECRET_KEY is not configured")
+    if not token:
+        raise ValueError("session token is required")
+    return hmac.new(
+        secret.encode("utf-8"),
+        _canonical_session_token(token),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def _check_session_revocation_tombstone(
+    token: str,
+    *,
+    expected_kind: str,
+) -> None:
+    """Reject a legacy token that was revoked without a session record."""
+
+    get_revocation = getattr(store, "get_session_revocation", None)
+    if not callable(get_revocation):
+        raise RuntimeError("session revocation store is not configured")
+    tombstone = get_revocation(_session_token_digest(token))
+    if tombstone is None:
+        return
+    if (
+        not isinstance(tombstone, Mapping)
+        or tombstone.get("kind") != expected_kind
+        or not tombstone.get("revoked_at")
+    ):
+        raise BadSignature("invalid session revocation")
+    raise BadSignature("session revoked")
+
+
+def _validate_legacy_session_payload(
+    token: str,
+    payload: Mapping[str, Any],
+    *,
+    expected_kind: str,
+    legacy_id_key: str,
+) -> dict[str, Any]:
+    """Validate a pre-server-record token while preserving its old lifetime."""
+
+    _check_session_revocation_tombstone(token, expected_kind=expected_kind)
+
+    legacy_id = payload.get(legacy_id_key)
+    if legacy_id is not None:
+        if not isinstance(legacy_id, str) or not legacy_id.strip():
+            raise BadSignature("session id invalid")
+        get_session = getattr(store, "get_session", None)
+        if not callable(get_session):
+            raise RuntimeError("session store is not configured")
+        record = get_session(legacy_id.strip())
+        if isinstance(record, Mapping):
+            if record.get("kind") != expected_kind:
+                raise BadSignature("session kind mismatch")
+            if record.get("revoked_at"):
+                raise BadSignature("session revoked")
+            if expected_kind == "user" and record.get("user_id") != payload.get("sub"):
+                raise BadSignature("session user mismatch")
+
+    legacy = dict(payload)
+    legacy.setdefault("kind", expected_kind)
+    legacy.setdefault("session_id", legacy.get(legacy_id_key))
+    if expected_kind == "user":
+        legacy.setdefault("user_id", legacy.get("sub"))
+    else:
+        legacy.setdefault("mode", "guest")
+    return legacy
+
+
 def _validate_session_record(
     payload: Mapping[str, Any],
     *,
@@ -219,53 +327,119 @@ def _validate_session_record(
     return result
 
 
+def _verify_session_token_internal(
+    token: str,
+    *,
+    guest: bool,
+) -> tuple[dict[str, Any], bool]:
+    """Verify a token and retain whether it uses the pre-record format."""
+
+    salt = _GUEST_SESSION_SALT if guest else _SESSION_SALT
+    max_age = _guest_session_max_age() if guest else _session_max_age()
+    serializer = _build_serializer(salt)
+    payload = serializer.loads(token, max_age=max_age)
+    if not isinstance(payload, Mapping):
+        raise BadSignature("invalid guest session payload" if guest else "invalid session payload")
+
+    if guest and payload.get("mode") == "guest" and payload.get("gid"):
+        return (
+            _validate_legacy_session_payload(
+                token,
+                payload,
+                expected_kind="guest",
+                legacy_id_key="gid",
+            ),
+            True,
+        )
+    if not guest and payload.get("sub"):
+        # Short-term compatibility for signed payloads generated before
+        # server-side session records were introduced.
+        return (
+            _validate_legacy_session_payload(
+                token,
+                payload,
+                expected_kind="user",
+                legacy_id_key="sid",
+            ),
+            True,
+        )
+    return _validate_session_record(payload, expected_kind="guest" if guest else "user"), False
+
+
 def verify_session_token(token: str) -> dict[str, Any]:
     """Decode a signed user session token and validate server-side state."""
 
-    serializer = _build_serializer(_SESSION_SALT)
-    payload = serializer.loads(token, max_age=_session_max_age())
-    if not isinstance(payload, Mapping):
-        raise BadSignature("invalid session payload")
-    if payload.get("sub"):
-        # Short-term compatibility for legacy signed payloads generated before
-        # server-side session records were introduced.
-        legacy = dict(payload)
-        legacy.setdefault("kind", "user")
-        legacy.setdefault("session_id", legacy.get("sid"))
-        legacy.setdefault("user_id", legacy.get("sub"))
-        return legacy
-    return _validate_session_record(payload, expected_kind="user")
+    payload, _legacy = _verify_session_token_internal(token, guest=False)
+    return payload
 
 
 def verify_guest_session_token(token: str) -> dict[str, Any]:
     """Decode a signed guest session token and validate server-side state."""
 
-    serializer = _build_serializer(_GUEST_SESSION_SALT)
-    payload = serializer.loads(token, max_age=_guest_session_max_age())
-    if not isinstance(payload, Mapping):
-        raise BadSignature("invalid guest session payload")
-    if payload.get("mode") == "guest" and payload.get("gid"):
-        legacy = dict(payload)
-        legacy.setdefault("kind", "guest")
-        legacy.setdefault("session_id", legacy.get("gid"))
-        return legacy
-    return _validate_session_record(payload, expected_kind="guest")
+    payload, _legacy = _verify_session_token_internal(token, guest=True)
+    return payload
 
 
-def revoke_session_token(token: str, *, guest: bool = False) -> bool:
-    """Best-effort server-side revocation for an incoming session token."""
+def _revoke_verified_session_payload(
+    token: str,
+    payload: Mapping[str, Any],
+    *,
+    legacy: bool,
+    guest: bool,
+) -> bool:
+    """Revoke a payload that was already verified by the caller."""
 
-    try:
-        payload = verify_guest_session_token(token) if guest else verify_session_token(token)
-    except (SignatureExpired, BadSignature, RuntimeError):
-        return False
+    kind = "guest" if guest else "user"
+    if legacy:
+        legacy_id_key = "gid" if guest else "sid"
+        legacy_id = payload.get(legacy_id_key)
+        get_session = getattr(store, "get_session", None)
+        revoke_session = getattr(store, "revoke_session", None)
+        if (
+            isinstance(legacy_id, str)
+            and legacy_id.strip()
+            and callable(get_session)
+            and callable(revoke_session)
+        ):
+            record = get_session(legacy_id.strip())
+            if isinstance(record, Mapping):
+                if record.get("kind") != kind:
+                    return False
+                return bool(revoke_session(legacy_id.strip(), revoked_at=_now_iso()))
+
+        create_revocation = getattr(store, "create_session_revocation", None)
+        if not callable(create_revocation):
+            raise RuntimeError("session revocation store is not configured")
+        return bool(
+            create_revocation(
+                _session_token_digest(token),
+                kind=kind,
+                revoked_at=_now_iso(),
+            )
+        )
+
     sid = payload.get("sid") or payload.get("session_id")
     if not isinstance(sid, str) or not sid:
         return False
     revoke_session = getattr(store, "revoke_session", None)
     if not callable(revoke_session):
-        return False
+        raise RuntimeError("session store is not configured")
     return bool(revoke_session(sid, revoked_at=_now_iso()))
+
+
+def revoke_session_token(token: str, *, guest: bool = False) -> bool:
+    """Verify and revoke a session or create a legacy-token tombstone."""
+
+    try:
+        payload, legacy = _verify_session_token_internal(token, guest=guest)
+    except (SignatureExpired, BadSignature):
+        return False
+    return _revoke_verified_session_payload(
+        token,
+        payload,
+        legacy=legacy,
+        guest=guest,
+    )
 
 
 def _session_log_context(

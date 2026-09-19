@@ -1,5 +1,6 @@
-import React, { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { Modal } from './components/Modal';
+import { APP_EVENTS } from './shared/events/appEvents';
 
 interface ConfirmDialogContextValue {
   confirm: (targetLabel: string) => Promise<boolean>;
@@ -14,20 +15,37 @@ const ConfirmDialogContext = createContext<ConfirmDialogContextValue | undefined
 
 export const ConfirmDialogProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [pending, setPending] = useState<PendingConfirm | null>(null);
+  const pendingConfirmsRef = useRef<PendingConfirm[]>([]);
   const cancelButtonRef = useRef<HTMLButtonElement>(null);
 
   const requestConfirm = useCallback((targetLabel: string) => {
     return new Promise<boolean>((resolve) => {
-      setPending({ targetLabel, resolve });
+      const next = { targetLabel, resolve };
+      pendingConfirmsRef.current.push(next);
+      setPending((current) => current ?? next);
     });
   }, []);
 
   const close = useCallback((result: boolean) => {
-    setPending((prev) => {
-      prev?.resolve(result);
-      return null;
-    });
+    const [current, ...remaining] = pendingConfirmsRef.current;
+    if (!current) return;
+    pendingConfirmsRef.current = remaining;
+    current.resolve(result);
+    setPending(remaining[0] ?? null);
   }, []);
+
+  const cancelAll = useCallback(() => {
+    const pendingConfirms = pendingConfirmsRef.current;
+    pendingConfirmsRef.current = [];
+    pendingConfirms.forEach(({ resolve }) => resolve(false));
+    // targetLabelをstateからも直ちに外し、認証データ消去後に残さない。
+    setPending(null);
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener(APP_EVENTS.localAuthDataCleared, cancelAll);
+    return () => window.removeEventListener(APP_EVENTS.localAuthDataCleared, cancelAll);
+  }, [cancelAll]);
 
   const targetLabel = pending?.targetLabel ?? '';
 

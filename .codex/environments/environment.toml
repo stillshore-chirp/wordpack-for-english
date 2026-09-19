@@ -133,8 +133,7 @@ npm run prepare:frontend-env
 npx playwright install --with-deps
 '''
 
+# 直接記述した setup command は、長時間 process・container・listener を意図的に起動しない。
+# 設定済み cleanup は no-op とし、手動で起動した resource は cleanup から停止しない。
 [cleanup]
 script = ""
-
-[cleanup.darwin]
-script = "docker compose down --remove-orphans"

@@ -70,7 +70,19 @@ Response:
 
 ### `POST /api/auth/logout`
 
-通常ログインまたはゲスト閲覧のセッション Cookie を削除し、server-side session を revoke して匿名状態へ戻します。
+通常ログインまたはゲスト閲覧のセッション Cookie を含めて送信し、Cookie 削除と server-side session の revoke を依頼します。backend の正常応答は `204 No Content` で、通常セッション、ゲストセッション、`__session` の削除を `Set-Cookie` で指示します。対応するセッションがすでにない場合も `204` になるため、ログアウトは再試行に対して冪等です。対応する server-side session は、後続の保護 API で再利用できません。失効処理を保存できない場合は `500` です。
+
+frontend は HTTP `200` または `204` のときだけ server-side logout の確認済み（`confirmed`）として扱います。それ以外の HTTP status は明確な失敗（`failed`）、fetch の通信例外・Abort・応答喪失は結果不明（`unknown`）です。ログアウト開始時点で画面上のユーザー情報と local auth payload は削除されますが、HttpOnly Cookie は JavaScript から読み書きできないため、frontend は Cookie を JavaScript で削除せず、server-side session の失効確認は backend 応答で判断します。
+
+ログアウト開始後は進行中のセッション発行要求の完了を待ち、その収束や logout 応答の待機がタイムアウトした場合は `unknown` として再試行を案内します。
+
+別タブのログアウトと、受信側タブが開始したセッション発行が重なった場合は、発行が通知前に完了していても通知だけで `confirmed` とせず、受信側タブ自身が logout を再確認します。再確認が未確定の間は `unknown` を保持して再試行を案内します。
+
+利用できる保存領域と別タブ通知を使って未解決状態を共有します。安全に共有できる手段がない場合は、結果未確認（`unknown`）を維持して再試行を案内します。
+
+過去のログアウト確認を参照できない新しいタブでは、ログインや guest 開始を始める前に server-side の終了を確認します。
+
+結果不明または失敗の未解決状態は再読み込み後も保持され、確認済みになるまで認証済み表示の復元と guest 開始での上書きを抑止し、ログアウトの再試行を案内します。再試行は、前回の失効が済んでいる場合や有効なセッションが残っていない場合も `204` で完了できます。
 
 ## WordPack
 

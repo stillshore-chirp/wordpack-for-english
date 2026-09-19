@@ -22,7 +22,7 @@ API_P95_THRESHOLD_MS=10 PYTHONPATH=apps/backend pytest -q --no-cov tests/test_ap
 ```
 
 ## CI 運用
-- 週次での回帰検知は `.github/workflows/perf-backend.yml` を利用します（`schedule` + `workflow_dispatch`）。
+- 週次での回帰検知は [`scheduled-maintenance.yml`](../../.github/workflows/scheduled-maintenance.yml) の `schedule`（全suite）で実行します。手動実行は GitHub Actions の `workflow_dispatch` で `suite=backend-performance` を選択します。
 - ステージング/本番前の実行時は `API_P95_THRESHOLD_MS` を環境に合わせて調整してください。
 
 ## 環境変数

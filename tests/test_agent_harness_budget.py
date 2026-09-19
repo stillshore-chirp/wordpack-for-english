@@ -25,7 +25,7 @@ def test_budget_report_sums_explicit_groups_and_marks_estimate(tmp_path: Path) -
         path.write_text(content, encoding="utf-8")
     report = build_report(
         revision="head-a",
-        apply_paths=["scripts/verify-agent-harness.sh"],
+        apply_paths=["scripts/validate_governance.py"],
         activation_conditions=["agent-harness verifier"],
         paths_by_group={
             "global": [global_path],
@@ -63,11 +63,11 @@ def test_budget_serialization_hides_external_absolute_paths(tmp_path: Path) -> N
 
 
 def test_budget_deduplicates_repeated_path_within_group() -> None:
-    source = Path("tests/fixtures/agent-harness/scenarios.json")
+    source = Path("docs/agent-harness.md")
 
     report = build_report(
         revision="head-a",
-        apply_paths=["scripts/verify-agent-harness.sh"],
+        apply_paths=["scripts/validate_governance.py"],
         activation_conditions=[],
         paths_by_group={"root": [source, source]},
     )
@@ -82,7 +82,7 @@ def test_budget_rejects_non_utf8_input(tmp_path: Path) -> None:
     with pytest.raises(BudgetMeasurementError, match="not UTF-8"):
         build_report(
             revision="head-a",
-            apply_paths=["scripts/verify-agent-harness.sh"],
+            apply_paths=["scripts/validate_governance.py"],
             activation_conditions=[],
             paths_by_group={"root": [source]},
         )

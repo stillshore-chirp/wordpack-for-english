@@ -1,146 +1,63 @@
 name: Production deploy preflight
 
 on:
-  pull_request:
-    branches: [ main ]
-  pull_request_target:
-    branches: [ main ]
-    types: [ opened, synchronize, reopened, ready_for_review ]
+  schedule:
+    - cron: "17 3 * * *"
   workflow_dispatch:
 
 concurrency:
-  group: production-deploy-preflight-${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  group: production-deploy-preflight-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
   contents: read
 
 jobs:
-  static_preflight:
-    name: Static deploy preflight
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Set up Node.js for frontend artifact
-        uses: actions/setup-node@v7
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: apps/frontend/package-lock.json
-
-      - name: Install frontend dependencies
-        env:
-          NPM_CONFIG_PRODUCTION: "false"
-        run: npm ci --prefix ./apps/frontend
-
-      - name: Build frontend artifact
-        run: npm --prefix ./apps/frontend run build
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.14'
-
-      - name: Install backend dependencies for Cloud Run dry-run
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Run Cloud Run dry-run preflight
-        run: |
-          ./scripts/deploy_cloud_run.sh \
-            --dry-run \
-            --env-file configs/cloud-run/ci.env \
-            --project-id ci-placeholder-project \
-            --region asia-northeast1 \
-            --service wordpack-backend \
-            --no-traffic \
-            --traffic-tag candidate
-
-      - name: Plan Firebase Hosting API deploy without writes
-        run: |
-          python scripts/deploy_firebase_hosting.py \
-            --project ci-placeholder-project \
-            --site ci-placeholder-project \
-            --public apps/frontend/dist \
-            --plan-only
-
-      - name: Guard production deploy contract
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          from pathlib import Path
-          import sys
-
-          forbidden = {
-              "gcloud " + "alpha": "Production deploy preflight forbids alpha gcloud commands because CI images may prompt for components.",
-              "firebase deploy --only " + "hosting": "Production Hosting deploy must use scripts/deploy_firebase_hosting.py, not Firebase CLI Hosting deploy.",
-              "FIREBASE" + "_TOKEN": "Production deploy must not depend on Firebase CLI token credentials.",
-          }
-          files = [
-              Path(".github/workflows/deploy-production.yml"),
-              Path("scripts/deploy_cloud_run.sh"),
-              Path("scripts/promote_cloud_run_revision.sh"),
-              Path("scripts/deploy_firestore_indexes.sh"),
-              Path("scripts/deploy_firebase_hosting.py"),
-              Path("Makefile"),
-          ]
-
-          failed = False
-          for path in files:
-              for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), start=1):
-                  stripped = line.strip()
-                  if not stripped or stripped.startswith("#"):
-                      continue
-                  for needle, message in forbidden.items():
-                      if needle in line:
-                          print(f"::error file={path},line={number}::{message}")
-                          failed = True
-
-          if failed:
-              sys.exit(1)
-          PY
-
   authenticated_read_only_probe:
     name: Authenticated deploy read-only probe
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    if: github.event_name == 'pull_request_target' || github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main')
+    permissions:
+      contents: read
+      id-token: write
     env:
-      CLOUD_RUN_PROJECT_ID: ${{ secrets.GCP_SA_PROJECT_ID }}
-      FIREBASE_PROJECT_ID: ${{ secrets.GCP_SA_PROJECT_ID }}
-      GCP_SA_KEY: ${{ secrets.GCP_SA_KEY }}
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_PREFLIGHT_WIF_PROVIDER: ${{ vars.GCP_PREFLIGHT_WIF_PROVIDER }}
+      GCP_PREFLIGHT_SERVICE_ACCOUNT: ${{ vars.GCP_PREFLIGHT_SERVICE_ACCOUNT }}
+      CLOUD_RUN_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      FIREBASE_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
       FIRESTORE_DATABASE_ID: "(default)"
     steps:
-      - name: Checkout trusted base code
-        if: github.event_name == 'pull_request_target'
-        uses: actions/checkout@v4
+      - name: Checkout trusted main code
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: main
           persist-credentials: false
 
-      - name: Checkout selected ref
-        if: github.event_name != 'pull_request_target'
-        uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-
-      - name: Validate probe secrets
+      - name: Validate probe inputs
         run: |
           set -euo pipefail
           missing=0
           if [ -z "${CLOUD_RUN_PROJECT_ID}" ]; then
-            echo "::error::GCP_SA_PROJECT_ID secret is not set; production deploy would not know the target project."
+            echo "::error::GCP_PROJECT_ID variable is not set; production deploy would not know the target project."
+            missing=1
+          elif [[ ! "${GCP_PROJECT_ID}" =~ ^[a-z][a-z0-9-]{4,28}[a-z0-9]$ ]]; then
+            echo "::error::GCP_PROJECT_ID must be a valid Google Cloud project ID."
             missing=1
           fi
-          if [ -z "${GCP_SA_KEY}" ]; then
-            echo "::error::GCP_SA_KEY secret is not set; production deploy cannot authenticate."
+          if [ -z "${GCP_PREFLIGHT_WIF_PROVIDER}" ]; then
+            echo "::error::GCP_PREFLIGHT_WIF_PROVIDER variable is not set; preflight cannot authenticate."
+            missing=1
+          elif [[ ! "${GCP_PREFLIGHT_WIF_PROVIDER}" =~ ^projects/[0-9]+/locations/global/workloadIdentityPools/[a-z0-9-]+/providers/[a-z0-9-]+$ ]]; then
+            echo "::error::GCP_PREFLIGHT_WIF_PROVIDER must be a full global Workload Identity Provider resource name."
+            missing=1
+          fi
+          if [ -z "${GCP_PREFLIGHT_SERVICE_ACCOUNT}" ]; then
+            echo "::error::GCP_PREFLIGHT_SERVICE_ACCOUNT variable is not set; preflight cannot authenticate."
+            missing=1
+          elif [[ ! "${GCP_PREFLIGHT_SERVICE_ACCOUNT}" =~ ^[a-z0-9][a-z0-9-]*@[a-z0-9-]+\.iam\.gserviceaccount\.com$ ]]; then
+            echo "::error::GCP_PREFLIGHT_SERVICE_ACCOUNT must be a Google service-account email."
             missing=1
           fi
           if [ "$missing" -ne 0 ]; then
@@ -149,20 +66,23 @@ jobs:
           echo "::add-mask::${CLOUD_RUN_PROJECT_ID}"
           echo "::add-mask::${FIREBASE_PROJECT_ID}"
 
-      - name: Authenticate to Google Cloud with service account key
-        uses: google-github-actions/auth@v2
+      - name: Authenticate to Google Cloud with Workload Identity Federation
+        uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_PREFLIGHT_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_PREFLIGHT_SERVICE_ACCOUNT }}
           create_credentials_file: true
           export_environment_variables: true
+          cleanup_credentials: true
 
       - name: Set up gcloud SDK
-        uses: google-github-actions/setup-gcloud@v3
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
         with:
           project_id: ${{ env.CLOUD_RUN_PROJECT_ID }}
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
         with:
           python-version: '3.14'
 
