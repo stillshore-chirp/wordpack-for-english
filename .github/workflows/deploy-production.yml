@@ -329,7 +329,7 @@ jobs:
         run: npm --prefix ./apps/frontend run build
 
       - name: Upload frontend release artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: frontend-release-dist
           path: apps/frontend/dist
@@ -509,7 +509,7 @@ jobs:
           rm -f -- "${RUNNER_TEMP}"/gha-creds-*.json "${GITHUB_WORKSPACE}"/gha-creds-*.json
 
       - name: Upload backend image archive
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: backend-image-archive
           path: ${{ runner.temp }}/backend-image.tar.zst
@@ -663,7 +663,7 @@ jobs:
           push-to-registry: false
 
       - name: Upload backend attestation metadata
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: backend-attestation-metadata
           path: |
