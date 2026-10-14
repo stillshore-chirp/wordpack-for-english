@@ -1,6 +1,6 @@
 # Agent Principles
 
-この文書は、WordPack for Englishの設計・実装判断に使う heuristic だけを定めます。hard gateと権限境界は [`AGENTS.md`](../AGENTS.md)、委任・証跡・task-stateは [`docs/agent-harness.md`](agent-harness.md)、作業手順は該当Skillを優先します。
+この文書は、WordPack for Englishの設計・実装判断に使うheuristicだけを定めます。共通作業方針は利用環境のローカル規則とユーザー依頼に従い、別の実行環境にはその環境のローカル規則が必要です。WordPack固有のhard gateは [`AGENTS.md`](../AGENTS.md)、UI/UXや安全の詳細は該当する正本を参照します。
 
 複数の原則が競合する場合は、要件、既存構造、変更容易性、誤用リスク、検証可能性を比較します。数値目安だけでFailにせず、読み手と変更者が安全に扱えるかで判断します。
 

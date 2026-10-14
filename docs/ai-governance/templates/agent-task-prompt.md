@@ -1,10 +1,7 @@
-# AIエージェント向けUI/UX作業プロンプト
+# UI/UX作業プロンプト（任意テンプレート）
 
-この作業はアプリ本体UI、またはリポジトリが制御する独自UIの変更を含みます。
+この文面はWordPackのUI/UX変更やflow auditを依頼するときの出発点です。共通作業方針と権限は、利用環境のローカル規則およびユーザー依頼に従います。Codex以外の環境でも、その環境に対応するローカル規則が必要です。
 
-1. ルート `AGENTS.md` と変更対象に最も近い `AGENTS.md` を読んでください。
-2. `.agents/skills/ui-ux-review/SKILL.md` を発動してください。
-3. Skillの対象面分類に従い、`02-uiux-review-framework.md`、`03-evidence-and-completion-gates.md`、変更内容に直接関係する詳細正本だけを読んでください。
-4. 実装、検証、証跡作成、反証レビューまで完遂してください。
+WordPack UI/UXレビューSkillを参照し、対象surfaceに関係する品質基準と証跡だけを選んでください。アプリ本体UIでは、利用者の目的、主要state、accessibility、視覚階層、copy、反復利用、信頼感を評価します。GitHub共同作業面では、repositoryが制御する内容、構造、参照先、公開安全性を確認します。
 
-P0が残る場合、必要な前後screenshotを取得できない場合、実施していない検証しか根拠がない場合は、UI/UX作業を完了扱いにしないでください。
+実際に観察した内容と推定を分け、未確認範囲や残るproduct riskを示してください。AI simulationを実ユーザー観察として表現しないでください。

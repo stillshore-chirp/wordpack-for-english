@@ -1,6 +1,6 @@
 # 証跡と完了ゲート
 
-この文書は、アプリ本体UIとGitHub共同作業面を区別し、変更を完了扱いするための証跡と判定条件を定義します。UI変更レビューで差分を扱う場合は、比較snapshot、追加・削除、影響coverage、変更意図、findingの由来を既存の証跡へ統合します。
+この文書は、WordPackのUI/UX品質レビュー、flow audit、repositoryが制御するGitHub共同作業面で使う証跡と受け入れ基準を定義します。共通作業方針は利用環境のローカル規則とユーザー依頼に従います。UI変更レビューで差分を扱う場合は、比較snapshot、追加・削除、影響coverage、変更意図、findingの由来を証跡へ結び付けます。
 
 ## 1. 対象面
 
@@ -60,7 +60,7 @@ commit rangeやPRは、Target snapshot / refに記録した既存のHead ref / S
 
 beforeは、実装前にbase snapshotから先行取得できます。base ref / SHA、対象surface・状態、viewport / device、runtime条件、artifact参照を記録し、これらが変わらない場合だけ比較証跡として再利用します。base snapshotのbeforeは、フロー監査で求める現在の監査実行・各stepの証跡を代替しません。
 
-実装中または包括review中に取得したafterは`provisional`です。実装が完了し、同じ配送系列の包括reviewが収束した後、latest HEADで再取得したものだけを`final`としてPRの完了証跡に採用します。latest HEAD / base、所有path、review state、finding / fix、またはruntime条件の変更はafterを失効させ、review中なら`provisional`、収束後なら現行latest HEADで再取得します。失効前の画像は履歴または比較資料として残せますが、finalの根拠には使いません。
+afterは、取得時に表示されたrevisionとUI状態へ結び付けます。画像取得後に該当UIのsource、設定、data、runtime条件が変わった場合、その画像は変更後の表示を示す証跡として使わず、必要に応じて再取得します。作業中の画像は`provisional`、報告対象のrevisionと条件で確認した画像は`final`と記録できます。
 
 取得できない場合は、次を示します。
 
@@ -122,34 +122,15 @@ Issue / PR template、repository Markdown、workflowの入力・説明などで�
 
 GitHubが所有し、リポジトリが変更していないlayout、keyboard、focus、loading、permission stateへ、アプリ本体UIと同じstate matrixやaccessibility証跡を要求しません。GitHub共同作業面だけの変更では、アプリ本体UI用のscreenshotやruntime / dev serverを要求せず、owner / PID / process group / port / readiness / cleanupの実行記録も不要です。screenshotまたはpreviewは、リポジトリが制御する視覚構成・操作が実質的に変わる場合、受け入れ条件に含まれる場合、または明示依頼がある場合に限り追加します。
 
-## 7. 配送checkpointと代表scenario
+## 7. UI/UX受け入れ基準
 
-配送は `implementation → focused_verification → code_freeze → measurement → publication_freeze → external_gate → review_fix → accepted` の順に進めます。高コストgateは、snapshot、測定scope、公開境界、再取得条件と入力閉包を固定した後に、変更種別に対応するgate mapから選びます。HEADの変更だけで全gateを失効させず、path・関連設定・生成物・実行条件と交差するgateだけを再取得します。
+### UI/UXレビュー
 
-stable evidence（HEAD / base、変更path、入力閉包、条件、結果、artifact参照）と、volatile delivery state（CI、review / thread、mergeability、待機中status）は分けて記録します。測定artifact自身が入力になる場合は、report annotationを別gateへ分離するか測定scopeから明示的に除外します。P0 / P1、security、secret、data integrity、受入証跡の矛盾は即時blockingとし、P2-only findingと公開文言の調整はreview予算内で扱います。
-
-次の表は、自然言語のexact matchを機械契約にするものではなく、代表的な判断入力を構造的に比較するためのものです。
-
-| scenario | checkpoint / focused gate | high-cost / external gate | invalidation reason | reacquire scope |
-|---|---|---|---|---|
-| 文書・governance | `code_freeze`; Markdown / link / 公開安全性 / `validate_governance` | `publication_freeze`; closureが必要とするgovernance gate | owned doc、関連設定・生成物、条件の交差 | 交差したgovernance検証と公開証跡だけ |
-| UI | `focused_verification`; 対象component・state・a11y・flow証跡 | `code_freeze`後、選択されたPlaywright / visual / full UI gate | surface、shared token、runtime条件、screenshot入力の変更 | 影響surfaceのgateとcurrent-run証跡だけ |
-| backend / API | `focused_verification`; contract / 対象pytest | closureが交差する場合のbackend full / coverage | API・schema・設定・生成物・runtime条件の変更 | 影響するcontract / backend closureだけ |
-| workflow | `focused_verification`; contract・YAML・`base...head`分類 | latest Actions / required CI とmergeability | workflow、classifier、trigger、設定、base依存入力の変更 | workflow contractとbase依存の外部gateだけ |
-
-Before / Afterの計測は、同じchange type、snapshot、runner、実行条件でgate実行数、wall-clock、status照会数、output bytesを比較します。tokenは実telemetryを取得した場合だけ観測値として記録し、推定値を観測値へ格上げしません。
-
-## 8. 完了ゲート
-
-### 共通
-
-- 依頼の成果と受け入れ条件を満たす。
-- P0が残っていない。
-- 対象面に対応する証跡がある。
-- 実行した検証と結果を示す。
-- 未実行検証、その理由、残るリスクを示す。
-- 実施していない確認を成功扱いしていない。
-- 公開物の安全性を確認している。
+- 対象UIの目的と利用者への影響が分かる。
+- UI/UX上のP0が残っていない。
+- 判定に必要なscreen、state、操作、accessibilityまたは文書構造の証跡がある。
+- 未確認のUI状態や実行していない確認を成功扱いしていない。
+- 公開するUI証跡の安全性を確認している。
 
 ### アプリ本体UI
 
@@ -158,7 +139,7 @@ Before / Afterの計測は、同じchange type、snapshot、runner、実行条�
 - accessibility、視覚階層、copy、熟練者効率、信頼感を確認している。
 - 反証レビューを実施している。
 - 必要な前後screenshotをPRで確認できる。
-- beforeがbase snapshotへ、afterが実装・包括review収束後のlatest headへ束縛され、review中のafterを`provisional`として扱っている。
+- beforeとafterを対象revision、surface、状態、runtime条件へ束縛し、報告対象の表示を示す画像を`final`と区別している。
 - runtime / dev serverを使った場合、owner、PID、process group、port、readiness、cleanupを確認している。
 
 ### UI変更レビュー（差分を伴う場合）
@@ -182,20 +163,7 @@ Before / Afterの計測は、同じchange type、snapshot、runner、実行条�
 - screenshotで確認できる事実と、別の操作・accessibility証跡が必要な事項を分離している。
 - blockerが残る場合、監査できた範囲だけを報告し、完全なフロー監査としていない。
 
-### Pull Request
-
-PRをマージ可能な状態として報告する場合は、次を満たします。
-
-- latest headについて、対象branchで定義されたpush / pull_request等のCIが成功している。
-- latest meaningful changeに対するGitHub上で確認可能な自動または人間のコードレビューがcleanである。
-- actionableな未解決review threadがない。
-- GitHubのmergeabilityがcleanで、conflictやblocking conditionがない。
-- 停止条件、委任、evidence packageは [`docs/agent-harness.md`](../agent-harness.md) の共通契約を参照する。
-- 同一input closure・execution conditionsで成功したgateは既存evidenceを再利用し、closureを構成する変更があった場合だけ再取得する。
-
-ソースコード変更でコードレビューが提供されない場合、代替自己レビューは補助証跡に限り、マージ可能状態の代替にしません。同じheadでclean reviewを複数回集める必要はありません。指摘対応でheadが変わった場合だけ、CIと該当reviewを再確認します。mergeまたはcloseは別の明示指示がある場合だけ行います。
-
-## 9. 推奨検証
+## 8. UI/UX確認に使う検証例
 
 環境と変更範囲に応じて選びます。
 
@@ -212,6 +180,6 @@ PRをマージ可能な状態として報告する場合は、次を満たしま
 
 利用できない検証は、存在しない成果物として捏造せず、理由と残るリスクを報告します。
 
-## 10. 報告
+## 9. UI/UX報告
 
-`templates/completion-gate-report.md` を使うか、同等の情報をPR本文へ記録します。空の項目を定型的なN/Aで埋めるより、今回の対象面と未確認範囲が明確な報告を優先します。
+必要な場合は`templates/completion-gate-report.md`または`templates/uiux-review-report.md`を、今回のUI/UX対象に合わせて使います。空の項目を定型的なN/Aで埋めるより、確認したsurfaceと未確認範囲が分かる報告を優先します。
