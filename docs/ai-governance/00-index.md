@@ -1,8 +1,8 @@
 # AIガバナンス文書インデックス
 
-このディレクトリは、WordPack for EnglishのAIエージェント支援開発で、UI/UX品質、証跡、Issue品質、完了条件を扱う詳細正本です。企業全体のAI統制、法務、倫理審査、モデル監査を意味しません。
+このディレクトリは、WordPack for EnglishのUI/UX品質、確認証跡、Issue本文の品質を扱う詳細正本です。共通作業方針は利用環境のローカル規則とユーザー依頼に従い、Codex以外の環境にはその環境に対応するローカル規則が必要です。企業全体のAI統制、法務、倫理審査、モデル監査を意味しません。
 
-エージェントルール全体の配置とCodex・Claude Code・Cursorへの接続は [`docs/agent-harness.md`](../agent-harness.md) を正本とします。
+WordPack固有の規則・adapter・static validatorの配置と接続は [`docs/agent-harness.md`](../agent-harness.md) を参照します。
 
 ## 読み方
 
@@ -12,13 +12,13 @@
 2. UI/UX変更では `.agents/skills/ui-ux-review/SKILL.md` を発動する。
 3. Skillが対象面を分類し、`02-uiux-review-framework.md` と `03-evidence-and-completion-gates.md` を読む。
 4. 変更内容に直接関係する詳細文書だけを追加で読む。
-5. Issue作成、ルール変更など、UI以外の目的では該当する正本だけを読む。
+5. Issue本文の品質確認などUI以外の対象では、該当する正本だけを読む。
 
 ## 中心文書
 
 | 文書 | 責務 |
 |---|---|
-| [`../agent-harness.md`](../agent-harness.md) | 3製品のrule接続、委任、証跡再利用、instruction budget |
+| [`../agent-harness.md`](../agent-harness.md) | repository規則の参照先、adapter、static validation、任意のtask-state形式 |
 | `01-agent-operating-contract.md` | UI/UX作業の基本契約と証跡の考え方 |
 | `02-uiux-review-framework.md` | 対象面、品質定義、P0/P1/P2、レビュー観点 |
 | `03-evidence-and-completion-gates.md` | 対象面別の証跡と完了条件 |
@@ -48,7 +48,7 @@
 - `templates/trust-satisfaction-review.md`
 - `templates/completion-gate-report.md`
 - `templates/agent-task-prompt.md`
-- [`templates/task-state.json`](templates/task-state.json)
+- [`templates/task-state.json`](templates/task-state.json)（validator互換の任意記録形式。taskごとの必須記録ではありません）
 
 ## チェックリスト
 

@@ -5,7 +5,7 @@ description: "認証・認可、秘密情報、個人情報、外部入力、フ
 
 # Application Security
 
-一般コードレビュー、test、GitHub配送、公開安全性を置き換えない独立risk laneです。このSkillはscanの実行契約を定めますが、repository変更、外部system接続、credential利用、finding公開、修正配送を自動では許可しません。
+一般コードレビュー、test、GitHub共同作業面の品質確認、公開安全性を補完するsecurity risk reviewです。このSkillはWordPack固有のthreat model、scan対象、証跡、coverage、未確認範囲、findingの公開安全性を定めます。共通作業方針と権限は利用環境のローカル規則とユーザー依頼に従います。
 
 ## 発動条件
 
@@ -62,11 +62,11 @@ finding候補はsource evidenceと成立条件で再検証します。推測だ�
 
 tool停止、未読file、未検証候補、coverage不足は結果へ残します。空のfinding集合は、確認済みscope内でconfirmed findingがなかったことだけを示します。scan未完了、利用不能、coverage不足をcleanまたは安全と報告しません。
 
-## 公開と引き渡し
+## Findingの報告
 
 公開前に [`../security-publication/SKILL.md`](../security-publication/SKILL.md) を適用します。公開summaryはscope、mode、coverage、severity別件数、停止理由、unknown、次actionに限定し、credential、個人情報、本番識別子、完全なpayload・query・log、再利用可能なexploit手順、非公開artifact pathを含めません。
 
-actionable findingは公開範囲を判断して既存Issueまたは独立追跡単位へ関連付けます。修正が依頼された場合だけ [`../github-delivery/SKILL.md`](../github-delivery/SKILL.md) へ引き渡します。scanからcommit、push、PR、merge、deploy、Issue closeを自動実行しません。
+公開するfindingには、検証可能な根拠、影響範囲、severity、coverage、unknownを含めます。非公開の根拠やartifactは公開summaryから分離し、修正に関する判断は利用環境のローカル規則とユーザー依頼に従います。
 
 ## Required output
 

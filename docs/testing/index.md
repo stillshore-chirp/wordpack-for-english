@@ -1,6 +1,6 @@
 # テスト入口
 
-実行コマンドと変更pathから、focused / full gateを選ぶ入口です。配送順序と証跡の失効は [GitHub配送Skill](../../.agents/skills/github-delivery/SKILL.md) を正本にします。
+変更pathからWordPack固有のfocused / full CI gateを選ぶ入口です。共通作業方針は利用環境のローカル規則とユーザー依頼に従います。
 
 ## CIの選択契約
 
