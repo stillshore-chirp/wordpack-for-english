@@ -14,7 +14,7 @@ Codexの共通作業方針は、利用環境のローカル `AGENTS.md` とユ�
 | `OPERATIONS.md`、`docs/deployment.md`、`docs/infrastructure.md`、`.github/workflows/**`、`scripts/deploy*`、`scripts/promote*` | `docs/operations/AGENTS.md` |
 
 - `.claude/` と `.cursor/` は製品固有の薄いadapterです。新しい品質基準の正本にしません。
-- 競合は、対象範囲が狭く具体的な契約を優先し、解消できない場合は実装前に明示します。
+- WordPack固有のrepository契約同士の競合は、対象範囲が狭く具体的な契約を優先し、解消できない場合は実装前に明示します。
 
 ## 権限境界
 
