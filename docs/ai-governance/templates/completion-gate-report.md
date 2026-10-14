@@ -15,6 +15,7 @@ UI/UX変更レビュー、flow audit、またはrepositoryが制御するGitHub�
 
 - Target revision / ref:
 - Base / head:
+- Diff identifier（working treeを対象に含む場合）: `staged=<patch hash|empty>; unstaged=<patch hash|empty>; paths=<sorted changed path set>`。hash方式と取得時点も記録します。
 - 追加側・削除側:
 - 変更意図:
 - 影響surface / coverage / 未確認consumer:
