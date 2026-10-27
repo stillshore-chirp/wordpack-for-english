@@ -481,6 +481,9 @@ describe('WordPackPanel E2E (mocked fetch)', () => {
       await user.click(guestPublicToggle);
       await Promise.resolve();
     });
+    await vi.waitFor(() => {
+      expect(within(dialog).getByText('ゲスト公開を有効にしました')).toBeInTheDocument();
+    });
     expect(guestPublicToggle).toBeChecked();
 
     await act(async () => {
