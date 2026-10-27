@@ -148,6 +148,8 @@ GATE_INPUTS = {
             "tests/test_deploy_script_env_guard.py",
             "tests/test_deploy_workflow_safety.py",
             "tests/test_ci_node_setup.py",
+            "scripts/download_ci_artifact.py",
+            "tests/test_ci_artifact_download.py",
         ),
         ("pytest.ini", "requirements-agent-harness.txt"),
         ("classifier JSON",),
@@ -180,6 +182,8 @@ WORKFLOW_CONTRACT_FILES = {
     "tests/test_scheduled_maintenance_workflow.py",
     "tests/test_verification_inputs.py",
     "tests/test_ci_node_setup.py",
+    "scripts/download_ci_artifact.py",
+    "tests/test_ci_artifact_download.py",
 }
 REGISTERED_FULL_E2E_SPECS = (
     "tests/e2e/errors.spec.ts",
@@ -530,6 +534,7 @@ PATH_RULES: tuple[PathRule, ...] = (
         exact={
             "tests/test_github_actions_branch_policy.py",
             "tests/test_ci_node_setup.py",
+            "tests/test_ci_artifact_download.py",
             "tests/test_llmops_ci_policy.py",
             "tests/test_scheduled_maintenance_workflow.py",
             "tests/test_verification_inputs.py",

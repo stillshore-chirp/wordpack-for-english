@@ -390,6 +390,19 @@ def test_workflow_contract_job_runs_ci_node_setup_test() -> None:
     assert any("tests/test_ci_node_setup.py" in command for command in test_commands)
 
 
+def test_workflow_contract_job_runs_ci_artifact_download_test() -> None:
+    job = _read_workflow_job(".github/workflows/ci.yml", "workflow_contract")
+    steps = job.get("steps")
+    assert isinstance(steps, list)
+    test_commands = [
+        step["run"]
+        for step in steps
+        if isinstance(step, dict) and isinstance(step.get("run"), str)
+    ]
+
+    assert any("tests/test_ci_artifact_download.py" in command for command in test_commands)
+
+
 def test_workflows_use_local_ci_node_setup_without_direct_node_or_cache_actions() -> None:
     expected_local_uses = {
         ".github/workflows/ci.yml": 3,
@@ -411,10 +424,19 @@ def test_workflows_use_local_ci_node_setup_without_direct_node_or_cache_actions(
         ]
         node_setup_steps = [
             step for step in steps
-            if step.get("uses") == "./.github/actions/setup-ci-node"
+            if step.get("uses") in {
+                "./.github/actions/setup-ci-node",
+                "./.ci-tools/.github/actions/setup-ci-node",
+            }
         ]
 
         assert len(node_setup_steps) == expected_count, path
+        expected_use = (
+            "./.ci-tools/.github/actions/setup-ci-node"
+            if path == ".github/workflows/deploy-production.yml"
+            else "./.github/actions/setup-ci-node"
+        )
+        assert all(step.get("uses") == expected_use for step in node_setup_steps), path
         assert all("with" not in step for step in node_setup_steps), path
         assert not any(
             isinstance(step.get("uses"), str)
@@ -886,6 +908,62 @@ def test_deploy_auth_starts_after_dependency_install_and_before_gcloud_setup() -
     assert "npm --prefix ./apps/frontend run build" not in deploy
     assert "pip install" not in deploy
     assert "VALIDATE_IN_IMAGE=true" in deploy
+
+    parsed = yaml.safe_load(workflow)
+    assert isinstance(parsed, dict)
+    deploy_steps = parsed["jobs"]["deploy"]["steps"]
+    target_assert_index = next(
+        index for index, step in enumerate(deploy_steps)
+        if step.get("name") == "Assert checked out target SHA"
+    )
+    trusted_checkout_index = next(
+        index for index, step in enumerate(deploy_steps)
+        if step.get("name") == "Checkout trusted CI helpers"
+    )
+    trusted_assert_index = next(
+        index for index, step in enumerate(deploy_steps)
+        if step.get("name") == "Assert trusted CI helper revision"
+    )
+    trusted_checkout = deploy_steps[trusted_checkout_index]
+    assert trusted_checkout["with"]["ref"] == "${{ github.workflow_sha }}"
+    assert trusted_checkout["with"]["path"] == ".ci-tools"
+    assert trusted_checkout["with"]["persist-credentials"] is False
+    assert trusted_checkout["with"]["sparse-checkout"] == "scripts/download_ci_artifact.py\n"
+    assert deploy_steps[trusted_assert_index]["env"]["WORKFLOW_SHA"] == "${{ github.workflow_sha }}"
+    assert target_assert_index < trusted_checkout_index < trusted_assert_index
+    expected_downloads = {
+        "Download frontend release artifact before auth": (
+            "frontend-release-dist",
+            "${{ needs.prepare-release-artifacts.outputs.frontend_artifact_id }}",
+            "${{ needs.prepare-release-artifacts.outputs.frontend_artifact_digest }}",
+            '${GITHUB_WORKSPACE}/apps/frontend/dist',
+        ),
+        "Download backend attestation metadata before auth": (
+            "backend-attestation-metadata",
+            "${{ needs.attest-backend-artifact.outputs.metadata_artifact_id }}",
+            "${{ needs.attest-backend-artifact.outputs.metadata_artifact_digest }}",
+            '${GITHUB_WORKSPACE}/.backend-attestation',
+        ),
+    }
+    for step_name, (artifact_name, artifact_id, digest, destination) in expected_downloads.items():
+        step = next(step for step in deploy_steps if step.get("name") == step_name)
+        env = step.get("env")
+        assert isinstance(env, dict)
+        assert set(env) == {"GH_TOKEN", "ARTIFACT_ID", "ARTIFACT_DIGEST"}
+        assert env["GH_TOKEN"] == "${{ github.token }}"
+        assert env["ARTIFACT_ID"] == artifact_id
+        assert env["ARTIFACT_DIGEST"] == digest
+        run = str(step.get("run", ""))
+        assert "python3 .ci-tools/scripts/download_ci_artifact.py" in run
+        assert f"--name {artifact_name}" in run
+        assert '--artifact-id "${ARTIFACT_ID}"' in run
+        assert '--digest "${ARTIFACT_DIGEST}"' in run
+        assert f'--destination "{destination}"' in run
+
+    assert trusted_assert_index < next(
+        index for index, step in enumerate(deploy_steps)
+        if step.get("name") == "Download frontend release artifact before auth"
+    )
 
 
 def test_backend_build_provenance_is_main_deploy_only_and_has_no_pr_publish_path() -> None:

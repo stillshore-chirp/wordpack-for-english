@@ -190,6 +190,13 @@ def test_workflow_contract_input_closure_includes_ci_node_setup_helper() -> None
     assert "tests/test_ci_node_setup.py" in closure_paths
 
 
+def test_workflow_contract_input_closure_includes_ci_artifact_download_helper() -> None:
+    closure_paths = set(GATE_INPUTS[WORKFLOW_CONTRACT].paths)
+
+    assert "scripts/download_ci_artifact.py" in closure_paths
+    assert "tests/test_ci_artifact_download.py" in closure_paths
+
+
 def test_frontend_input_closure_includes_ci_node_setup_helper() -> None:
     assert ".github/actions/setup-ci-node/**" in set(GATE_INPUTS[FRONTEND].paths)
 
@@ -324,6 +331,8 @@ def test_backend_and_dedicated_contract_tests_keep_high_priority_gates() -> None
         "tests/test_validate_governance.py": {"governance"},
         "tests/test_github_actions_branch_policy.py": {"workflow_contract"},
         "tests/test_ci_node_setup.py": {"workflow_contract"},
+        "scripts/download_ci_artifact.py": {"workflow_contract"},
+        "tests/test_ci_artifact_download.py": {"workflow_contract"},
         "tests/test_scheduled_maintenance_workflow.py": {"workflow_contract"},
         "tests/test_deploy_script_env_guard.py": {"deploy_preflight"},
         "tests/test_deploy_workflow_safety.py": {"deploy_preflight", "workflow_contract"},
