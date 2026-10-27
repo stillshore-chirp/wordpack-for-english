@@ -89,3 +89,8 @@ updates:
       - 依存関係更新
     commit-message:
       prefix: "依存関係更新"
+    # Node.js 25 は 2026-06-01 に EOL となったため、25 系列への更新提案を抑止する。
+    ignore:
+      - dependency-name: "node"
+        versions:
+          - "~> 25.0"
