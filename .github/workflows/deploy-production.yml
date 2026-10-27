@@ -99,35 +99,58 @@ jobs:
             [[ "${run_id}" =~ ^[0-9]+$ ]] || \
               fail_verification "CI workflow run ID is invalid."
 
-            local run_json jobs_json
-            run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || \
-              fail_verification "Could not resolve the CI workflow run from the GitHub API."
-            jq -e \
-              --arg target "${TARGET_SHA}" \
-              --arg expected_run_id "${run_id}" \
-              --arg expected_workflow_id "${CI_WORKFLOW_ID}" \
-              '(.id | tostring == $expected_run_id) and
-               (.workflow_id | tostring == $expected_workflow_id)' \
-              <<<"${run_json}" >/dev/null || \
-              fail_verification "The CI workflow run ID or immutable workflow ID did not match."
-            if [[ "${expected_status}" == "in_progress" ]]; then
+            local run_json jobs_json run_status run_conclusion
+            local retry_delays=(2 4 8 16 30)
+            local retry_index=0
+            while true; do
+              run_json="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")" || \
+                fail_verification "Could not resolve the CI workflow run from the GitHub API."
               jq -e \
-                --arg target "${TARGET_SHA}" \
-                '.name == "CI" and .event == "push" and .head_branch == "main" and
-                 .head_sha == $target and .status == "in_progress" and
-                 (.conclusion == null or .conclusion == "")' \
+                --arg expected_run_id "${run_id}" \
+                --arg expected_workflow_id "${CI_WORKFLOW_ID}" \
+                '(.id | tostring == $expected_run_id) and
+                 (.workflow_id | tostring == $expected_workflow_id)' \
                 <<<"${run_json}" >/dev/null || \
-                fail_verification "The caller is not an in-progress CI push on main for target_sha."
-            elif [[ "${expected_status}" == "completed" ]]; then
-              jq -e \
-                --arg target "${TARGET_SHA}" \
-                '.name == "CI" and .event == "push" and .head_branch == "main" and
-                 .head_sha == $target and .status == "completed"' \
-                <<<"${run_json}" >/dev/null || \
-                fail_verification "The CI workflow run is not a completed push on main for target_sha."
-            else
-              fail_verification "Unsupported CI workflow run status check."
-            fi
+                fail_verification "The CI workflow run ID or immutable workflow ID did not match."
+
+              if [[ "${expected_status}" == "in_progress" ]]; then
+                jq -e \
+                  --arg target "${TARGET_SHA}" \
+                  '.name == "CI" and .event == "push" and .head_branch == "main" and
+                   .head_sha == $target' \
+                  <<<"${run_json}" >/dev/null || \
+                  fail_verification "The CI workflow run metadata did not match the caller."
+                run_status="$(jq -r '
+                  if .status == "queued" or .status == "in_progress" or .status == "completed"
+                  then .status else "unknown" end' <<<"${run_json}")"
+                run_conclusion="$(jq -r '
+                  if .conclusion == null or .conclusion == "" then "none"
+                  elif .conclusion == "success" or .conclusion == "failure" or
+                       .conclusion == "cancelled" or .conclusion == "skipped" or
+                       .conclusion == "timed_out" or .conclusion == "action_required" or
+                       .conclusion == "neutral" or .conclusion == "stale"
+                  then .conclusion else "unknown" end' <<<"${run_json}")"
+                if [[ "${run_status}" == "in_progress" && "${run_conclusion}" == "none" ]]; then
+                  echo "Automatic CI run state verified (status=in_progress, conclusion=none, identity_match=true, retries=${retry_index})."
+                  break
+                fi
+                if (( retry_index >= ${#retry_delays[@]} )); then
+                  fail_verification "The caller CI run did not reach the required state within 60 seconds of backoff (status=${run_status}, conclusion=${run_conclusion}, identity_match=true, ready=false)."
+                fi
+                sleep "${retry_delays[retry_index]}"
+                retry_index=$((retry_index + 1))
+              elif [[ "${expected_status}" == "completed" ]]; then
+                jq -e \
+                  --arg target "${TARGET_SHA}" \
+                  '.name == "CI" and .event == "push" and .head_branch == "main" and
+                   .head_sha == $target and .status == "completed"' \
+                  <<<"${run_json}" >/dev/null || \
+                  fail_verification "The CI workflow run is not a completed push on main for target_sha."
+                break
+              else
+                fail_verification "Unsupported CI workflow run status check."
+              fi
+            done
 
             jobs_json="$(gh api \
               "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/jobs?per_page=100")" || \
