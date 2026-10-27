@@ -24,6 +24,7 @@ BACKEND_FULL = "backend_full"
 AGENT_HARNESS_FULL = "agent_harness_full"
 AI_GOVERNANCE_FULL = "ai_governance_full"
 WORKFLOW_CONTRACT = "workflow_contract"
+FRONTEND = "frontend"
 
 FOCUSED_CONTRACT = "focused_contract_pytest"
 YAML_PARSE = "workflow_yaml_parse"
@@ -72,6 +73,22 @@ class GateInputs:
 
 
 GATE_INPUTS = {
+    FRONTEND: GateInputs(
+        (
+            "apps/frontend/**",
+            ".github/actions/setup-ci-node/**",
+            ".github/workflows/ci.yml",
+            "scripts/check_frontend_architecture_boundaries.mjs",
+        ),
+        (
+            "apps/frontend/package.json",
+            "apps/frontend/package-lock.json",
+            "apps/frontend/tsconfig.json",
+            "apps/frontend/vite.config.ts",
+        ),
+        ("frontend typecheck and Vitest result",),
+        ("Node.js 22.23.4 checksum-pinned setup", "PR/develop no-coverage; main coverage"),
+    ),
     BACKEND_FULL: GateInputs(
         ("apps/backend/backend/**", "tests/backend/**", "tests/integration/**"),
         ("requirements.txt", "pytest.ini", "firebase.json"),
@@ -119,6 +136,7 @@ GATE_INPUTS = {
     WORKFLOW_CONTRACT: GateInputs(
         (
             ".github/workflows/**",
+            ".github/actions/setup-ci-node/**",
             "scripts/classify_*",
             "scripts/build_backend_artifact.sh",
             "scripts/verify_backend_artifact_attestations.sh",
@@ -129,6 +147,7 @@ GATE_INPUTS = {
             "tests/test_cloud_build_config.py",
             "tests/test_deploy_script_env_guard.py",
             "tests/test_deploy_workflow_safety.py",
+            "tests/test_ci_node_setup.py",
         ),
         ("pytest.ini", "requirements-agent-harness.txt"),
         ("classifier JSON",),
@@ -148,6 +167,10 @@ BACKEND_FILES = {
     "Dockerfile.backend",
 }
 WORKFLOW_PREFIX = ".github/workflows/"
+CI_NODE_SETUP_SOURCE_FILES = {
+    ".github/actions/setup-ci-node/action.yml",
+    ".github/actions/setup-ci-node/setup.sh",
+}
 WORKFLOW_GATES = ALL_GATES - {"dependency_review"}
 WORKFLOW_CONTRACT_FILES = {
     "pytest.ini",
@@ -156,6 +179,7 @@ WORKFLOW_CONTRACT_FILES = {
     "tests/test_llmops_ci_policy.py",
     "tests/test_scheduled_maintenance_workflow.py",
     "tests/test_verification_inputs.py",
+    "tests/test_ci_node_setup.py",
 }
 REGISTERED_FULL_E2E_SPECS = (
     "tests/e2e/errors.spec.ts",
@@ -350,6 +374,20 @@ PATH_RULES: tuple[PathRule, ...] = (
         prefixes={WORKFLOW_PREFIX},
     ),
     _rule(
+        "workflow_ci_node_setup_sources",
+        "workflow_contract",
+        "ci_runtime_helper",
+        gates={"frontend", "workflow_contract"},
+        exact=CI_NODE_SETUP_SOURCE_FILES,
+    ),
+    _rule(
+        "workflow_ci_node_setup_docs",
+        "workflow_contract",
+        "ci_runtime_helper_docs",
+        gates={"workflow_contract"},
+        exact={".github/actions/setup-ci-node/README.md"},
+    ),
+    _rule(
         "legacy_ui_classifier_migration",
         "legacy_migration",
         "workflow_contract",
@@ -491,6 +529,7 @@ PATH_RULES: tuple[PathRule, ...] = (
         gates={"workflow_contract"},
         exact={
             "tests/test_github_actions_branch_policy.py",
+            "tests/test_ci_node_setup.py",
             "tests/test_llmops_ci_policy.py",
             "tests/test_scheduled_maintenance_workflow.py",
             "tests/test_verification_inputs.py",

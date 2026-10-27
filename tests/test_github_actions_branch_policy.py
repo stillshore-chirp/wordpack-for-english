@@ -377,6 +377,52 @@ def test_only_ci_is_an_automatic_pull_request_workflow_and_allowlist_is_bounded(
     assert automatic_pr_workflows == ["ci.yml"]
 
 
+def test_workflow_contract_job_runs_ci_node_setup_test() -> None:
+    job = _read_workflow_job(".github/workflows/ci.yml", "workflow_contract")
+    steps = job.get("steps")
+    assert isinstance(steps, list)
+    test_commands = [
+        step["run"]
+        for step in steps
+        if isinstance(step, dict) and isinstance(step.get("run"), str)
+    ]
+
+    assert any("tests/test_ci_node_setup.py" in command for command in test_commands)
+
+
+def test_workflows_use_local_ci_node_setup_without_direct_node_or_cache_actions() -> None:
+    expected_local_uses = {
+        ".github/workflows/ci.yml": 3,
+        ".github/workflows/deploy-production.yml": 1,
+        ".github/workflows/scheduled-maintenance.yml": 1,
+    }
+
+    for path, expected_count in expected_local_uses.items():
+        workflow = yaml.safe_load(_read_text(path))
+        assert isinstance(workflow, dict)
+        jobs = workflow.get("jobs")
+        assert isinstance(jobs, dict)
+        steps = [
+            step
+            for job in jobs.values()
+            if isinstance(job, dict) and isinstance(job.get("steps"), list)
+            for step in job["steps"]
+            if isinstance(step, dict)
+        ]
+        node_setup_steps = [
+            step for step in steps
+            if step.get("uses") == "./.github/actions/setup-ci-node"
+        ]
+
+        assert len(node_setup_steps) == expected_count, path
+        assert all("with" not in step for step in node_setup_steps), path
+        assert not any(
+            isinstance(step.get("uses"), str)
+            and step["uses"].startswith(("actions/setup-node@", "actions/cache@"))
+            for step in steps
+        ), path
+
+
 def test_backend_ci_runs_production_314_coverage_and_main_313_compatibility() -> None:
     """The production lane is 3.14 with coverage; 3.13 is main-only without coverage."""
     yml = _read_text(".github/workflows/ci.yml")
