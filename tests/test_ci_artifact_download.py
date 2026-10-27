@@ -182,6 +182,14 @@ def test_zip_path_validation_rejects_traversal_and_ambiguous_paths(
         downloader._safe_member_path(zipfile.ZipInfo(member_name))
 
 
+def test_zip_path_validation_bounds_path_size_and_depth() -> None:
+    overlong = "a" * (downloader.MAX_ARCHIVE_PATH_BYTES + 1)
+    too_deep = "x/" * downloader.MAX_ARCHIVE_PATH_COMPONENTS + "x"
+    for member_name in (overlong, too_deep):
+        with pytest.raises(downloader.ArtifactDownloadError, match="unsafe path"):
+            downloader._safe_member_path(zipfile.ZipInfo(member_name))
+
+
 def test_zip_path_validation_rejects_nul_symlink_and_special_entries() -> None:
     nul_name = zipfile.ZipInfo("safe.txt")
     nul_name.orig_filename = "safe\x00.txt"
@@ -221,6 +229,32 @@ def test_zip_validation_rejects_duplicate_and_ancestor_conflicts(
         infos = archive.infolist()
     with pytest.raises(downloader.ArtifactDownloadError):
         downloader._validate_entries(infos, _policy())
+
+
+def test_zip_validation_indexes_wide_archive_paths_without_pairwise_scans(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class TrackedName(str):
+        prefix_checks = 0
+
+        def startswith(self, prefix: str, *args: int) -> bool:
+            type(self).prefix_checks += 1
+            return super().startswith(prefix, *args)
+
+    infos = [
+        zipfile.ZipInfo(f"assets/file-{index:05d}.js") for index in range(20_000)
+    ]
+    monkeypatch.setattr(
+        downloader,
+        "_safe_member_path",
+        lambda info: (TrackedName(info.filename), False),
+    )
+    records, total_size = downloader._validate_entries(
+        infos, _policy(max_entries=20_000)
+    )
+    assert len(records) == 20_000
+    assert total_size == 0
+    assert TrackedName.prefix_checks <= 20_000
 
 
 def test_zip_validation_bounds_entry_and_uncompressed_sizes() -> None:

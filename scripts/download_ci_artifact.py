@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from bisect import bisect_left
 import hashlib
 import io
 import json
@@ -24,6 +25,8 @@ CHUNK_SIZE = 64 * 1024
 METADATA_LIMIT = 64 * 1024
 DOWNLOAD_TIMEOUT_SECONDS = 15 * 60
 NO_PROGRESS_TIMEOUT_SECONDS = 60
+MAX_ARCHIVE_PATH_BYTES = 4096
+MAX_ARCHIVE_PATH_COMPONENTS = 64
 
 
 class ArtifactDownloadError(Exception):
@@ -227,7 +230,14 @@ def _safe_member_path(info: zipfile.ZipInfo) -> tuple[str, bool]:
         or "\\" in raw_name
         or raw_name.startswith("/")
         or re.match(r"^[A-Za-z]:", raw_name)
+        or len(raw_name) > MAX_ARCHIVE_PATH_BYTES
     ):
+        raise ArtifactDownloadError("artifact archive contains an unsafe path")
+    try:
+        path_size = len(raw_name.encode("utf-8"))
+    except UnicodeEncodeError:
+        raise ArtifactDownloadError("artifact archive contains an unsafe path") from None
+    if path_size > MAX_ARCHIVE_PATH_BYTES:
         raise ArtifactDownloadError("artifact archive contains an unsafe path")
     is_directory = info.is_dir()
     name = raw_name[:-1] if is_directory and raw_name.endswith("/") else raw_name
@@ -236,6 +246,7 @@ def _safe_member_path(info: zipfile.ZipInfo) -> tuple[str, bool]:
         not name
         or any(part in ("", ".", "..") for part in parts)
         or ":" in name
+        or len(parts) > MAX_ARCHIVE_PATH_COMPONENTS
     ):
         raise ArtifactDownloadError("artifact archive contains an unsafe path")
     normalized = "/".join(parts)
@@ -313,8 +324,6 @@ def _validate_entries(
             parent = "/".join(parts[:index])
             if seen.get(parent) is False:
                 raise ArtifactDownloadError("artifact archive has a file path conflict")
-        if not is_directory and any(existing.startswith(name + "/") for existing in seen):
-            raise ArtifactDownloadError("artifact archive has a file path conflict")
         if not is_directory:
             if info.file_size < 0 or info.file_size > policy.max_file_bytes:
                 raise ArtifactDownloadError("artifact file exceeds its limit")
@@ -322,6 +331,17 @@ def _validate_entries(
             regular_files.add(name)
         seen[name] = is_directory
         records.append((info, name, is_directory))
+    indexed_names = sorted(seen)
+    for name, is_directory in seen.items():
+        if is_directory:
+            continue
+        descendant_prefix = name + "/"
+        index = bisect_left(indexed_names, descendant_prefix)
+        if (
+            index < len(indexed_names)
+            and indexed_names[index].startswith(descendant_prefix)
+        ):
+            raise ArtifactDownloadError("artifact archive has a file path conflict")
     if total_size > policy.max_uncompressed_bytes:
         raise ArtifactDownloadError("artifact archive exceeds its uncompressed limit")
     if policy.exact_files is not None and regular_files != set(policy.exact_files):
