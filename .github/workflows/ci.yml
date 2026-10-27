@@ -182,14 +182,6 @@ jobs:
           print("SESSION_SECRET_KEY=" + secrets.token_hex(32))
           PY
 
-      - name: Cache pip
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-python-3.14-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-python-3.14-pip-
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -259,14 +251,6 @@ jobs:
           print("SESSION_SECRET_KEY=" + secrets.token_hex(32))
           PY
 
-      - name: Cache pip
-        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-python-3.13-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-python-3.13-pip-
-
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
@@ -306,11 +290,7 @@ jobs:
           persist-credentials: false
 
       - name: Use Node.js 22
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: apps/frontend/package-lock.json
+        uses: ./.github/actions/setup-ci-node
 
       - name: Install dependencies
         run: npm ci
@@ -503,7 +483,7 @@ jobs:
         run: python -c 'import pathlib,yaml; [yaml.safe_load(p.read_text(encoding="utf-8")) for p in pathlib.Path(".github/workflows").glob("*.y*ml")]'
 
       - name: Run workflow and classifier contract tests
-        run: python -m pytest -q --no-cov tests/test_github_actions_branch_policy.py tests/test_llmops_ci_policy.py tests/test_verification_inputs.py tests/test_scheduled_maintenance_workflow.py
+        run: python -m pytest -q --no-cov tests/test_github_actions_branch_policy.py tests/test_llmops_ci_policy.py tests/test_verification_inputs.py tests/test_scheduled_maintenance_workflow.py tests/test_ci_node_setup.py tests/test_ci_artifact_download.py
 
   playwright_smoke:
     name: Playwright smoke (selected flows)
@@ -527,13 +507,7 @@ jobs:
           persist-credentials: false
 
       - name: Use Node.js 22
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            apps/frontend/package-lock.json
+        uses: ./.github/actions/setup-ci-node
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
@@ -651,13 +625,7 @@ jobs:
           persist-credentials: false
 
       - name: Use Node.js 22
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: '22'
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            apps/frontend/package-lock.json
+        uses: ./.github/actions/setup-ci-node
 
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6

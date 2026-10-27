@@ -296,15 +296,53 @@ def test_backend_artifact_is_built_once_checked_and_promoted_by_digest() -> None
     assert "@${REGISTRY_DIGEST}" in build_helper
     assert "Install frontend dependencies" in "\n".join(rendered_prepare)
     assert "Build frontend artifact" in "\n".join(rendered_prepare)
-    upload_artifact_actions = [
-        step["uses"]
+    target_checkout = next(
+        step for step in prepare_steps if step.get("name") == "Checkout repository"
+    )
+    target_assert = next(
+        step for step in prepare_steps if step.get("name") == "Assert checked out target SHA"
+    )
+    tools_checkout = next(
+        step for step in prepare_steps if step.get("name") == "Checkout trusted CI helpers"
+    )
+    tools_assert = next(
+        step for step in prepare_steps if step.get("name") == "Assert trusted CI helper revision"
+    )
+    node_setup = next(
+        step for step in prepare_steps if "setup-ci-node" in str(step.get("uses", ""))
+    )
+    assert target_checkout["with"]["ref"] == "${{ needs.verify-target.outputs.target_sha }}"
+    assert target_checkout["with"]["persist-credentials"] is False
+    assert tools_checkout["with"] == {
+        "ref": "${{ github.workflow_sha }}",
+        "path": ".ci-tools",
+        "fetch-depth": 1,
+        "persist-credentials": False,
+        "sparse-checkout": ".github/actions/setup-ci-node\nscripts/download_ci_artifact.py\n",
+        "sparse-checkout-cone-mode": False,
+    }
+    assert tools_assert["env"]["WORKFLOW_SHA"] == "${{ github.workflow_sha }}"
+    assert 'git -C .ci-tools rev-parse HEAD' in tools_assert["run"]
+    assert node_setup["uses"] == "./.ci-tools/.github/actions/setup-ci-node"
+    assert prepare_steps.index(target_checkout) < prepare_steps.index(target_assert)
+    assert prepare_steps.index(target_assert) < prepare_steps.index(tools_checkout)
+    assert prepare_steps.index(tools_checkout) < prepare_steps.index(tools_assert) < prepare_steps.index(node_setup)
+    upload_artifact_steps = [
+        step
         for step in prepare_steps
         if isinstance(step, dict)
         and isinstance(step.get("uses"), str)
         and step["uses"].startswith("actions/upload-artifact@")
     ]
-    assert len(upload_artifact_actions) == 1
-    assert re.fullmatch(r"actions/upload-artifact@[0-9a-f]{40}", upload_artifact_actions[0])
+    assert len(upload_artifact_steps) == 1
+    assert re.fullmatch(
+        r"actions/upload-artifact@[0-9a-f]{40}", upload_artifact_steps[0]["uses"]
+    )
+    assert upload_artifact_steps[0]["id"] == "upload-frontend-release"
+    assert prepare["outputs"] == {
+        "frontend_artifact_id": "${{ steps.upload-frontend-release.outputs.artifact-id }}",
+        "frontend_artifact_digest": "${{ steps.upload-frontend-release.outputs.artifact-digest }}",
+    }
     assert "scripts/build_backend_artifact.sh" in "\n".join(rendered_build)
     assert "npm " not in "\n".join(rendered_build)
     assert "pip " not in "\n".join(rendered_build)
@@ -313,6 +351,26 @@ def test_backend_artifact_is_built_once_checked_and_promoted_by_digest() -> None
     assert "zstd" in "\n".join(rendered_build)
     assert "retention-days" in "\n".join(rendered_prepare)
     assert "retention-days" in "\n".join(rendered_build)
+    assert build["outputs"]["archive_artifact_id"] == (
+        "${{ steps.upload-backend-image-archive.outputs.artifact-id }}"
+    )
+    assert build["outputs"]["archive_artifact_digest"] == (
+        "${{ steps.upload-backend-image-archive.outputs.artifact-digest }}"
+    )
+    assert attest["outputs"]["metadata_artifact_id"] == (
+        "${{ steps.upload-backend-attestation-metadata.outputs.artifact-id }}"
+    )
+    assert attest["outputs"]["metadata_artifact_digest"] == (
+        "${{ steps.upload-backend-attestation-metadata.outputs.artifact-digest }}"
+    )
+    assert any(
+        step.get("id") == "upload-backend-image-archive"
+        for step in build_steps
+    )
+    assert any(
+        step.get("id") == "upload-backend-attestation-metadata"
+        for step in attest_steps
+    )
     assert "actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6" in "\n".join(rendered_attest)
     assert sum("actions/attest@" in text for text in rendered_attest) == 2
     assert "anchore/sbom-action@" not in workflow
@@ -327,9 +385,52 @@ def test_backend_artifact_is_built_once_checked_and_promoted_by_digest() -> None
         and step.get("name") == "Download backend image archive"
     ]
     assert len(download_artifact_steps) == 1
-    download_artifact_uses = download_artifact_steps[0].get("uses")
-    assert isinstance(download_artifact_uses, str)
-    assert re.fullmatch(r"actions/download-artifact@[0-9a-f]{40}", download_artifact_uses)
+    helper_download = download_artifact_steps[0]
+    helper_env = helper_download.get("env")
+    assert isinstance(helper_env, dict)
+    assert helper_download.get("uses") is None
+    assert "python3 .ci-tools/scripts/download_ci_artifact.py" in helper_download["run"]
+    assert helper_download["run"].count("--artifact-id") == 1
+    assert helper_download["run"].count("--digest") == 1
+    assert "--name backend-image-archive" in helper_download["run"]
+    assert '--destination "${RUNNER_TEMP}/backend-image"' in helper_download["run"]
+    assert helper_env == {
+        "GH_TOKEN": "${{ github.token }}",
+        "ARTIFACT_ID": "${{ needs.build-backend-artifact.outputs.archive_artifact_id }}",
+        "ARTIFACT_DIGEST": "${{ needs.build-backend-artifact.outputs.archive_artifact_digest }}",
+    }
+    helper_checkout = next(
+        step for step in attest_steps
+        if step.get("name") == "Checkout trusted CI helpers"
+    )
+    helper_sha_assert = next(
+        step for step in attest_steps
+        if step.get("name") == "Assert trusted CI helper revision"
+    )
+    assert helper_checkout["with"] == {
+        "ref": "${{ github.workflow_sha }}",
+        "path": ".ci-tools",
+        "fetch-depth": 1,
+        "persist-credentials": False,
+        "sparse-checkout": "scripts/download_ci_artifact.py\n",
+        "sparse-checkout-cone-mode": False,
+    }
+    assert helper_sha_assert["env"]["WORKFLOW_SHA"] == "${{ github.workflow_sha }}"
+    assert "git -C .ci-tools rev-parse HEAD" in helper_sha_assert["run"]
+    assert attest_steps.index(helper_checkout) < attest_steps.index(helper_sha_assert) < attest_steps.index(helper_download)
+
+    all_workflow_steps = [
+        step
+        for job in jobs.values()
+        if isinstance(job, dict) and isinstance(job.get("steps"), list)
+        for step in job["steps"]
+        if isinstance(step, dict)
+    ]
+    assert not any(
+        isinstance(step.get("uses"), str)
+        and step["uses"].startswith("actions/download-artifact@")
+        for step in all_workflow_steps
+    )
     delivery_attest_step = next(
         step for step in attest_steps if step.get("name") == "Attest backend delivery provenance"
     )

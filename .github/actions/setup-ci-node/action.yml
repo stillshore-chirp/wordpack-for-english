@@ -1,0 +1,10 @@
+name: Set up CI Node.js
+description: Use the runner cache or install the checksum-pinned Node.js release.
+runs:
+  using: composite
+  steps:
+    - name: Set up pinned Node.js
+      shell: bash
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+      run: bash "$ACTION_PATH/setup.sh"

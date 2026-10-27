@@ -121,7 +121,8 @@ describe('WordPackListPanel server-side query', () => {
 
     renderWithAuth();
 
-    await waitFor(() => expect(screen.getByRole('button', { name: '次へ' })).toBeInTheDocument());
+    await screen.findByText('条件一致（全ページ） 201件');
+    await waitFor(() => expect(screen.getByRole('button', { name: '次へ' })).toBeEnabled());
     const initialRequest = requests[0];
     expect(initialRequest.searchParams.get('limit')).toBe('200');
     expect(initialRequest.searchParams.get('offset')).toBe('0');
@@ -191,7 +192,8 @@ describe('WordPackListPanel server-side query', () => {
 
     renderWithAuth();
     const user = userEvent.setup();
-    await waitFor(() => expect(screen.getByRole('button', { name: '次へ' })).toBeInTheDocument());
+    await screen.findByText('条件一致（全ページ） 401件');
+    await waitFor(() => expect(screen.getByRole('button', { name: '次へ' })).toBeEnabled());
     expect(screen.getByRole('button', { name: /recent-private/ })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: '次へ' }));
     await waitFor(() => expect(screen.getAllByTestId('wp-card')[0]).toHaveTextContent('beta'));

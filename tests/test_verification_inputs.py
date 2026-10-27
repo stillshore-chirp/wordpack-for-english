@@ -13,6 +13,7 @@ from scripts.classify_verification_inputs import (
     BACKEND_FULL,
     BASE_HEAD_CLASSIFICATION,
     FOCUSED_CONTRACT,
+    FRONTEND,
     GATE_INPUTS,
     LATEST_ACTIONS,
     OUTPUT_FIELDS,
@@ -182,6 +183,60 @@ def test_workflow_contract_input_closure_includes_backend_artifact_supply_chain(
     assert "tests/test_deploy_workflow_safety.py" in closure_paths
 
 
+def test_workflow_contract_input_closure_includes_ci_node_setup_helper() -> None:
+    closure_paths = set(GATE_INPUTS[WORKFLOW_CONTRACT].paths)
+
+    assert ".github/actions/setup-ci-node/**" in closure_paths
+    assert "tests/test_ci_node_setup.py" in closure_paths
+
+
+def test_workflow_contract_input_closure_includes_ci_artifact_download_helper() -> None:
+    closure_paths = set(GATE_INPUTS[WORKFLOW_CONTRACT].paths)
+
+    assert "scripts/download_ci_artifact.py" in closure_paths
+    assert "tests/test_ci_artifact_download.py" in closure_paths
+
+
+def test_frontend_input_closure_includes_ci_node_setup_helper() -> None:
+    assert ".github/actions/setup-ci-node/**" in set(GATE_INPUTS[FRONTEND].paths)
+
+
+def test_ci_node_setup_helper_sources_select_frontend_and_workflow_contract() -> None:
+    expected_source_paths = (
+        ".github/actions/setup-ci-node/action.yml",
+        ".github/actions/setup-ci-node/setup.sh",
+    )
+
+    for path in expected_source_paths:
+        plan = classify_paths([path])
+        assert plan.classification_ok is True, path
+        assert set(plan.path_classifications[0].gates) == {
+            "frontend",
+            "workflow_contract",
+        }, path
+        assert plan.workflow_contract is True, path
+        assert plan.frontend is True, path
+        assert plan.deploy_preflight is False, path
+        assert plan.playwright_smoke is False, path
+        assert plan.playwright_visual is False, path
+        assert FOCUSED_CONTRACT in plan.selected_checks, path
+        assert YAML_PARSE not in plan.selected_checks, path
+
+    for path in (".github/actions/setup-ci-node/README.md", "tests/test_ci_node_setup.py"):
+        plan = classify_paths([path])
+        assert plan.classification_ok is True, path
+        assert set(plan.path_classifications[0].gates) == {"workflow_contract"}, path
+        assert plan.workflow_contract is True, path
+        assert plan.frontend is False, path
+        assert FOCUSED_CONTRACT in plan.selected_checks, path
+        assert YAML_PARSE not in plan.selected_checks, path
+
+    unknown = classify_paths([".github/actions/other-helper/action.yml"])
+    assert unknown.classification_ok is False
+    assert unknown.unknown_paths == (".github/actions/other-helper/action.yml",)
+    assert unknown.workflow_contract is False
+
+
 def test_dependency_scope_distinguishes_root_playwright_and_frontend_packages() -> None:
     root = classify_paths(["package.json"])
     frontend = classify_paths(["apps/frontend/package-lock.json"])
@@ -275,6 +330,9 @@ def test_backend_and_dedicated_contract_tests_keep_high_priority_gates() -> None
         "tests/test_security_scan_text.py": {"governance"},
         "tests/test_validate_governance.py": {"governance"},
         "tests/test_github_actions_branch_policy.py": {"workflow_contract"},
+        "tests/test_ci_node_setup.py": {"workflow_contract"},
+        "scripts/download_ci_artifact.py": {"workflow_contract"},
+        "tests/test_ci_artifact_download.py": {"workflow_contract"},
         "tests/test_scheduled_maintenance_workflow.py": {"workflow_contract"},
         "tests/test_deploy_script_env_guard.py": {"deploy_preflight"},
         "tests/test_deploy_workflow_safety.py": {"deploy_preflight", "workflow_contract"},
