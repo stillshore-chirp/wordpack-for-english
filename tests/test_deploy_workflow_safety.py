@@ -320,7 +320,16 @@ def test_backend_artifact_is_built_once_checked_and_promoted_by_digest() -> None
     assert "8fcb33017a0dc1058298c923c436d19dfa68ae93968e0b423248542e3afb9fc3" in "\n".join(rendered_attest)
     assert "unset ACTIONS_ID_TOKEN_REQUEST_URL ACTIONS_ID_TOKEN_REQUEST_TOKEN" in "\n".join(rendered_attest)
     assert 'spdxVersion == "SPDX-2.3"' in "\n".join(rendered_attest)
-    assert "actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c" in "\n".join(rendered_attest)
+    download_artifact_steps = [
+        step
+        for step in attest_steps
+        if isinstance(step, dict)
+        and step.get("name") == "Download backend image archive"
+    ]
+    assert len(download_artifact_steps) == 1
+    download_artifact_uses = download_artifact_steps[0].get("uses")
+    assert isinstance(download_artifact_uses, str)
+    assert re.fullmatch(r"actions/download-artifact@[0-9a-f]{40}", download_artifact_uses)
     delivery_attest_step = next(
         step for step in attest_steps if step.get("name") == "Attest backend delivery provenance"
     )

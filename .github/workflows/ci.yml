@@ -183,7 +183,7 @@ jobs:
           PY
 
       - name: Cache pip
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-python-3.14-pip-${{ hashFiles('requirements.txt') }}
@@ -260,7 +260,7 @@ jobs:
           PY
 
       - name: Cache pip
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/pip
           key: ${{ runner.os }}-python-3.13-pip-${{ hashFiles('requirements.txt') }}
@@ -305,10 +305,10 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Use Node.js
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - name: Use Node.js 22
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          node-version: '20.19.0'
+          node-version: '22'
           cache: npm
           cache-dependency-path: apps/frontend/package-lock.json
 
@@ -527,7 +527,7 @@ jobs:
           persist-credentials: false
 
       - name: Use Node.js 22
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
           cache: npm
@@ -623,7 +623,7 @@ jobs:
 
       - name: Upload Playwright smoke artifacts
         if: ${{ failure() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-smoke-artifacts
           path: |
@@ -651,7 +651,7 @@ jobs:
           persist-credentials: false
 
       - name: Use Node.js 22
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '22'
           cache: npm
@@ -684,7 +684,7 @@ jobs:
 
       - name: Upload Playwright visual artifacts
         if: ${{ failure() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: playwright-visual-artifacts
           path: |
