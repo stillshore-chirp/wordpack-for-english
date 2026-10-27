@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
 import subprocess
 
+import pytest
 import yaml
 
 
@@ -18,6 +20,164 @@ def _read(path: str) -> str:
     return Path(path).read_text(encoding="utf-8")
 
 
+def _run_automatic_target_verification(
+    tmp_path: Path,
+    run_responses: list[dict[str, object]],
+    *,
+    jobs_response: dict[str, object] | None = None,
+) -> tuple[subprocess.CompletedProcess[str], list[str], int, str]:
+    workflow = yaml.safe_load(_read(".github/workflows/deploy-production.yml"))
+    assert isinstance(workflow, dict)
+    steps = workflow["jobs"]["verify-target"]["steps"]
+    verify_step = next(
+        step
+        for step in steps
+        if step.get("name") == "Verify target trigger and Quality gate"
+    )
+
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    responses_dir = tmp_path / "run-responses"
+    responses_dir.mkdir()
+    for index, response in enumerate(run_responses, start=1):
+        (responses_dir / f"{index}.json").write_text(
+            json.dumps(response), encoding="utf-8"
+        )
+
+    catalog = {
+        "workflows": [
+            {
+                "path": ".github/workflows/ci.yml",
+                "id": 187172373,
+                "name": "CI",
+                "state": "active",
+            }
+        ]
+    }
+    (tmp_path / "workflow-catalog.json").write_text(
+        json.dumps([catalog]), encoding="utf-8"
+    )
+    (tmp_path / "jobs.json").write_text(
+        json.dumps(
+            jobs_response
+            or {
+                "jobs": [
+                    {
+                        "name": "Quality gate (selected checks)",
+                        "status": "completed",
+                        "conclusion": "success",
+                    }
+                ]
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    fake_gh = fake_bin / "gh"
+    fake_gh.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "endpoint=''\n"
+        "for arg in \"$@\"; do\n"
+        "  case \"${arg}\" in repos/*) endpoint=\"${arg}\" ;; esac\n"
+        "done\n"
+        "if [[ \"${endpoint}\" == *\"/actions/workflows?per_page=100\" ]]; then\n"
+        "  cat \"${GH_WORKFLOW_CATALOG}\"\n"
+        "elif [[ \"${endpoint}\" == *\"/jobs?per_page=100\" ]]; then\n"
+        "  cat \"${GH_JOBS_RESPONSE}\"\n"
+        "elif [[ \"${endpoint}\" =~ /actions/runs/[0-9]+$ ]]; then\n"
+        "  count=0\n"
+        "  if [[ -f \"${GH_RUN_COUNT_FILE}\" ]]; then\n"
+        "    IFS= read -r count < \"${GH_RUN_COUNT_FILE}\"\n"
+        "  fi\n"
+        "  count=$((count + 1))\n"
+        "  printf '%s\\n' \"${count}\" > \"${GH_RUN_COUNT_FILE}\"\n"
+        "  cat \"${GH_RUN_RESPONSE_DIR}/${count}.json\"\n"
+        "else\n"
+        "  exit 26\n"
+        "fi\n",
+        encoding="utf-8",
+    )
+    fake_gh.chmod(0o755)
+
+    fake_sleep = fake_bin / "sleep"
+    fake_sleep.write_text(
+        "#!/usr/bin/env bash\n"
+        "set -euo pipefail\n"
+        "printf '%s\\n' \"$1\" >> \"${GH_SLEEP_LOG}\"\n",
+        encoding="utf-8",
+    )
+    fake_sleep.chmod(0o755)
+
+    target_sha = "a" * 40
+    output_path = tmp_path / "github-output"
+    sleep_path = tmp_path / "sleep-log"
+    count_path = tmp_path / "run-count"
+    repository = "stillshore-chirp/wordpack-for-english"
+    result = subprocess.run(
+        ["bash", "-c", verify_step["run"]],
+        check=False,
+        capture_output=True,
+        text=True,
+        env={
+            "PATH": f"{fake_bin}:{os.environ.get('PATH', '/usr/bin:/bin')}",
+            "GH_TOKEN": "test-token",
+            "GITHUB_REPOSITORY": repository,
+            "GITHUB_EVENT_NAME": "push",
+            "GITHUB_REF": "refs/heads/main",
+            "GITHUB_OUTPUT": str(output_path),
+            "GH_WORKFLOW_CATALOG": str(tmp_path / "workflow-catalog.json"),
+            "GH_JOBS_RESPONSE": str(tmp_path / "jobs.json"),
+            "GH_RUN_RESPONSE_DIR": str(responses_dir),
+            "GH_RUN_COUNT_FILE": str(count_path),
+            "GH_SLEEP_LOG": str(sleep_path),
+            "TARGET_SHA": target_sha,
+            "CI_RUN_ID": "4242",
+            "CALLER_EVENT_NAME": "push",
+            "CALLER_REF": "refs/heads/main",
+            "CALLER_SHA": target_sha,
+            "CALLER_RUN_ID": "4242",
+            "CALLER_WORKFLOW_NAME": "CI",
+            "CALLER_WORKFLOW_REF": f"{repository}/.github/workflows/ci.yml@refs/heads/main",
+            "CI_WORKFLOW_PATH": ".github/workflows/ci.yml",
+            "CI_WORKFLOW_ID": "187172373",
+            "CI_QUALITY_GATE_NAME": "Quality gate (selected checks)",
+        },
+    )
+    sleep_delays = (
+        sleep_path.read_text(encoding="utf-8").splitlines()
+        if sleep_path.exists()
+        else []
+    )
+    run_count = (
+        int(count_path.read_text(encoding="utf-8")) if count_path.exists() else 0
+    )
+    output = result.stdout + result.stderr
+    if output_path.exists():
+        output += output_path.read_text(encoding="utf-8")
+    return result, sleep_delays, run_count, output
+
+
+def _ci_run_response(
+    status: str,
+    *,
+    conclusion: str | None = None,
+    **overrides: object,
+) -> dict[str, object]:
+    response: dict[str, object] = {
+        "id": 4242,
+        "workflow_id": 187172373,
+        "name": "CI",
+        "event": "push",
+        "head_branch": "main",
+        "head_sha": "a" * 40,
+        "status": status,
+        "conclusion": conclusion,
+    }
+    response.update(overrides)
+    return response
+
+
 def test_production_deploy_is_gated_by_a_same_sha_ci_quality_gate() -> None:
     workflow = _read(".github/workflows/deploy-production.yml")
     parsed_workflow = yaml.safe_load(workflow)
@@ -29,7 +189,7 @@ def test_production_deploy_is_gated_by_a_same_sha_ci_quality_gate() -> None:
     manual_end = verify.index("\n          else", manual_start)
     manual = verify[manual_start:manual_end]
     completed_start = verify.index('elif [[ "${expected_status}" == "completed" ]]; then')
-    completed_end = verify.index("\n            else", completed_start)
+    completed_end = verify.index("\n              else", completed_start)
     completed = verify[completed_start:completed_end]
 
     assert "workflow_call:" in workflow
@@ -66,6 +226,8 @@ def test_production_deploy_is_gated_by_a_same_sha_ci_quality_gate() -> None:
     assert 'or .name == "Quality gate"' not in verify
     assert 'verify_ci_run "${CI_RUN_ID}" "in_progress"' in verify
     assert 'verify_ci_run "${candidate_run_id}" "completed"' in verify
+    assert "local retry_delays=(2 4 8 16 30)" in verify
+    assert "identity_match=true, ready=false" in verify
     assert '.head_sha == $target and .status == "completed"' in manual
     assert '.conclusion == "success"' not in manual
     assert 'verify_ci_run "${candidate_run_id}" "completed"' in manual
@@ -94,6 +256,112 @@ def test_production_deploy_is_gated_by_a_same_sha_ci_quality_gate() -> None:
     assert "FIFO" not in deployment_docs
     assert "attribute.job_workflow_ref='job_workflow_ref' in assertion ? assertion.job_workflow_ref : ''" in deployment_docs
     assert "attribute.job_workflow_ref == 'stillshore-chirp/wordpack-for-english/.github/workflows/deploy-production.yml@refs/heads/main'" in deployment_docs
+
+
+def test_automatic_target_verification_waits_for_queued_run(tmp_path: Path) -> None:
+    result, delays, run_count, output = _run_automatic_target_verification(
+        tmp_path,
+        [_ci_run_response("queued"), _ci_run_response("in_progress")],
+    )
+
+    assert result.returncode == 0, output
+    assert delays == ["2"]
+    assert run_count == 2
+    assert f"target_sha={'a' * 40}" in output
+    assert (
+        "Automatic CI run state verified "
+        "(status=in_progress, conclusion=none, identity_match=true, retries=1)."
+        in output
+    )
+
+
+def test_automatic_target_verification_retries_stale_completed_run(
+    tmp_path: Path,
+) -> None:
+    result, delays, run_count, output = _run_automatic_target_verification(
+        tmp_path,
+        [
+            _ci_run_response("completed", conclusion="success"),
+            _ci_run_response("in_progress"),
+        ],
+    )
+
+    assert result.returncode == 0, output
+    assert delays == ["2"]
+    assert run_count == 2
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("id", 4243),
+        ("workflow_id", 187172374),
+        ("name", "Other workflow"),
+        ("event", "workflow_dispatch"),
+        ("head_branch", "develop"),
+        ("head_sha", "b" * 40),
+    ],
+)
+def test_automatic_target_verification_rejects_identity_mismatch_immediately(
+    tmp_path: Path, field: str, value: object
+) -> None:
+    result, delays, run_count, output = _run_automatic_target_verification(
+        tmp_path,
+        [_ci_run_response("queued", **{field: value})],
+    )
+
+    assert result.returncode != 0
+    assert delays == []
+    assert run_count == 1
+    assert "::error::" in output
+    assert "4242" not in output
+    assert "a" * 40 not in output
+    assert "test-token" not in output
+
+
+def test_automatic_target_verification_fails_closed_after_bounded_retries(
+    tmp_path: Path,
+) -> None:
+    result, delays, run_count, output = _run_automatic_target_verification(
+        tmp_path,
+        [_ci_run_response("queued") for _ in range(6)],
+    )
+
+    assert result.returncode != 0
+    assert delays == ["2", "4", "8", "16", "30"]
+    assert sum(map(int, delays)) == 60
+    assert run_count == 6
+    assert "within 60 seconds of backoff" in output
+    assert (
+        "status=queued, conclusion=none, identity_match=true, ready=false"
+        in output
+    )
+    assert "4242" not in output
+    assert "a" * 40 not in output
+    assert "test-token" not in output
+
+
+def test_automatic_target_verification_still_requires_successful_quality_gate(
+    tmp_path: Path,
+) -> None:
+    result, delays, run_count, output = _run_automatic_target_verification(
+        tmp_path,
+        [_ci_run_response("in_progress")],
+        jobs_response={
+            "jobs": [
+                {
+                    "name": "Quality gate (selected checks)",
+                    "status": "completed",
+                    "conclusion": "failure",
+                }
+            ]
+        },
+    )
+
+    assert result.returncode != 0
+    assert delays == []
+    assert run_count == 1
+    assert "no single successful canonical Quality gate job" in output
 
 
 def test_identity_exchange_cutover_is_manual_only_and_fail_closed() -> None:
