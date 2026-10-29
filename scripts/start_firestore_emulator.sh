@@ -66,7 +66,7 @@ fi
 mkdir -p "$IMPORT_DIR"
 
 # firebase-tools の Firestore エミュレータは Java 21 以上が必須。
-# node:bullseye ベースには入っていないため、未満の場合は Adoptium の Temurin 21 を追加インストールする。
+# node:bookworm ベースには入っていないため、未満の場合は Adoptium の Temurin 21 を追加インストールする。
 ensure_java21() {
   if command -v java >/dev/null 2>&1 && java -version 2>&1 | grep -q 'version "21'; then
     return 0
