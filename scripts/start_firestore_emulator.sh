@@ -72,13 +72,23 @@ ensure_java21() {
     return 0
   fi
 
-  local os_name
+  local os_name arch_name jre_arch
   os_name="$(uname -s)"
   if [[ "$os_name" != "Linux" ]]; then
     echo "[${SCRIPT_NAME}] Java 21+ が必要です。${os_name} では自動インストールできないため、手動で導入してください。" >&2
     echo "[${SCRIPT_NAME}] macOS の例: brew install openjdk@21 && export PATH=\"/opt/homebrew/opt/openjdk@21/bin:\$PATH\"" >&2
     exit 1
   fi
+
+  arch_name="$(uname -m)"
+  case "$arch_name" in
+    x86_64|amd64) jre_arch="x64" ;;
+    aarch64|arm64) jre_arch="aarch64" ;;
+    *)
+      echo "[${SCRIPT_NAME}] Linux architecture '${arch_name}' is unsupported for automatic Java 21 installation; install Java 21 manually." >&2
+      exit 1
+      ;;
+  esac
 
   echo "[${SCRIPT_NAME}] Java 21+ is required. Installing Temurin 21 (Adoptium tarball, no apt)..."
   # 過去の失敗で残った外部 repo 設定を掃除（念のため）
@@ -90,7 +100,7 @@ ensure_java21() {
 
   TMP_TAR=$(mktemp /tmp/temurin21.XXXX.tgz)
   if ! curl -fsSL --retry 3 --retry-delay 2 \
-    "https://api.adoptium.net/v3/binary/latest/21/ga/linux/x64/jre/hotspot/normal/eclipse" \
+    "https://api.adoptium.net/v3/binary/latest/21/ga/linux/${jre_arch}/jre/hotspot/normal/eclipse" \
     -o "$TMP_TAR"; then
     echo "[${SCRIPT_NAME}] Failed to download Java 21 JRE (api.adoptium.net). Please ensure HTTPS connectivity or preinstall Java 21 in the image." >&2
     exit 1
