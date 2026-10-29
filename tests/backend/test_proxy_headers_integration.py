@@ -26,6 +26,8 @@ def proxy_app_factory(monkeypatch: pytest.MonkeyPatch):
     """
 
     def _factory(**overrides: object):
+        private_settings = settings.__pydantic_private__
+        assert private_settings is not None
         monkeypatch.setattr(
             settings,
             "trusted_proxy_ips",
@@ -33,12 +35,17 @@ def proxy_app_factory(monkeypatch: pytest.MonkeyPatch):
             raising=False,
         )
         monkeypatch.setattr(settings, "allowed_hosts_raw", "testserver")
-        monkeypatch.setattr(settings, "_allowed_hosts_values", ("testserver",))
+        # Pydantic stores PrivateAttr outside __dict__; patch the mapping so undo restores it.
+        monkeypatch.setitem(
+            private_settings, "_allowed_hosts_values", ("testserver",)
+        )
         for key, value in overrides.items():
             if key == "allowed_hosts":
                 host_values = tuple(value) if not isinstance(value, str) else (value,)
                 monkeypatch.setattr(settings, "allowed_hosts_raw", ",".join(host_values))
-                monkeypatch.setattr(settings, "_allowed_hosts_values", host_values)
+                monkeypatch.setitem(
+                    private_settings, "_allowed_hosts_values", host_values
+                )
             else:
                 monkeypatch.setattr(settings, key, value, raising=False)
         return create_app()
