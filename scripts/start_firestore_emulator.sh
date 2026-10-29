@@ -123,7 +123,7 @@ echo "[${SCRIPT_NAME}] データは '${IMPORT_DIR}' に --import/--export-on-exi
 
 # firebase-tools は emulators:start に --host/--port を直接渡すとエラーになる場合があるため、
 # 一時的な firebase.json を生成して host/port を上書きする。
-TEMP_CONFIG="$(mktemp /tmp/firebase.emulator.XXXX.json)" || {
+TEMP_CONFIG="$(mktemp /tmp/firebase.emulator.XXXXXX)" || {
   echo "[${SCRIPT_NAME}] failed to create temp config" >&2
   exit 1
 }
