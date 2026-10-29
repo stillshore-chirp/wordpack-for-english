@@ -171,6 +171,27 @@ def test_download_version_and_checksum_are_fixed_in_source() -> None:
     assert "NODE_URL:-" not in script
 
 
+def test_backend_jobs_set_up_checksum_pinned_node_before_firebase_tools_install() -> None:
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
+
+    for job_name in ("backend", "backend_compatibility"):
+        steps = workflow["jobs"][job_name]["steps"]
+        setup_indexes = [
+            index
+            for index, step in enumerate(steps)
+            if step.get("uses") == "./.github/actions/setup-ci-node"
+        ]
+        npm_indexes = [
+            index
+            for index, step in enumerate(steps)
+            if "npm install -g firebase-tools@15.22.0" in step.get("run", "")
+        ]
+
+        assert len(setup_indexes) == 1, job_name
+        assert len(npm_indexes) == 1, job_name
+        assert setup_indexes[0] < npm_indexes[0], job_name
+
+
 def test_unsupported_platform_stops_before_download(tmp_path: Path) -> None:
     env, github_path, curl_log, _ = _runner_env(tmp_path, uname=("Linux", "aarch64"))
 
