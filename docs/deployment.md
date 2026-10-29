@@ -18,7 +18,7 @@
 - `gcloud`
 - `firebase-tools`
 - Docker
-- Node.js 20.19.0+
+- Node.js 22系（22.23.4以上）、24系（24.22.1以上）、または26系（26.12.1以上）
 - Python 3.14
 
 初回は次を済ませます。
