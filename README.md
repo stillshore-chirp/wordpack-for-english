@@ -23,12 +23,18 @@
 ### 前提
 
 - Python 3.14（CI では移行期間中の互換性確認として 3.13 も検証）
-- Node.js 20.19.0+
+- Node.js 22系（22.23.4以上）、24系（24.22.1以上）、または26系（26.12.1以上）
 - Firestore エミュレータを使う場合は Java 21+
 
 ### セットアップ
 
+nvmを使う場合は、repository rootで指定versionを導入して選択します。
+
 ```bash
+nvm install
+nvm use
+node -p 'JSON.stringify({node:process.version,brotli:process.versions.brotli})'
+
 cp env.example .env
 # .env で SESSION_SECRET_KEY を32文字以上にし、生成機能を使う場合は OPENAI_API_KEY も設定します。
 
@@ -57,6 +63,16 @@ npm run dev
 ```
 
 ブラウザで `http://127.0.0.1:5173` を開きます。Docker Compose でまとめて起動したい場合は `docker compose up --build` を使えます。
+
+Docker Compose の Node image を更新した後、起動済みの frontend と Firestore エミュレーターだけを再作成して確認する場合:
+
+```bash
+docker compose build --pull frontend
+docker compose pull firestore-emulator
+docker compose up -d --no-deps --force-recreate frontend firestore-emulator
+docker compose exec frontend node -p 'JSON.stringify({node:process.version,brotli:process.versions.brotli})'
+docker compose exec firestore-emulator node -p 'JSON.stringify({node:process.version,brotli:process.versions.brotli})'
+```
 
 ## ドキュメント
 

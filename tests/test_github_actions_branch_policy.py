@@ -405,7 +405,7 @@ def test_workflow_contract_job_runs_ci_artifact_download_test() -> None:
 
 def test_workflows_use_local_ci_node_setup_without_direct_node_or_cache_actions() -> None:
     expected_local_uses = {
-        ".github/workflows/ci.yml": 3,
+        ".github/workflows/ci.yml": 5,
         ".github/workflows/deploy-production.yml": 1,
         ".github/workflows/scheduled-maintenance.yml": 1,
     }

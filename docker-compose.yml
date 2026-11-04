@@ -50,8 +50,8 @@ services:
     restart: unless-stopped
 
   firestore-emulator:
-    image: node:20-bullseye
-    command: ["bash", "-lc", "./scripts/start_firestore_emulator.sh --project-id ${FIRESTORE_PROJECT_ID:-wordpack-local} --port ${FIRESTORE_EMULATOR_PORT:-8080} --bind 0.0.0.0 --import-dir firestore-emulator-data"]
+    image: node:22.23.4-bookworm
+    command: ["bash", "-lc", "bash ./scripts/start_firestore_emulator.sh --project-id ${FIRESTORE_PROJECT_ID:-wordpack-local} --port ${FIRESTORE_EMULATOR_PORT:-8080} --bind 0.0.0.0 --import-dir firestore-emulator-data"]
     environment:
       - FIRESTORE_PROJECT_ID=${FIRESTORE_PROJECT_ID:-wordpack-local}
       - FIRESTORE_EMULATOR_PORT=${FIRESTORE_EMULATOR_PORT:-8080}
