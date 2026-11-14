@@ -3,9 +3,9 @@ set -Eeuo pipefail
 umask 077
 
 # Refresh this version and hash together from the official release manifest:
-# https://nodejs.org/dist/v22.23.4/SHASUMS256.txt
-readonly NODE_VERSION="22.23.4"
-readonly NODE_ARCHIVE_SHA256="1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce"
+# https://nodejs.org/dist/v22.23.5/SHASUMS256.txt
+readonly NODE_VERSION="22.23.5"
+readonly NODE_ARCHIVE_SHA256="cdeb8670a0c81f51b4dc4ac61919f9b1ad917b304bf8221eb939570663d240f8"
 readonly NODE_ARCHIVE="node-v${NODE_VERSION}-linux-x64.tar.xz"
 readonly NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/${NODE_ARCHIVE}"
 readonly EXPECTED_NODE_VERSION="v${NODE_VERSION}"

@@ -87,7 +87,7 @@ GATE_INPUTS = {
             "apps/frontend/vite.config.ts",
         ),
         ("frontend typecheck and Vitest result",),
-        ("Node.js 22.23.4 checksum-pinned setup", "PR/develop no-coverage; main coverage"),
+        ("Node.js 22.23.5 checksum-pinned setup", "PR/develop no-coverage; main coverage"),
     ),
     BACKEND_FULL: GateInputs(
         ("apps/backend/backend/**", "tests/backend/**", "tests/integration/**"),
