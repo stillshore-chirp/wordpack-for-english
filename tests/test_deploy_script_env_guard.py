@@ -107,6 +107,89 @@ def test_deploy_script_supports_tagged_no_traffic_candidates() -> None:
     assert 'add_env_key "DEPLOYMENT_VERSION"' in deploy_script
 
 
+def test_deploy_script_preserves_caller_marker_and_uses_checkout_sha_when_empty_or_missing(tmp_path: Path) -> None:
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    fake_docker = fake_bin / "docker"
+    fake_docker.write_text("#!/usr/bin/env bash\nexit 0\n", encoding="utf-8")
+    fake_docker.chmod(0o755)
+    fake_gcloud = fake_bin / "gcloud"
+    fake_gcloud.write_text(
+        "#!/usr/bin/env bash\n"
+        "if [[ \"$1\" == run && \"$2\" == deploy ]]; then\n"
+        "  while (($#)); do\n"
+        "    if [[ \"$1\" == --env-vars-file ]]; then\n"
+        "      cp \"$2\" \"${DEPLOYMENT_ENV_CAPTURE}\"\n"
+        "      exit $?\n"
+        "    fi\n"
+        "    shift\n"
+        "  done\n"
+        "  exit 2\n"
+        "fi\n"
+        "exit 0\n",
+        encoding="utf-8",
+    )
+    fake_gcloud.chmod(0o755)
+    env_file = tmp_path / "ci.env"
+    env_file.write_text(
+        Path("configs/cloud-run/ci.env").read_text(encoding="utf-8")
+        + "\nDEPLOYMENT_VERSION=stale\n",
+        encoding="utf-8",
+    )
+    image_uri = "asia-northeast1-docker.pkg.dev/ci-placeholder-project/wordpack/backend@sha256:" + "0" * 64
+    checkout_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"], check=True, capture_output=True, text=True
+    ).stdout.strip()
+    command = [
+        "scripts/deploy_cloud_run.sh",
+        "--validate-in-image",
+        "--env-file",
+        str(env_file),
+        "--project-id",
+        "ci-placeholder-project",
+        "--region",
+        "asia-northeast1",
+        "--image-uri",
+        image_uri,
+    ]
+
+    for caller_marker, expected_marker, caller_state in (
+        ("fresh", "fresh", "fresh"),
+        ("", checkout_sha, "empty"),
+        (None, checkout_sha, "missing"),
+    ):
+        deployed_env = tmp_path / f"deployed-{caller_state}.env"
+        caller_env = {
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "DEPLOYMENT_ENV_CAPTURE": str(deployed_env),
+            "SKIP_FIRESTORE_INDEX_SYNC": "true",
+        }
+        if caller_marker is None:
+            caller_env.pop("DEPLOYMENT_VERSION", None)
+        else:
+            caller_env["DEPLOYMENT_VERSION"] = caller_marker
+
+        proc = subprocess.run(
+            command,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=caller_env,
+        )
+
+        assert proc.returncode == 0, f"fake deploy did not complete for caller marker state {caller_state}"
+        deployed_lines = deployed_env.read_text(encoding="utf-8").splitlines()
+        marker_line = next(line for line in deployed_lines if line.startswith("DEPLOYMENT_VERSION: "))
+        observed_marker = marker_line.partition(": ")[2].strip().strip('"')
+        marker_matches = observed_marker == expected_marker
+        assert marker_matches, f"Cloud Run marker did not match caller state {caller_state}"
+        internal_marker_was_sent = any(
+            line.startswith("_WORDPACK_CALLER_DEPLOYMENT_VERSION:") for line in deployed_lines
+        )
+        assert not internal_marker_was_sent, "internal marker variable was sent to Cloud Run"
+
+
 def test_deploy_script_consumes_only_an_immutable_image_uri() -> None:
     """The helper is a digest-only deploy boundary; build stays in the workflow."""
     deploy_script = Path("scripts/deploy_cloud_run.sh").read_text(encoding="utf-8")

@@ -286,12 +286,19 @@ if [[ ! -f "$ENV_FILE" ]]; then
   exit 1
 fi
 
+# The caller (for example the production workflow) owns this marker; the env file must not replace it.
+unset _WORDPACK_CALLER_DEPLOYMENT_VERSION
+_WORDPACK_CALLER_DEPLOYMENT_VERSION="${DEPLOYMENT_VERSION:-}"
+readonly _WORDPACK_CALLER_DEPLOYMENT_VERSION
+export -n _WORDPACK_CALLER_DEPLOYMENT_VERSION
+
 # ここで env ファイルを読み込み、以降の処理からは通常の環境変数として扱います。
 log "Loading environment variables from $ENV_FILE"
 set -a
 # shellcheck disable=SC1090
 source "$ENV_FILE"
 set +a
+DEPLOYMENT_VERSION="$_WORDPACK_CALLER_DEPLOYMENT_VERSION"
 
 PROJECT_ID="${PROJECT_ID_ARG:-${PROJECT_ID:-}}"
 REGION="${REGION_ARG:-${REGION:-}}"
