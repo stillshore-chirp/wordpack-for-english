@@ -13,9 +13,9 @@ ROOT = Path(__file__).resolve().parents[1]
 ACTION_DIR = ROOT / ".github/actions/setup-ci-node"
 ACTION_FILE = ACTION_DIR / "action.yml"
 SETUP_SCRIPT = ACTION_DIR / "setup.sh"
-EXPECTED_VERSION = "v22.23.4"
-EXPECTED_URL = "https://nodejs.org/dist/v22.23.4/node-v22.23.4-linux-x64.tar.xz"
-EXPECTED_SHA256 = "1805bcd35e6815559bd2eb97db438d3fdb0eb3a5e6a977b7c1badca76337e9ce"
+EXPECTED_VERSION = "v22.23.5"
+EXPECTED_URL = "https://nodejs.org/dist/v22.23.5/node-v22.23.5-linux-x64.tar.xz"
+EXPECTED_SHA256 = "cdeb8670a0c81f51b4dc4ac61919f9b1ad917b304bf8221eb939570663d240f8"
 
 
 def _write_executable(path: Path, source: str) -> None:
@@ -97,7 +97,7 @@ def test_action_is_dependency_free_composite_without_override_inputs() -> None:
 def test_correct_tool_cache_version_skips_download(tmp_path: Path) -> None:
     env, github_path, curl_log, _ = _runner_env(tmp_path)
     tool_cache = tmp_path / "tool-cache"
-    cached_bin = tool_cache / "node/22.23.4/x64/bin"
+    cached_bin = tool_cache / "node/22.23.5/x64/bin"
     cached_bin.mkdir(parents=True)
     _write_executable(cached_bin / "node", f"#!/bin/sh\nprintf '%s\\n' '{EXPECTED_VERSION}'\n")
     env["RUNNER_TOOL_CACHE"] = str(tool_cache)
@@ -146,7 +146,7 @@ def test_verified_fallback_installs_under_runner_temp(tmp_path: Path) -> None:
         "  shift\n"
         "done\n"
         "mkdir -p \"$destination/bin\"\n"
-        "printf '%s\\n' '#!/bin/sh' \"printf '%s\\\\n' 'v22.23.4'\" > \"$destination/bin/node\"\n"
+        "printf '%s\\n' '#!/bin/sh' \"printf '%s\\\\n' 'v22.23.5'\" > \"$destination/bin/node\"\n"
         "chmod +x \"$destination/bin/node\"\n"
         "printf extracted > \"$TEST_TAR_LOG\"\n",
     )
@@ -164,7 +164,7 @@ def test_verified_fallback_installs_under_runner_temp(tmp_path: Path) -> None:
 def test_download_version_and_checksum_are_fixed_in_source() -> None:
     script = SETUP_SCRIPT.read_text(encoding="utf-8")
 
-    assert 'readonly NODE_VERSION="22.23.4"' in script
+    assert 'readonly NODE_VERSION="22.23.5"' in script
     assert f'readonly NODE_ARCHIVE_SHA256="{EXPECTED_SHA256}"' in script
     assert 'readonly NODE_URL="https://nodejs.org/dist/v${NODE_VERSION}/${NODE_ARCHIVE}"' in script
     assert "NODE_VERSION:-" not in script
