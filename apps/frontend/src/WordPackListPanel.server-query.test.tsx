@@ -349,7 +349,7 @@ describe('WordPackListPanel server-side query', () => {
     await user.click(screen.getByRole('button', { name: '公開中 1' }));
 
     await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('検索・絞り込み条件を適用できませんでした'));
-    expect(requests.at(-1)?.searchParams.get('offset')).toBe('0');
+    expect(requests[requests.length - 1]?.searchParams.get('offset')).toBe('0');
     expect(screen.getByTestId('wp-card')).toHaveTextContent('alpha');
     expect(screen.getByText('条件一致（全ページ） —')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: '再試行' })).toBeInTheDocument();
