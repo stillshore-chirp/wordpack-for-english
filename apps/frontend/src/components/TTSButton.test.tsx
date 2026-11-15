@@ -36,7 +36,7 @@ describe('TTSButton', () => {
   it('fetches audio, plays it, and keeps default playback speed when context is missing', async () => {
     const playMock = vi.fn().mockResolvedValue(undefined);
     const audioInstances: Array<{ onended: (() => void) | null; onerror: (() => void) | null; playbackRate: number; volume: number }> = [];
-    const audioCtor = vi.fn().mockImplementation(() => {
+    const audioCtor = vi.fn().mockImplementation(function () {
       const instance: any = {
         play: playMock,
         onended: null as (() => void) | null,
@@ -93,7 +93,9 @@ describe('TTSButton', () => {
   });
 
   it('alerts when fetch fails', async () => {
-    (global as any).Audio = vi.fn().mockImplementation(() => ({ play: vi.fn().mockResolvedValue(undefined), onended: null, onerror: null }));
+    (global as any).Audio = vi.fn().mockImplementation(function () {
+      return { play: vi.fn().mockResolvedValue(undefined), onended: null, onerror: null };
+    });
     URL.createObjectURL = vi.fn().mockReturnValue('blob:mock');
     URL.revokeObjectURL = vi.fn();
     const fetchMock = vi.fn().mockResolvedValue(new Response('error', { status: 500 }));
@@ -122,7 +124,7 @@ describe('TTSButton', () => {
       .mockReturnValueOnce('blob:mock-2');
     URL.revokeObjectURL = vi.fn();
 
-    const audioCtor = vi.fn().mockImplementation(() => {
+    const audioCtor = vi.fn().mockImplementation(function () {
       const instance: any = {
         onended: null as (() => void) | null,
         onerror: null as (() => void) | null,
@@ -167,22 +169,26 @@ describe('TTSButton', () => {
     URL.revokeObjectURL = vi.fn();
     const pauseOldAudio = vi.fn();
     const audioCtor = vi.fn()
-      .mockImplementationOnce(() => ({
-        play: vi.fn().mockResolvedValue(undefined),
-        pause: pauseOldAudio,
-        onended: null,
-        onerror: null,
-        playbackRate: 1,
-        volume: 1,
-      }))
-      .mockImplementationOnce(() => ({
-        play: vi.fn().mockResolvedValue(undefined),
-        pause: vi.fn(),
-        onended: null,
-        onerror: null,
-        playbackRate: 1,
-        volume: 1,
-      }));
+      .mockImplementationOnce(function () {
+        return {
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: pauseOldAudio,
+          onended: null,
+          onerror: null,
+          playbackRate: 1,
+          volume: 1,
+        };
+      })
+      .mockImplementationOnce(function () {
+        return {
+          play: vi.fn().mockResolvedValue(undefined),
+          pause: vi.fn(),
+          onended: null,
+          onerror: null,
+          playbackRate: 1,
+          volume: 1,
+        };
+      });
     (global as any).Audio = audioCtor;
     const oldPassage = 'a'.repeat(TTS_API_REQUEST_MAX_LENGTH + 25);
     const { rerender } = render(<TTSButton text={oldPassage} />);
@@ -216,7 +222,7 @@ describe('TTSButton', () => {
   it('applies playback rate from settings context when available', async () => {
     const playMock = vi.fn().mockResolvedValue(undefined);
     const audioInstances: Array<{ playbackRate: number; onended: (() => void) | null; onerror: (() => void) | null; volume: number }> = [];
-    const audioCtor = vi.fn().mockImplementation(() => {
+    const audioCtor = vi.fn().mockImplementation(function () {
       const instance: any = {
         play: playMock,
         onended: null as (() => void) | null,
@@ -279,7 +285,7 @@ describe('TTSButton', () => {
   it('supports boosted volume selection up to 300 percent', async () => {
     const playMock = vi.fn().mockResolvedValue(undefined);
     const audioInstances: Array<{ playbackRate: number; onended: (() => void) | null; onerror: (() => void) | null; volume: number }> = [];
-    const audioCtor = vi.fn().mockImplementation(() => {
+    const audioCtor = vi.fn().mockImplementation(function () {
       const instance: any = {
         play: playMock,
         onended: null as (() => void) | null,

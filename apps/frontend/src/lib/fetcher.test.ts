@@ -1,7 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { fetchJson } from './fetcher';
 
-type FetchMock = ReturnType<typeof vi.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>>;
+type FetchMock = ReturnType<typeof vi.fn<typeof fetch>>;
 
 const buildJsonResponse = (payload: unknown = { ok: true }) => {
   return {
@@ -16,14 +16,14 @@ const buildJsonResponse = (payload: unknown = { ok: true }) => {
 };
 
 const installFetchMock = (responsePayload?: unknown): FetchMock => {
-  const mock = vi.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>();
+  const mock = vi.fn<typeof fetch>();
   mock.mockResolvedValue(buildJsonResponse(responsePayload) as unknown as Response);
   globalThis.fetch = mock as unknown as typeof fetch;
   return mock;
 };
 
 const installErrorFetchMock = (status: number, responsePayload: unknown): FetchMock => {
-  const mock = vi.fn<Parameters<typeof fetch>, ReturnType<typeof fetch>>();
+  const mock = vi.fn<typeof fetch>();
   mock.mockResolvedValue({
     ok: false,
     status,

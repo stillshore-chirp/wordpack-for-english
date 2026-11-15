@@ -4,7 +4,7 @@ import '@testing-library/jest-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { NotificationsProvider } from '../../NotificationsContext';
 import { QuizPage } from './index';
-import type { Quiz } from '../../features/quiz/types';
+import type { Quiz, QuizAttemptResponse } from '../../features/quiz/types';
 import { APP_EVENTS, dispatchAppEvent } from '../../shared/events/appEvents';
 
 const authState = vi.hoisted(() => ({ isGuest: true }));
@@ -176,7 +176,11 @@ const defaultWordPackItems = [
   },
 ];
 
-const setupFetch = (wordPackItems = defaultWordPackItems, quizData: Quiz = quiz) => {
+const setupFetch = (
+  wordPackItems = defaultWordPackItems,
+  quizData: Quiz = quiz,
+  attemptResponse?: () => Response,
+) => {
   const fetchMock = vi.fn().mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === 'string' ? input : input.toString();
     if (url.startsWith('/api/quiz?')) {
@@ -208,6 +212,9 @@ const setupFetch = (wordPackItems = defaultWordPackItems, quizData: Quiz = quiz)
       return Promise.resolve(
         new Response(JSON.stringify(quizData), { status: 200, headers: { 'Content-Type': 'application/json' } }),
       );
+    }
+    if (url === `/api/quiz/${encodeURIComponent(quizData.id)}/attempts` && init?.method === 'POST' && attemptResponse) {
+      return Promise.resolve(attemptResponse());
     }
     if (url === `/api/quiz/${encodeURIComponent(quizData.id)}/guest-public` && init?.method === 'POST') {
       return Promise.resolve(
@@ -283,6 +290,101 @@ describe('QuizPage', () => {
     expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/attempts'))).toBe(false);
   });
 
+  it('saves authenticated answers and renders the server grading result', async () => {
+    authState.isGuest = false;
+    const response: QuizAttemptResponse = {
+      id: 'quiz-attempt:alpha',
+      quiz_id: quiz.id,
+      score: 0,
+      total: 1,
+      percentage: 0,
+      results: [{
+        question_id: 'q1',
+        selected_choice_id: 'B',
+        correct_choice_id: 'A',
+        is_correct: false,
+      }],
+      submitted_at: '2026-11-15T00:00:00Z',
+    };
+    const fetchMock = setupFetch(defaultWordPackItems, quiz, () => new Response(JSON.stringify(response), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+    renderQuizPage();
+
+    expect(await screen.findByRole('heading', { name: 'Reliable API Deployments' })).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('radio', { name: /BA redesign/ }));
+    await user.click(screen.getByRole('button', { name: '採点する' }));
+
+    expect(await screen.findByText('採点しました。0/1 問正解です。')).toBeInTheDocument();
+    expect(screen.getByText('0/1')).toBeInTheDocument();
+    expect(screen.getByText('0%')).toBeInTheDocument();
+    expect(screen.getByText('不正解')).toBeInTheDocument();
+    expect(screen.getByText('正答')).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /BA redesign/ })).toBeChecked();
+    expect(screen.getByRole('radio', { name: /BA redesign/ })).toBeDisabled();
+    expect(screen.getByRole('button', { name: '採点する' })).toBeDisabled();
+
+    const attemptCall = fetchMock.mock.calls.find(([input]) => String(input).endsWith('/attempts'));
+    expect(attemptCall?.[1]?.method).toBe('POST');
+    expect(JSON.parse(String(attemptCall?.[1]?.body))).toEqual({
+      answers: [{ question_id: 'q1', selected_choice_id: 'B' }],
+      started_at: null,
+      elapsed_ms: null,
+    });
+  });
+
+  it('keeps the answer available after a grading error and allows retry', async () => {
+    authState.isGuest = false;
+    const response: QuizAttemptResponse = {
+      id: 'quiz-attempt:retry',
+      quiz_id: quiz.id,
+      score: 0,
+      total: 1,
+      percentage: 0,
+      results: [{
+        question_id: 'q1',
+        selected_choice_id: 'B',
+        correct_choice_id: 'A',
+        is_correct: false,
+      }],
+      submitted_at: '2026-11-15T00:00:00Z',
+    };
+    let attemptCount = 0;
+    const fetchMock = setupFetch(defaultWordPackItems, quiz, () => {
+      attemptCount += 1;
+      return attemptCount === 1
+        ? new Response(JSON.stringify({ detail: '採点を一時的に保存できませんでした。' }), {
+          status: 503,
+          headers: { 'Content-Type': 'application/json' },
+        })
+        : new Response(JSON.stringify(response), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+    });
+    renderQuizPage();
+
+    expect(await screen.findByRole('heading', { name: 'Reliable API Deployments' })).toBeInTheDocument();
+    const user = userEvent.setup();
+    const answer = screen.getByRole('radio', { name: /BA redesign/ });
+    await user.click(answer);
+    await user.click(screen.getByRole('button', { name: '採点する' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('採点を一時的に保存できませんでした。');
+    expect(answer).toBeChecked();
+    expect(answer).toBeEnabled();
+    expect(screen.getByRole('button', { name: '採点する' })).toBeEnabled();
+    expect(screen.queryByText('不正解')).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '採点する' }));
+    expect(await screen.findByText('採点しました。0/1 問正解です。')).toBeInTheDocument();
+    expect(attemptCount).toBe(2);
+    expect(screen.getByRole('button', { name: '採点する' })).toBeDisabled();
+    expect(fetchMock.mock.calls.filter(([input]) => String(input).endsWith('/attempts'))).toHaveLength(2);
+  });
+
   it('opens existing WordPack links from the passage', async () => {
     renderQuizPage();
     expect(await screen.findByRole('heading', { name: 'Reliable API Deployments' })).toBeInTheDocument();
@@ -315,13 +417,15 @@ describe('QuizPage', () => {
     const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => {});
 
     try {
-      (globalThis as any).Audio = vi.fn().mockImplementation(() => ({
-        play: playMock,
-        onended: null,
-        onerror: null,
-        playbackRate: 1,
-        volume: 1,
-      }));
+      (globalThis as any).Audio = vi.fn().mockImplementation(function () {
+        return {
+          play: playMock,
+          onended: null,
+          onerror: null,
+          playbackRate: 1,
+          volume: 1,
+        };
+      });
       URL.createObjectURL = vi.fn().mockReturnValue('blob:quiz-passage');
       URL.revokeObjectURL = vi.fn();
 
