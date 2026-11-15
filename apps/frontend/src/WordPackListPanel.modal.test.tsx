@@ -341,6 +341,90 @@ describe('WordPackListPanel modal preview', () => {
     });
   });
 
+  it('操作メニューをキーボードで巡回し、Escapeで起点へフォーカスを戻す', async () => {
+    setupFetchMocks();
+    renderWithAuth();
+
+    const user = userEvent.setup();
+    await user.keyboard('{Alt>}{4}{/Alt}');
+
+    const cards = await screen.findAllByTestId('wp-card');
+    const alphaCard = cards.find((card) => card.textContent?.includes('alpha'));
+    expect(alphaCard).toBeDefined();
+    const trigger = within(alphaCard as HTMLElement).getByRole('button', { name: 'alpha のその他の操作' });
+
+    await user.click(trigger);
+
+    const actionMenu = within(alphaCard as HTMLElement).getByRole('menu', { name: 'alpha の操作メニュー' });
+    const openItem = within(actionMenu).getByRole('menuitem', { name: '開く' });
+    const publicItem = within(actionMenu).getByRole('menuitem', { name: 'ゲスト公開にする' });
+    const deleteItem = within(actionMenu).getByRole('menuitem', { name: '削除' });
+
+    await waitFor(() => expect(openItem).toHaveFocus());
+
+    await user.keyboard('{End}');
+    expect(deleteItem).toHaveFocus();
+
+    await user.keyboard('{ArrowDown}');
+    expect(openItem).toHaveFocus();
+
+    await user.keyboard('{ArrowUp}');
+    expect(deleteItem).toHaveFocus();
+
+    await user.keyboard('{Home}');
+    expect(openItem).toHaveFocus();
+
+    await user.keyboard('{ArrowDown}');
+    expect(publicItem).toHaveFocus();
+
+    await user.keyboard('{ArrowUp}');
+    expect(openItem).toHaveFocus();
+
+    await user.keyboard('x');
+    expect(openItem).toHaveFocus();
+
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(screen.queryByRole('menu', { name: 'alpha の操作メニュー' })).not.toBeInTheDocument());
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  it('メニュー外への操作で閉じた後、カード/リスト表示で再び開閉できる', async () => {
+    setupFetchMocks();
+    renderWithAuth();
+
+    const user = userEvent.setup();
+    await user.keyboard('{Alt>}{4}{/Alt}');
+
+    const cards = await screen.findAllByTestId('wp-card');
+    const alphaCard = cards.find((card) => card.textContent?.includes('alpha'));
+    expect(alphaCard).toBeDefined();
+    const cardTrigger = within(alphaCard as HTMLElement).getByRole('button', { name: 'alpha のその他の操作' });
+
+    await user.click(cardTrigger);
+    expect(within(alphaCard as HTMLElement).getByRole('menu', { name: 'alpha の操作メニュー' })).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'リスト' }));
+    await waitFor(() => expect(screen.queryByRole('menu', { name: 'alpha の操作メニュー' })).not.toBeInTheDocument());
+
+    const list = screen.getByRole('list', { name: '保存済みWordPackのリスト' });
+    const alphaItem = within(list).getAllByRole('listitem').find((item) => item.textContent?.includes('alpha'));
+    expect(alphaItem).toBeDefined();
+    const listTrigger = within(alphaItem as HTMLElement).getByRole('button', { name: 'alpha のその他の操作' });
+
+    await user.click(listTrigger);
+    const listMenu = within(alphaItem as HTMLElement).getByRole('menu', { name: 'alpha の操作メニュー' });
+    const firstListAction = within(listMenu).getByRole('menuitem', { name: 'alphaの音声を再生' });
+    await waitFor(() => expect(firstListAction).toHaveFocus());
+
+    await user.keyboard('{Shift>}{Tab}{/Shift}');
+    await waitFor(() => expect(within(alphaItem as HTMLElement).queryByRole('menu')).not.toBeInTheDocument());
+    expect(listTrigger).toHaveFocus();
+
+    await user.keyboard('{Enter}');
+    const reopenedListMenu = within(alphaItem as HTMLElement).getByRole('menu', { name: 'alpha の操作メニュー' });
+    await waitFor(() => expect(within(reopenedListMenu).getByRole('menuitem', { name: 'alphaの音声を再生' })).toHaveFocus());
+  });
+
   it('語義ボタンで語義タイトルを確認できる（カード/リスト）', async () => {
     setupFetchMocks();
     renderWithAuth();

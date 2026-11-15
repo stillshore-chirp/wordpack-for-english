@@ -35,9 +35,23 @@ describe('WordPackListPanel bulk delete', () => {
     );
   }
 
-  function setupFetchMocks() {
-    let listCall = 0;
-    const mock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: RequestInit) => {
+  function setupFetchMocks(options: { failFirstAlphaDelete?: boolean } = {}) {
+    const createServerWordPack = (id: string, lemma: string) => ({
+      id,
+      lemma,
+      sense_title: `${lemma.charAt(0).toUpperCase()}${lemma.slice(1)} overview`,
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-02T00:00:00.000Z',
+    });
+    const serverWordPacks = new Map([
+      ['wp:test:alpha', createServerWordPack('wp:test:alpha', 'alpha')],
+      ['wp:test:beta', createServerWordPack('wp:test:beta', 'beta')],
+      ['wp:test:gamma', createServerWordPack('wp:test:gamma', 'gamma')],
+    ]);
+    const deleteAttempts = new Map<string, number>();
+    const deleteRequests: string[] = [];
+    let listRequests = 0;
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input: any, init?: RequestInit) => {
       const url = typeof input === 'string' ? input : (input as URL).toString();
       const method = init?.method ?? 'GET';
 
@@ -49,52 +63,11 @@ describe('WordPackListPanel bulk delete', () => {
       }
 
       if (url.startsWith('/api/word/packs?') && method === 'GET') {
-        listCall += 1;
-        if (listCall === 1) {
-          return new Response(
-            JSON.stringify({
-              items: [
-                {
-                  id: 'wp:test:alpha',
-                  lemma: 'alpha',
-                  sense_title: 'Alpha overview',
-                  created_at: new Date().toISOString(),
-                  updated_at: new Date().toISOString(),
-                },
-                {
-                  id: 'wp:test:beta',
-                  lemma: 'beta',
-                  sense_title: 'Beta overview',
-                  created_at: new Date().toISOString(),
-                  updated_at: new Date().toISOString(),
-                },
-                {
-                  id: 'wp:test:gamma',
-                  lemma: 'gamma',
-                  sense_title: 'Gamma overview',
-                  created_at: new Date().toISOString(),
-                  updated_at: new Date().toISOString(),
-                },
-              ],
-              total: 3,
-              limit: 200,
-              offset: 0,
-            }),
-            { status: 200, headers: { 'Content-Type': 'application/json' } },
-          );
-        }
+        listRequests += 1;
         return new Response(
           JSON.stringify({
-            items: [
-              {
-                id: 'wp:test:gamma',
-                lemma: 'gamma',
-                sense_title: 'Gamma overview',
-                created_at: new Date().toISOString(),
-                updated_at: new Date().toISOString(),
-              },
-            ],
-            total: 1,
+            items: [...serverWordPacks.values()],
+            total: serverWordPacks.size,
             limit: 200,
             offset: 0,
           }),
@@ -103,6 +76,17 @@ describe('WordPackListPanel bulk delete', () => {
       }
 
       if (url.startsWith('/api/word/packs/wp:test:') && method === 'DELETE') {
+        const id = url.replace('/api/word/packs/', '');
+        deleteRequests.push(id);
+        const attempts = (deleteAttempts.get(id) ?? 0) + 1;
+        deleteAttempts.set(id, attempts);
+        if (options.failFirstAlphaDelete && id === 'wp:test:alpha' && attempts === 1) {
+          return new Response(JSON.stringify({ detail: '一時的な削除エラー' }), {
+            status: 503,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        serverWordPacks.delete(id);
         return new Response(
           JSON.stringify({ message: 'deleted' }),
           { status: 200, headers: { 'Content-Type': 'application/json' } },
@@ -111,11 +95,17 @@ describe('WordPackListPanel bulk delete', () => {
 
       return new Response('not found', { status: 404 });
     });
-    return mock;
+    return {
+      fetchMock,
+      serverWordPacks,
+      deleteAttempts,
+      deleteRequests,
+      getListRequestCount: () => listRequests,
+    };
   }
 
   it('allows selecting multiple WordPacks and deleting them together', async () => {
-    const fetchMock = setupFetchMocks();
+    const { fetchMock, serverWordPacks } = setupFetchMocks();
     renderWithAuth();
 
     const user = userEvent.setup();
@@ -164,5 +154,46 @@ describe('WordPackListPanel bulk delete', () => {
 
     await waitFor(() => expect(screen.getAllByTestId('wp-card')).toHaveLength(1));
     expect(screen.getAllByTestId('wp-card')[0]).toHaveTextContent('gamma');
+    expect([...serverWordPacks.keys()]).toEqual(['wp:test:gamma']);
+  });
+
+  it('keeps selected WordPacks after a failed bulk delete and removes them on retry', async () => {
+    const { serverWordPacks, deleteAttempts, deleteRequests, getListRequestCount } = setupFetchMocks({ failFirstAlphaDelete: true });
+    renderWithAuth();
+    const user = userEvent.setup();
+
+    const alphaCheckbox = await screen.findByRole('checkbox', { name: 'WordPack alpha を選択' });
+    const betaCheckbox = screen.getByRole('checkbox', { name: 'WordPack beta を選択' });
+    await user.click(alphaCheckbox);
+    await user.click(betaCheckbox);
+
+    const selectionBar = screen.getByRole('group', { name: 'WordPack選択操作' });
+    await user.click(within(selectionBar).getByRole('button', { name: '削除' }));
+    await user.click(await screen.findByRole('button', { name: '削除する' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('WordPackの削除に失敗しました: 一時的な削除エラー');
+    expect(getListRequestCount()).toBe(1);
+    expect(serverWordPacks.size).toBe(3);
+    expect(screen.getAllByTestId('wp-card')).toHaveLength(3);
+    expect(alphaCheckbox).toBeChecked();
+    expect(betaCheckbox).toBeChecked();
+    expect(deleteRequests).toEqual(['wp:test:alpha']);
+
+    const retryDeleteButton = within(screen.getByRole('group', { name: 'WordPack選択操作' })).getByRole('button', { name: '削除' });
+    expect(retryDeleteButton).toBeEnabled();
+    await user.click(retryDeleteButton);
+    await user.click(await screen.findByRole('button', { name: '削除する' }));
+
+    expect(await screen.findByText('WordPackを2件削除しました')).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByTestId('wp-card')).toHaveLength(1));
+    expect(screen.getAllByTestId('wp-card')[0]).toHaveTextContent('gamma');
+    expect(getListRequestCount()).toBe(2);
+    expect([...serverWordPacks.keys()]).toEqual(['wp:test:gamma']);
+    expect([...deleteAttempts.entries()]).toEqual([
+      ['wp:test:alpha', 2],
+      ['wp:test:beta', 1],
+    ]);
+    expect(deleteRequests).toEqual(['wp:test:alpha', 'wp:test:alpha', 'wp:test:beta']);
+    expect(screen.queryByRole('group', { name: 'WordPack選択操作' })).not.toBeInTheDocument();
   });
 });
