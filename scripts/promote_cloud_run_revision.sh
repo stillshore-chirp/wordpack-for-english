@@ -191,18 +191,64 @@ if [[ -z "$ROLLBACK_TARGETS" ]]; then
 fi
 
 HEALTH_REQUEST_SEQUENCE=0
+TRANSPORT_RETRIES_USED=0
+TRANSPORT_RETRY_LIMIT=2
 check_production_health() {
-  local response observation probe_url
-  HEALTH_REQUEST_SEQUENCE=$((HEALTH_REQUEST_SEQUENCE + 1))
-  probe_url="${HEALTH_URL}?deployment_probe=${EXPECTED_VERSION}-${HEALTH_REQUEST_SEQUENCE}"
-  if ! response="$(curl --fail --silent \
-    --header 'Cache-Control: no-cache' \
-    --connect-timeout 10 \
-    --max-time 20 \
-    "$probe_url")"; then
-    err "Production health request failed"
+  local response observation probe_url curl_output curl_exit http_status retry_delay
+  while true; do
+    HEALTH_REQUEST_SEQUENCE=$((HEALTH_REQUEST_SEQUENCE + 1))
+    probe_url="${HEALTH_URL}?deployment_probe=${EXPECTED_VERSION}-${HEALTH_REQUEST_SEQUENCE}"
+    curl_exit=0
+    if curl_output="$(curl --fail --silent \
+      --header 'Cache-Control: no-cache' \
+      --connect-timeout 10 \
+      --max-time 20 \
+      --write-out $'\n%{http_code}' \
+      "$probe_url")"; then
+      :
+    else
+      curl_exit=$?
+    fi
+
+    if [[ "$curl_output" == *$'\n'* ]]; then
+      http_status="${curl_output##*$'\n'}"
+      response="${curl_output%$'\n'*}"
+    else
+      http_status="000"
+      response="$curl_output"
+    fi
+    if [[ ! "$http_status" =~ ^[0-9]{3}$ ]]; then
+      http_status="000"
+    fi
+
+    if [[ "$http_status" =~ ^[45][0-9]{2}$ ]]; then
+      err "Production health request failed (curl exit ${curl_exit}; HTTP ${http_status})"
+      return 1
+    fi
+
+    if (( curl_exit == 0 )); then
+      break
+    fi
+
+    case "$curl_exit" in
+      7|28|52|55|56)
+        if (( TRANSPORT_RETRIES_USED < TRANSPORT_RETRY_LIMIT )); then
+          TRANSPORT_RETRIES_USED=$((TRANSPORT_RETRIES_USED + 1))
+          case "$TRANSPORT_RETRIES_USED" in
+            1) retry_delay=2 ;;
+            2) retry_delay=4 ;;
+          esac
+          log "Retrying transient health transport failure (curl exit ${curl_exit}; HTTP ${http_status}; retry ${TRANSPORT_RETRIES_USED}/${TRANSPORT_RETRY_LIMIT} after ${retry_delay}s)"
+          sleep "$retry_delay"
+          continue
+        fi
+        ;;
+    esac
+
+    err "Production health request failed (curl exit ${curl_exit}; HTTP ${http_status})"
     return 1
-  fi
+  done
+
   if ! observation="$(HEALTH_RESPONSE="$response" python - "$EXPECTED_VERSION" <<'PY'
 import json
 import os
